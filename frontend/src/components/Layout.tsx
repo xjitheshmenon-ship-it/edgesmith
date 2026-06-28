@@ -4,7 +4,7 @@ import { authStore } from '../store/auth'
 import {
   LayoutDashboard, Package, Settings, Search,
   ClipboardList, Monitor, Users, LogOut,
-  Hammer, Layers, CalendarClock,
+  Hammer, Layers, CalendarClock, Plus,
 } from 'lucide-react'
 
 interface NavItem {
@@ -215,8 +215,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
-          gap: 16,
-          padding: '0 28px',
+          gap: 12,
+          padding: '0 24px',
           background: 'var(--surface)',
           borderBottom: '1px solid var(--line)',
         }}>
@@ -232,6 +232,59 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               {NAV.find(n => n.to !== '/' && location.pathname.startsWith(n.to))?.label
                 || (location.pathname === '/' ? 'Dashboard' : '')}
             </div>
+          </div>
+
+          {/* Search */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            background: 'var(--bg)',
+            border: '1px solid var(--line)',
+            borderRadius: 9,
+            padding: '0 12px',
+            width: 240,
+            height: 36,
+          }}>
+            <Search size={14} style={{ color: 'var(--ink-3)', flexShrink: 0 }} />
+            <input
+              placeholder="Search…"
+              style={{
+                border: 'none',
+                background: 'none',
+                outline: 'none',
+                flex: 1,
+                fontFamily: "'IBM Plex Sans', sans-serif",
+                fontSize: 13,
+                color: 'var(--ink)',
+              }}
+            />
+          </div>
+
+          {/* New Order shortcut — shown on Mfg Orders page */}
+          {location.pathname.startsWith('/manufacturing') && (
+            <button className="btn-primary" style={{ gap: 6 }}>
+              <Plus size={15} /> New Order
+            </button>
+          )}
+
+          {/* Avatar */}
+          <div style={{
+            width: 34,
+            height: 34,
+            borderRadius: '50%',
+            background: 'rgba(212,238,203,.15)',
+            color: 'var(--accent)',
+            border: '1px solid rgba(212,238,203,.25)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: "'Archivo', sans-serif",
+            fontWeight: 700,
+            fontSize: 12,
+            flexShrink: 0,
+          }}>
+            {initials}
           </div>
         </header>
 

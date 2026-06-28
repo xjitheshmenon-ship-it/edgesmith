@@ -2,17 +2,37 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { manufacturingApi, productApi } from '../api/client'
 import type { ManufacturingOrder, ConversionPattern, Size, Design } from '../types'
-import { Plus, Scissors } from 'lucide-react'
+import { Plus, Scissors, List, Columns } from 'lucide-react'
 import { format } from 'date-fns'
 
-const STATUS_BADGE: Record<string, string> = {
-  open: 'badge-blue', in_progress: 'badge-yellow', completed: 'badge-green', cancelled: 'badge-gray',
+type StatusFilter = 'all' | 'in_progress' | 'completed' | 'open' | 'cancelled'
+type ViewMode = 'list' | 'kanban'
+
+const STATUS_META: Record<string, { label: string; dot: string; bg: string; color: string }> = {
+  open:        { label: 'Draft',       dot: '#7a8fa6', bg: 'rgba(122,143,166,.15)', color: '#9bb4d4' },
+  in_progress: { label: 'In Progress', dot: '#fbbf24', bg: 'rgba(251,191,36,.15)',  color: '#fbbf24' },
+  completed:   { label: 'Done',        dot: '#5dd68c', bg: 'rgba(93,214,140,.15)',   color: '#5dd68c' },
+  cancelled:   { label: 'Cancelled',   dot: '#f87171', bg: 'rgba(248,113,113,.15)',  color: '#f87171' },
 }
 
+function statusMeta(s: string) {
+  return STATUS_META[s] ?? STATUS_META['open']
+}
+
+const FILTER_OPTIONS: { key: StatusFilter; label: string }[] = [
+  { key: 'all',         label: 'All' },
+  { key: 'in_progress', label: 'In Progress' },
+  { key: 'completed',   label: 'Done' },
+  { key: 'open',        label: 'Draft' },
+  { key: 'cancelled',   label: 'Cancelled' },
+]
+
 export default function Manufacturing() {
-  const [tab, setTab] = useState<'orders' | 'patterns'>('orders')
+  const [activeFilter, setActiveFilter] = useState<StatusFilter>('all')
+  const [view, setView] = useState<ViewMode>('list')
   const [showCreateMO, setShowCreateMO] = useState(false)
   const [showCreatePattern, setShowCreatePattern] = useState(false)
+  const [tab, setTab] = useState<'orders' | 'patterns'>('orders')
   const qc = useQueryClient()
 
   const { data: orders = [] } = useQuery<ManufacturingOrder[]>({
@@ -30,93 +50,229 @@ export default function Manufacturing() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['patterns'] }),
   })
 
-  return (
-    <div className="p-6 space-y-5">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Manufacturing</h1>
-        <button className="btn-primary" onClick={() => tab === 'orders' ? setShowCreateMO(true) : setShowCreatePattern(true)}>
-          <Plus size={16} /> {tab === 'orders' ? 'New MO' : 'New Pattern'}
-        </button>
-      </div>
+  const filtered = activeFilter === 'all' ? orders : orders.filter(o => o.status === activeFilter)
 
-      <div className="flex border-b border-gray-200">
-        {(['orders', 'patterns'] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${tab === t ? 'border-brand-500 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+  const countFor = (key: StatusFilter) =>
+    key === 'all' ? orders.length : orders.filter(o => o.status === key).length
+
+  return (
+    <div style={{ padding: '24px 28px 60px', minHeight: '100%' }}>
+
+      {/* Sub-tabs */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--line)', paddingBottom: 0 }}>
+        {(['orders', 'patterns'] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            style={{
+              padding: '8px 16px',
+              background: 'none',
+              border: 'none',
+              borderBottom: tab === t ? '2px solid var(--accent)' : '2px solid transparent',
+              color: tab === t ? 'var(--accent)' : 'var(--ink-2)',
+              fontFamily: "'IBM Plex Sans', sans-serif",
+              fontSize: 13,
+              fontWeight: tab === t ? 600 : 400,
+              cursor: 'pointer',
+              marginBottom: -1,
+              transition: 'color 0.12s',
+            }}
+          >
             {t === 'orders' ? `Manufacturing Orders (${orders.length})` : `Conversion Patterns (${patterns.length})`}
           </button>
         ))}
+        <div style={{ flex: 1 }} />
+        <button className="btn-primary" style={{ marginBottom: 8 }} onClick={() => tab === 'orders' ? setShowCreateMO(true) : setShowCreatePattern(true)}>
+          <Plus size={15} /> {tab === 'orders' ? 'New Order' : 'New Pattern'}
+        </button>
       </div>
 
       {tab === 'orders' && (
-        <div className="card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">MO Number</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">Customer</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">Qty</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">Size</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">Design</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">UIDs</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600">Created</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {orders.map((m) => (
-                <tr key={m.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-mono font-medium text-brand-600">{m.mo_number}</td>
-                  <td className="px-4 py-3">{m.customer}</td>
-                  <td className="px-4 py-3">{m.quantity}</td>
-                  <td className="px-4 py-3">{m.size_mm ? `${m.size_mm}mm` : '—'}</td>
-                  <td className="px-4 py-3">{m.design_code ?? '—'}</td>
-                  <td className="px-4 py-3">{m.uid_count}</td>
-                  <td className="px-4 py-3"><span className={STATUS_BADGE[m.status] ?? 'badge-gray'}>{m.status}</span></td>
-                  <td className="px-4 py-3 text-xs text-gray-400">{format(new Date(m.created_at), 'dd MMM yyyy')}</td>
-                </tr>
+        <>
+          {/* Filters + view toggle */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+              {FILTER_OPTIONS.map(f => {
+                const count = countFor(f.key)
+                const active = activeFilter === f.key
+                return (
+                  <button
+                    key={f.key}
+                    onClick={() => setActiveFilter(f.key)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      padding: '5px 12px',
+                      borderRadius: 20,
+                      border: '1px solid',
+                      borderColor: active ? 'var(--accent)' : 'var(--line)',
+                      background: active ? 'rgba(212,238,203,.12)' : 'var(--surface)',
+                      color: active ? 'var(--accent)' : 'var(--ink-2)',
+                      fontFamily: "'IBM Plex Sans', sans-serif",
+                      fontSize: 13,
+                      fontWeight: active ? 600 : 400,
+                      cursor: 'pointer',
+                      transition: 'all 0.12s',
+                    }}
+                  >
+                    {f.label}
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, opacity: 0.7 }}>{count}</span>
+                  </button>
+                )
+              })}
+            </div>
+            <div style={{ flex: 1 }} />
+            {/* List / Kanban toggle */}
+            <div style={{ display: 'flex', background: 'var(--surface-2)', borderRadius: 9, padding: 3, gap: 2 }}>
+              {([['list', <List size={13} />, 'List'], ['kanban', <Columns size={13} />, 'Kanban']] as const).map(([v, icon, lbl]) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v as ViewMode)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                    padding: '5px 10px',
+                    borderRadius: 7,
+                    border: 'none',
+                    background: view === v ? 'var(--surface)' : 'transparent',
+                    color: view === v ? 'var(--ink)' : 'var(--ink-2)',
+                    fontFamily: "'IBM Plex Sans', sans-serif",
+                    fontSize: 12,
+                    fontWeight: view === v ? 600 : 400,
+                    cursor: 'pointer',
+                    boxShadow: view === v ? '0 1px 4px rgba(0,0,0,.15)' : 'none',
+                    transition: 'all 0.12s',
+                  }}
+                >
+                  {icon}{lbl}
+                </button>
               ))}
-              {orders.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-gray-400">No manufacturing orders</td></tr>}
-            </tbody>
-          </table>
-        </div>
+            </div>
+          </div>
+
+          {view === 'list' ? (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
+              {/* Header row */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '148px 1fr 90px 104px 150px 120px',
+                gap: 16,
+                padding: '12px 22px',
+                borderBottom: '1px solid var(--line)',
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: 10,
+                letterSpacing: '0.12em',
+                color: 'var(--ink-3)',
+              }}>
+                <div>REFERENCE</div><div>PRODUCT / NOTES</div><div>QTY</div><div>CREATED</div><div>PROGRESS</div><div>STATUS</div>
+              </div>
+              {filtered.map((m, i) => {
+                const meta = statusMeta(m.status)
+                const progress = m.uid_count > 0 ? Math.round((m.uid_count / m.quantity) * 100) : 0
+                return (
+                  <div
+                    key={m.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '148px 1fr 90px 104px 150px 120px',
+                      gap: 16,
+                      padding: '14px 22px',
+                      borderBottom: i < filtered.length - 1 ? '1px solid var(--line)' : 'none',
+                      cursor: 'pointer',
+                      transition: 'background 0.1s',
+                    }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
+                  >
+                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, fontWeight: 600, color: 'var(--accent)' }}>{m.mo_number}</div>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13.5, letterSpacing: '-0.01em', color: 'var(--ink)' }}>{m.customer || '—'}</div>
+                      {m.notes && <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)', marginTop: 2 }}>{m.notes}</div>}
+                    </div>
+                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{m.quantity} <span style={{ fontWeight: 400, color: 'var(--ink-2)' }}>pc</span></div>
+                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-2)' }}>{format(new Date(m.created_at), 'MMM dd')}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                      <div style={{ flex: 1, height: 6, borderRadius: 6, background: 'var(--surface-2)', overflow: 'hidden' }}>
+                        <div style={{ width: `${progress}%`, height: '100%', borderRadius: 6, background: meta.dot, transition: 'width 0.3s' }} />
+                      </div>
+                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: 'var(--ink-2)', width: 32, textAlign: 'right' }}>{progress}%</span>
+                    </div>
+                    <div>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 6, background: meta.bg, color: meta.color, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.dot, flexShrink: 0 }} />
+                        {meta.label}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+              {filtered.length === 0 && (
+                <div style={{ padding: '40px 22px', textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
+                  No orders
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Kanban view */
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, alignItems: 'start' }}>
+              {(['open', 'in_progress', 'completed', 'cancelled'] as const).map(status => {
+                const col = orders.filter(o => o.status === status)
+                const meta = statusMeta(status)
+                return (
+                  <div key={status} style={{ background: 'var(--surface-2)', borderRadius: 12, padding: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '4px 4px 8px', borderBottom: '1px solid var(--line)' }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.dot }} />
+                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, color: 'var(--ink-2)', letterSpacing: '0.08em' }}>{meta.label.toUpperCase()}</span>
+                      <span style={{ marginLeft: 'auto', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-3)' }}>{col.length}</span>
+                    </div>
+                    {col.map(m => (
+                      <div key={m.id} className="card" style={{ padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}>
+                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: 'var(--accent)', marginBottom: 4 }}>{m.mo_number}</div>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{m.customer || '—'}</div>
+                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)', marginTop: 2 }}>{m.quantity} pc</div>
+                      </div>
+                    ))}
+                    {col.length === 0 && <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--ink-3)', fontSize: 12 }}>Empty</div>}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {tab === 'patterns' && (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
           {patterns.map((p) => (
-            <div key={p.id} className="card p-4">
-              <div className="flex items-start justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <Scissors size={16} className="text-gray-400" />
-                  <h3 className="font-semibold text-gray-900">{p.name}</h3>
-                </div>
+            <div key={p.id} className="card" style={{ padding: '16px 18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <Scissors size={15} style={{ color: 'var(--ink-3)' }} />
+                <span style={{ fontWeight: 600, color: 'var(--ink)', fontSize: 14 }}>{p.name}</span>
               </div>
-              <div className="space-y-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Input</span>
-                  <span className="font-medium">{p.input_length_mm}mm</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Outputs</span>
-                  <span className="font-medium">{p.output_lengths_mm.join(' + ')}mm</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Cuts × Kerf</span>
-                  <span className="font-medium">{p.num_cuts} × {p.kerf_mm}mm</span>
-                </div>
-                <div className="flex justify-between border-t border-gray-100 pt-1 mt-1">
-                  <span className="text-gray-500">Scrap</span>
-                  <span className={`font-medium ${p.scrap_mm < 0 ? 'text-red-600' : 'text-gray-900'}`}>{p.scrap_mm}mm</span>
-                </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+                {[
+                  ['Input', `${p.input_length_mm} mm`],
+                  ['Outputs', `${p.output_lengths_mm.join(' + ')} mm`],
+                  ['Cuts × Kerf', `${p.num_cuts} × ${p.kerf_mm} mm`],
+                  ['Scrap', `${p.scrap_mm} mm`],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: 'var(--ink-2)' }}>{label}</span>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: Number(p.scrap_mm) < 0 && label === 'Scrap' ? 'var(--error)' : 'var(--ink)' }}>{value}</span>
+                  </div>
+                ))}
               </div>
               <button
-                className="mt-3 text-xs text-red-500 hover:text-red-700"
+                style={{ marginTop: 12, fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
                 onClick={() => archivePattern.mutate(p.id)}
               >
                 Archive
               </button>
             </div>
           ))}
+          {patterns.length === 0 && <div style={{ color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>No patterns</div>}
         </div>
       )}
 
@@ -133,17 +289,19 @@ function CreateMOModal({ onClose }: { onClose: () => void }) {
     onSuccess: onClose,
   })
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4">
-        <h2 className="font-semibold text-gray-900">New Manufacturing Order</h2>
-        <div><label className="label">MO Number</label><input className="input" value={form.mo_number} onChange={(e) => setForm({ ...form, mo_number: e.target.value })} required /></div>
-        <div><label className="label">Customer</label><input className="input" value={form.customer} onChange={(e) => setForm({ ...form, customer: e.target.value })} required /></div>
-        <div><label className="label">Quantity</label><input className="input" type="number" min={1} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })} /></div>
-        <div><label className="label">Notes</label><textarea className="input" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
-        {mutation.error && <p className="text-sm text-red-600">Failed to create MO</p>}
-        <div className="flex gap-3 justify-end">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={mutation.isPending} onClick={() => mutation.mutate({ ...form, quantity: Number(form.quantity) })}>Create MO</button>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
+      <div className="card" style={{ width: '100%', maxWidth: 440, padding: '24px 24px 20px' }}>
+        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)', marginBottom: 18 }}>New Manufacturing Order</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>MO Number</label><input className="input" style={{ width: '100%' }} value={form.mo_number} onChange={e => setForm({ ...form, mo_number: e.target.value })} /></div>
+          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Customer</label><input className="input" style={{ width: '100%' }} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div>
+          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Quantity</label><input className="input" style={{ width: '100%' }} type="number" min={1} value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} /></div>
+          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Notes</label><textarea className="input" style={{ width: '100%' }} rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
+          {mutation.error && <p style={{ color: 'var(--error)', fontSize: 13 }}>Failed to create order</p>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button className="btn-primary" disabled={mutation.isPending} onClick={() => mutation.mutate({ ...form, quantity: Number(form.quantity) })}>Create</button>
+          </div>
         </div>
       </div>
     </div>
@@ -161,26 +319,28 @@ function CreatePatternModal({ onClose }: { onClose: () => void }) {
     onSuccess: onClose,
   })
 
-  const parsedOutputs = outputs.split(',').map((s) => parseInt(s.trim(), 10)).filter(Boolean)
+  const parsedOutputs = outputs.split(',').map(s => parseInt(s.trim(), 10)).filter(Boolean)
   const numCuts = parsedOutputs.length - 1
   const scrap = inputLen - parsedOutputs.reduce((a, b) => a + b, 0) - numCuts * kerf
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4">
-        <h2 className="font-semibold text-gray-900">New Conversion Pattern</h2>
-        <div><label className="label">Pattern Name</label><input className="input" value={name} onChange={(e) => setName(e.target.value)} /></div>
-        <div><label className="label">Input Length (mm)</label><input className="input" type="number" value={inputLen} onChange={(e) => setInputLen(Number(e.target.value))} /></div>
-        <div><label className="label">Output Lengths (comma-separated mm)</label><input className="input" value={outputs} onChange={(e) => setOutputs(e.target.value)} /></div>
-        <div><label className="label">Kerf per cut (mm)</label><input className="input" type="number" value={kerf} onChange={(e) => setKerf(Number(e.target.value))} /></div>
-        <div className="text-sm bg-gray-50 rounded-lg p-3 space-y-1">
-          <div className="flex justify-between"><span>Cuts:</span><span>{numCuts}</span></div>
-          <div className="flex justify-between"><span>Scrap:</span><span className={scrap < 0 ? 'text-red-600 font-bold' : ''}>{scrap}mm</span></div>
-        </div>
-        {mutation.error && <p className="text-sm text-red-600">Failed to create pattern</p>}
-        <div className="flex gap-3 justify-end">
-          <button className="btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={mutation.isPending || scrap < 0} onClick={() => mutation.mutate({ name, input_length_mm: inputLen, output_lengths_mm: parsedOutputs, kerf_mm: kerf })}>Create Pattern</button>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
+      <div className="card" style={{ width: '100%', maxWidth: 440, padding: '24px 24px 20px' }}>
+        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)', marginBottom: 18 }}>New Conversion Pattern</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Pattern Name</label><input className="input" style={{ width: '100%' }} value={name} onChange={e => setName(e.target.value)} /></div>
+          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Input Length (mm)</label><input className="input" style={{ width: '100%' }} type="number" value={inputLen} onChange={e => setInputLen(Number(e.target.value))} /></div>
+          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Output Lengths (comma-separated mm)</label><input className="input" style={{ width: '100%' }} value={outputs} onChange={e => setOutputs(e.target.value)} /></div>
+          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Kerf per cut (mm)</label><input className="input" style={{ width: '100%' }} type="number" value={kerf} onChange={e => setKerf(Number(e.target.value))} /></div>
+          <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 14px', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--ink-2)' }}>Cuts</span><span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{numCuts}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--ink-2)' }}>Scrap</span><span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: scrap < 0 ? 'var(--error)' : 'var(--ink)' }}>{scrap} mm</span></div>
+          </div>
+          {mutation.error && <p style={{ color: 'var(--error)', fontSize: 13 }}>Failed to create pattern</p>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button className="btn-primary" disabled={mutation.isPending || scrap < 0} onClick={() => mutation.mutate({ name, input_length_mm: inputLen, output_lengths_mm: parsedOutputs, kerf_mm: kerf })}>Create</button>
+          </div>
         </div>
       </div>
     </div>
