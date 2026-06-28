@@ -84,8 +84,8 @@ export default function UIDs() {
             <tbody>
               {uids.map((u) => (
                 <tr key={u.id}
-                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
-                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
                 >
                   <td style={TD}>
                     <Link to="/uid-lookup" style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--accent)', textDecoration: 'none' }}>

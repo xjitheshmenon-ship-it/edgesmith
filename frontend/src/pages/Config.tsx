@@ -103,8 +103,8 @@ function WorkstationsConfig() {
           <tbody>
             {ws.map((w) => (
               <tr key={w.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
                 <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{w.code}</td>
                 <td style={TD}>{w.name}</td>
@@ -166,8 +166,8 @@ function StorageConfig() {
           <tbody>
             {storage.map((s) => (
               <tr key={s.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
                 <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.code}</td>
                 <td style={TD}>{s.name}</td>
@@ -250,8 +250,8 @@ function DesignsConfig() {
           <tbody>
             {designs.map((d) => (
               <tr key={d.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
                 <td style={{ ...TD, fontWeight: 600 }}>{d.code}</td>
                 <td style={{ ...TD, color: 'var(--ink-2)' }}>{d.description}</td>

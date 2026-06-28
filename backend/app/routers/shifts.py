@@ -10,7 +10,7 @@ from ..models.shifts import ShiftAssignment, JobAllotment, ShiftPeriod
 from ..models.users import User, UserRole
 from ..models.uid import UID, UIDStatus
 
-router = APIRouter(prefix='/shifts', tags=['shifts'])
+router = APIRouter(prefix='/api/shifts', tags=['shifts'])
 
 require_supervisor = require_roles('admin', 'manager', 'supervisor')
 require_manager = require_roles('admin', 'manager')

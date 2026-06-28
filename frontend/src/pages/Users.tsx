@@ -57,8 +57,8 @@ export default function Users() {
           <tbody>
             {(users as { id: number; username: string; full_name: string; role: string; primary_location_id: number | null; is_active: boolean }[]).map((u) => (
               <tr key={u.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
                 <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace" }}>{u.username}</td>
                 <td style={TD}>{u.full_name}</td>

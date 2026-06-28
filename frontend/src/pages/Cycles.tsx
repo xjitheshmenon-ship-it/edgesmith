@@ -57,7 +57,7 @@ export default function Cycles() {
                 justifyContent: 'space-between',
                 transition: 'border-color 0.12s, background 0.12s',
               }}
-              onMouseEnter={e => { if (selected?.id !== c.id) (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)' }}
+              onMouseEnter={e => { if (selected?.id !== c.id) (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)' }}
               onMouseLeave={e => { if (selected?.id !== c.id) (e.currentTarget as HTMLElement).style.background = 'var(--surface)' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -115,8 +115,8 @@ export default function Cycles() {
                   {selected.current_version.steps.map((s: CycleStep) => (
                     <tr key={s.id}
                       style={{ background: s.is_converting_step ? 'rgba(251,146,60,.1)' : s.is_qc_step ? 'rgba(34,160,107,.08)' : 'transparent' }}
-                      onMouseEnter={e => { if (!s.is_converting_step && !s.is_qc_step) (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)' }}
-                      onMouseLeave={e => { if (!s.is_converting_step && !s.is_qc_step) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                      onMouseEnter={e => { if (!s.is_converting_step && !s.is_qc_step) (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)' }}
+                      onMouseLeave={e => { if (!s.is_converting_step && !s.is_qc_step) (e.currentTarget as HTMLElement).style.background = '' }}
                     >
                       <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.step_number}</td>
                       <td style={TD}>{s.operation_name}</td>

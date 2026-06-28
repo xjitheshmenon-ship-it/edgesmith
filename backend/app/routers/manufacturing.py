@@ -53,6 +53,17 @@ def create_order(body: MOCreate, db: Session = Depends(get_db), user=Depends(req
     return mo_out(mo)
 
 
+@router.get("/orders/{mo_id}/uids")
+def list_mo_uids(mo_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    from app.models.uid import UID
+    mo = db.query(ManufacturingOrder).filter(ManufacturingOrder.id == mo_id).first()
+    if not mo:
+        raise HTTPException(status_code=404, detail="MO not found")
+    uids = db.query(UID).filter(UID.mo_id == mo_id).all()
+    from app.routers.uid import uid_out
+    return [uid_out(u) for u in uids]
+
+
 @router.patch("/orders/{mo_id}/status")
 def update_mo_status(mo_id: int, status: MOStatus, db: Session = Depends(get_db), _=Depends(require_manager)):
     mo = db.query(ManufacturingOrder).filter(ManufacturingOrder.id == mo_id).first()

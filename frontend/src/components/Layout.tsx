@@ -121,7 +121,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   background: active ? 'rgba(210,73,31,.08)' : 'transparent',
                   transition: 'background 0.12s, color 0.12s',
                 }}
-                onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)' } }}
+                onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)' } }}
                 onMouseLeave={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'transparent' } }}
               >
                 <span style={{ opacity: active ? 1 : 0.55, flexShrink: 0 }}>{item.icon}</span>

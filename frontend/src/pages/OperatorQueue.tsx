@@ -76,8 +76,8 @@ export default function OperatorQueue() {
                   borderBottom: '1px solid var(--line)',
                   cursor: 'pointer',
                 }}
-                onMouseEnter={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)' }}
-                onMouseLeave={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                onMouseEnter={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)' }}
+                onMouseLeave={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = '' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

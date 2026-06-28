@@ -237,8 +237,8 @@ export default function Shifts() {
               <tbody>
                 {(allotments as any[]).map((j: any) => (
                   <tr key={j.id}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
                   >
                     <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--accent)' }}>{j.uid_code}</td>
                     <td style={TD}><span className="badge-blue">{j.uid_status}</span></td>
