@@ -1,24 +1,26 @@
-import { useState, FormEvent } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Factory } from 'lucide-react'
 import { authApi } from '../api/client'
 import { authStore } from '../store/auth'
 
 export default function Login() {
+  const navigate = useNavigate()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const navigate = useNavigate()
 
-  const handleSubmit = async (e: FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setLoading(true)
     setError('')
+    setLoading(true)
     try {
-      const { data } = await authApi.login(username, password)
-      authStore.setAuth(data.access_token, data.user)
-      navigate('/')
+      const res = await authApi.login(username, password)
+      const token = res.data.access_token
+      localStorage.setItem('token', token)
+      const me = await authApi.me()
+      authStore.setAuth(token, me.data)
+      navigate('/', { replace: true })
     } catch {
       setError('Invalid username or password')
     } finally {
@@ -27,42 +29,139 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="flex justify-center mb-3">
-            <div className="w-14 h-14 bg-brand-500 rounded-2xl flex items-center justify-center">
-              <Factory size={28} className="text-white" />
-            </div>
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--bg)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 24,
+    }}>
+      <div style={{ width: '100%', maxWidth: 380 }}>
+
+        {/* Logo */}
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+          <div style={{
+            fontFamily: "'Archivo', sans-serif",
+            fontWeight: 800,
+            fontSize: 36,
+            letterSpacing: '-0.035em',
+            lineHeight: 1,
+            color: 'var(--ink)',
+          }}>
+            edgesmith<span style={{ color: 'var(--accent)' }}>.</span>
           </div>
-          <h1 className="text-2xl font-bold text-gray-900">CPCMS</h1>
-          <p className="text-sm text-gray-500 mt-1">Edgesmith Tooling India</p>
+          <div style={{
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontSize: 10,
+            letterSpacing: '0.16em',
+            color: 'var(--ink-2)',
+            marginTop: 8,
+          }}>
+            INNOVATE. ENGINEER. EXCEL.
+          </div>
         </div>
 
-        <div className="card p-6">
-          <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Card */}
+        <div className="card" style={{ padding: '32px 28px' }}>
+          <div style={{ marginBottom: 24 }}>
+            <div style={{
+              fontFamily: "'Archivo', sans-serif",
+              fontWeight: 700,
+              fontSize: 18,
+              letterSpacing: '-0.02em',
+              color: 'var(--ink)',
+            }}>
+              Sign in to CPCMS
+            </div>
+            <div style={{
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 10.5,
+              color: 'var(--ink-2)',
+              marginTop: 4,
+              letterSpacing: '0.04em',
+            }}>
+              Configurable Production Cycle Management System
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div>
-              <label className="label">Username</label>
-              <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus />
+              <label style={{
+                display: 'block',
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: 10.5,
+                letterSpacing: '0.08em',
+                color: 'var(--ink-2)',
+                marginBottom: 6,
+              }}>
+                USERNAME
+              </label>
+              <input
+                className="input"
+                style={{ width: '100%' }}
+                placeholder="Enter username"
+                value={username}
+                onChange={e => setUsername(e.target.value)}
+                autoFocus
+                autoComplete="username"
+              />
             </div>
             <div>
-              <label className="label">Password</label>
-              <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+              <label style={{
+                display: 'block',
+                fontFamily: "'IBM Plex Mono', monospace",
+                fontSize: 10.5,
+                letterSpacing: '0.08em',
+                color: 'var(--ink-2)',
+                marginBottom: 6,
+              }}>
+                PASSWORD
+              </label>
+              <input
+                className="input"
+                style={{ width: '100%' }}
+                type="password"
+                placeholder="Enter password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                autoComplete="current-password"
+              />
             </div>
-            {error && <p className="text-sm text-red-600">{error}</p>}
-            <button type="submit" className="btn-primary w-full justify-center" disabled={loading}>
+
+            {error && (
+              <div style={{
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: '#fff0ef',
+                border: '1px solid #ffd0cc',
+                color: 'var(--error)',
+                fontSize: 13,
+              }}>
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={loading || !username || !password}
+              style={{ width: '100%', justifyContent: 'center', marginTop: 4 }}
+            >
               {loading ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
+        </div>
 
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <p className="text-xs text-gray-400 font-medium mb-2">Demo accounts</p>
-            <div className="grid grid-cols-2 gap-1 text-xs text-gray-500">
-              <span>admin / admin123</span><span>manager1 / manager123</span>
-              <span>supervisor1 / super123</span><span>operator1 / op123</span>
-              <span>service1 / svc123</span>
-            </div>
-          </div>
+        <div style={{
+          textAlign: 'center',
+          marginTop: 20,
+          fontFamily: "'IBM Plex Mono', monospace",
+          fontSize: 10,
+          color: 'var(--ink-2)',
+          letterSpacing: '0.04em',
+        }}>
+          Edgesmith Tooling India Pvt Ltd
         </div>
       </div>
     </div>

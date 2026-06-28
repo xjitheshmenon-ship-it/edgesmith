@@ -4,14 +4,43 @@ export default {
   theme: {
     extend: {
       colors: {
-        brand: {
-          50:  '#f0f4ff',
-          100: '#e0e9ff',
-          500: '#3b5bdb',
-          600: '#2f4ac0',
-          700: '#2541a8',
-          900: '#1a2d7a',
+        // Edgesmith design tokens
+        es: {
+          bg:        '#f3efe6',
+          surface:   '#fbf9f4',
+          surface2:  '#efe9dc',
+          line:      '#ddd5c6',
+          ink:       '#1c1a17',
+          ink2:      '#6b6358',
+          accent:    '#d2491f',
+          'accent-h':'#b83d18',
+          success:   '#22a06b',
+          error:     '#e5484d',
+          warning:   '#f59e0b',
+          navy:      '#11305f',
         },
+        // keep brand alias pointing to accent for backwards compat
+        brand: {
+          50:  '#fdf2ef',
+          100: '#fbe0d8',
+          500: '#d2491f',
+          600: '#d2491f',
+          700: '#b83d18',
+          900: '#8a2e12',
+        },
+      },
+      fontFamily: {
+        archivo:  ['Archivo', 'system-ui', 'sans-serif'],
+        mono:     ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
+        sans:     ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+      },
+      borderRadius: {
+        es: '10px',
+        'es-sm': '9px',
+      },
+      boxShadow: {
+        es:   '0 6px 18px rgba(0,0,0,.08)',
+        'es-sm': '0 1px 4px rgba(0,0,0,.08)',
       },
     },
   },
