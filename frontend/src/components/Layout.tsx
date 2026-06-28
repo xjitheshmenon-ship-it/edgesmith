@@ -74,7 +74,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             lineHeight: 1,
             color: 'var(--ink)',
           }}>
-            edgesmith<span style={{ color: '#d4eecb' }}>.</span>
+            edgesmith<span style={{ color: 'var(--accent)' }}>.</span>
           </div>
           <div style={{
             fontFamily: "'IBM Plex Mono', monospace",
@@ -144,26 +144,28 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
           <div style={{ display: 'flex', gap: 7 }}>
             {[
+              { name: 'Navy', bg: '#11305f', surface: '#173a70', line: '#2c5191', ink: '#eaf4e4', accent: '#d4eecb' },
               { name: 'Cream', bg: '#f3efe6', surface: '#fbf9f4', line: '#ddd5c6', ink: '#1c1a17', accent: '#d2491f' },
-              { name: 'Slate', bg: '#f0f4f8', surface: '#ffffff', line: '#dde3ea', ink: '#1a202c', accent: '#3b82f6' },
-              { name: 'Dark',  bg: '#0f1b2d', surface: '#152033', line: '#243347', ink: '#f0f4f8', accent: '#3dd68c' },
+              { name: 'Slate', bg: '#0f172a', surface: '#1e293b', line: '#334155', ink: '#f1f5f9', accent: '#38bdf8' },
             ].map(t => (
               <button
                 key={t.name}
                 title={t.name}
                 onClick={() => {
+                  const isNavy = t.bg === '#11305f', isCream = t.bg === '#f3efe6'
                   const r = document.documentElement.style
                   r.setProperty('--bg', t.bg)
                   r.setProperty('--surface', t.surface)
-                  r.setProperty('--surface-2', t.bg === '#0f1b2d' ? '#1a2940' : t.bg === '#f0f4f8' ? '#e8edf4' : '#efe9dc')
+                  r.setProperty('--surface-2', isNavy ? '#21498a' : isCream ? '#efe9dc' : '#263349')
+                  r.setProperty('--surface-3', isNavy ? '#2a5aa0' : isCream ? '#e5ddd0' : '#324060')
                   r.setProperty('--line', t.line)
                   r.setProperty('--ink', t.ink)
-                  r.setProperty('--ink-2', t.bg === '#0f1b2d' ? '#7a8fa6' : t.bg === '#f0f4f8' ? '#64748b' : '#6b6358')
-                  r.setProperty('--ink-3', t.bg === '#0f1b2d' ? '#4a637d' : t.bg === '#f0f4f8' ? '#94a3b8' : '#9c9080')
+                  r.setProperty('--ink-2', isNavy ? '#9bb4d4' : isCream ? '#6b6358' : '#94a3b8')
+                  r.setProperty('--ink-3', isNavy ? '#5a7aaa' : isCream ? '#9c9080' : '#64748b')
                   r.setProperty('--accent', t.accent)
-                  r.setProperty('--accent-h', t.bg === '#0f1b2d' ? '#2fc47d' : t.bg === '#f0f4f8' ? '#2563eb' : '#b83d18')
-                  r.setProperty('--accent-dim', t.bg === '#0f1b2d' ? '#1a3d2b' : t.bg === '#f0f4f8' ? '#eff6ff' : '#fdf0eb')
-                  r.setProperty('--accent-ink', t.bg === '#0f1b2d' ? '#0a1a0f' : '#fff')
+                  r.setProperty('--accent-h', isNavy ? '#bde0b0' : isCream ? '#b83d18' : '#0ea5e9')
+                  r.setProperty('--accent-dim', isNavy ? 'rgba(212,238,203,.12)' : isCream ? '#fdf0eb' : 'rgba(56,189,248,.12)')
+                  r.setProperty('--accent-ink', isNavy ? '#143160' : '#fff')
                 }}
                 style={{
                   width: 28,
@@ -202,8 +204,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             width: 32,
             height: 32,
             borderRadius: '50%',
-            background: 'var(--ink)',
-            color: 'var(--surface)',
+            background: 'var(--accent)',
+            color: 'var(--accent-ink)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -301,6 +303,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             fontWeight: 700,
             fontSize: 13,
             flexShrink: 0,
+            userSelect: 'none',
           }}>
             {initials}
           </div>

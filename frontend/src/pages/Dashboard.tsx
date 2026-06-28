@@ -44,10 +44,10 @@ export default function Dashboard() {
 
       {summary && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14, marginBottom: 24 }}>
-          <StatCard label="Active UIDs"  value={summary.uid_active.toLocaleString()} icon={<Package size={22} />}      iconBg="#dbeafe" iconColor="#1d4ed8" />
-          <StatCard label="On Hold"      value={summary.uid_on_hold}                 icon={<AlertTriangle size={22} />}  iconBg="#fef3c7" iconColor="#b45309" />
-          <StatCard label="Dispatched"   value={summary.uid_dispatched.toLocaleString()} icon={<CheckCircle size={22} />} iconBg="#dcfce7" iconColor="#15803d" />
-          <StatCard label="Open Orders"  value={summary.open_manufacturing_orders}   icon={<ClipboardList size={22} />}  iconBg="#f3e8ff" iconColor="#7c3aed" />
+          <StatCard label="Active UIDs"  value={summary.uid_active.toLocaleString()} icon={<Package size={22} />}      iconBg="rgba(96,165,250,.18)"  iconColor="#93c5fd" />
+          <StatCard label="On Hold"      value={summary.uid_on_hold}                 icon={<AlertTriangle size={22} />}  iconBg="rgba(251,191,36,.18)"  iconColor="#fcd34d" />
+          <StatCard label="Dispatched"   value={summary.uid_dispatched.toLocaleString()} icon={<CheckCircle size={22} />} iconBg="rgba(212,238,203,.18)" iconColor="#d4eecb" />
+          <StatCard label="Open Orders"  value={summary.open_manufacturing_orders}   icon={<ClipboardList size={22} />}  iconBg="rgba(167,139,250,.18)" iconColor="#c4b5fd" />
         </div>
       )}
 

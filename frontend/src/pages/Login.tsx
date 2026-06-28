@@ -49,7 +49,7 @@ export default function Login() {
             lineHeight: 1,
             color: 'var(--ink)',
           }}>
-            edgesmith<span style={{ color: '#d4eecb' }}>.</span>
+            edgesmith<span style={{ color: 'var(--accent)' }}>.</span>
           </div>
           <div style={{
             fontFamily: "'IBM Plex Mono', monospace",

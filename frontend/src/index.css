@@ -6,22 +6,22 @@
 
 /* ── Design tokens ──────────────────────────────────────────────────────── */
 :root {
-  --bg:        #f3efe6;
-  --surface:   #fbf9f4;
-  --surface-2: #efe9dc;
-  --surface-3: #e5ddd0;
-  --line:      #ddd5c6;
-  --ink:       #1c1a17;
-  --ink-2:     #6b6358;
-  --ink-3:     #9c9080;
-  --accent:    #d2491f;
-  --accent-h:  #b83d18;
-  --accent-dim:#fdf0eb;
-  --accent-ink:#fff;
+  --bg:        #11305f;
+  --surface:   #173a70;
+  --surface-2: #21498a;
+  --surface-3: #2a5aa0;
+  --line:      #2c5191;
+  --ink:       #eaf4e4;
+  --ink-2:     #9bb4d4;
+  --ink-3:     #5a7aaa;
+  --accent:    #d4eecb;
+  --accent-h:  #bde0b0;
+  --accent-dim:rgba(212,238,203,.12);
+  --accent-ink:#143160;
   --success:   #22a06b;
-  --error:     #e5484d;
-  --warning:   #f59e0b;
-  --info:      #1d4ed8;
+  --error:     #f87171;
+  --warning:   #fbbf24;
+  --info:      #60a5fa;
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */
@@ -142,12 +142,12 @@ body {
     font-weight: 600;
     letter-spacing: .02em;
   }
-  .badge-blue   { @apply badge; background: #dbeafe; color: #1d4ed8; }
-  .badge-green  { @apply badge; background: #dcfce7; color: #15803d; }
-  .badge-red    { @apply badge; background: #fee2e2; color: #b91c1c; }
-  .badge-yellow { @apply badge; background: #fef3c7; color: #b45309; }
+  .badge-blue   { @apply badge; background: rgba(96,165,250,.18);  color: #93c5fd; }
+  .badge-green  { @apply badge; background: rgba(34,160,107,.2);  color: #6ee7b7; }
+  .badge-red    { @apply badge; background: rgba(248,113,113,.18); color: #fca5a5; }
+  .badge-yellow { @apply badge; background: rgba(251,191,36,.18);  color: #fcd34d; }
   .badge-gray   { @apply badge; background: var(--surface-2); color: var(--ink-2); }
-  .badge-orange { @apply badge; background: #ffedd5; color: #c2410c; }
+  .badge-orange { @apply badge; background: rgba(251,146,60,.18);  color: #fdba74; }
 
   /* Mono uppercase section labels */
   .label-caps {
