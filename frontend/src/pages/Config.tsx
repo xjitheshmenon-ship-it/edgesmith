@@ -6,9 +6,11 @@ import { Plus } from 'lucide-react'
 
 type Tab = 'workstations' | 'storage' | 'sizes' | 'designs'
 
+const TH: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--ink-2)', fontWeight: 500, background: 'var(--surface-2)', borderBottom: '1px solid var(--line)' }
+const TD: React.CSSProperties = { padding: '11px 16px', fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }
+
 export default function Config() {
   const [tab, setTab] = useState<Tab>('workstations')
-  const qc = useQueryClient()
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'workstations', label: 'Workstations' },
@@ -18,12 +20,29 @@ export default function Config() {
   ]
 
   return (
-    <div className="p-6 space-y-5">
-      <h1 className="text-2xl font-bold text-gray-900">System Configuration</h1>
+    <div style={{ padding: '24px 28px 60px' }}>
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: '-0.02em', color: 'var(--ink)' }}>System Configuration</div>
+      </div>
 
-      <div className="flex border-b border-gray-200">
+      <div style={{ display: 'flex', borderBottom: '1px solid var(--line)', marginBottom: 20 }}>
         {tabs.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={`px-5 py-3 text-sm font-medium border-b-2 transition-colors ${tab === t.key ? 'border-brand-500 text-brand-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            style={{
+              padding: '10px 20px',
+              fontSize: 13,
+              fontWeight: 500,
+              background: 'none',
+              border: 'none',
+              borderBottom: tab === t.key ? '2px solid var(--accent)' : '2px solid transparent',
+              color: tab === t.key ? 'var(--accent)' : 'var(--ink-2)',
+              cursor: 'pointer',
+              marginBottom: -1,
+              transition: 'color 0.12s',
+            }}
+          >
             {t.label}
           </button>
         ))}
@@ -33,6 +52,16 @@ export default function Config() {
       {tab === 'storage' && <StorageConfig />}
       {tab === 'sizes' && <SizesConfig />}
       {tab === 'designs' && <DesignsConfig />}
+    </div>
+  )
+}
+
+function Modal({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
+      <div className="card" style={{ width: '100%', maxWidth: 440, padding: '24px 24px 20px' }}>
+        {children}
+      </div>
     </div>
   )
 }
@@ -56,23 +85,34 @@ function WorkstationsConfig() {
   const CATEGORIES = ['Cutting', 'Heat Treatment', 'Machining', 'Grinding', 'Coating', 'QC', 'Packing', 'Other']
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Workstation</button>
       </div>
-      <div className="card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr><th className="px-4 py-3 text-left font-medium text-gray-600">Code</th><th className="px-4 py-3 text-left font-medium text-gray-600">Name</th><th className="px-4 py-3 text-left font-medium text-gray-600">Category</th><th className="px-4 py-3 text-left font-medium text-gray-600">Location</th><th className="px-4 py-3"></th></tr>
+      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={TH}>Code</th>
+              <th style={TH}>Name</th>
+              <th style={TH}>Category</th>
+              <th style={TH}>Location</th>
+              <th style={{ ...TH, textAlign: 'right' }}></th>
+            </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody>
             {ws.map((w) => (
-              <tr key={w.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3 font-mono font-medium">{w.code}</td>
-                <td className="px-4 py-3">{w.name}</td>
-                <td className="px-4 py-3 text-xs"><span className="badge-blue">{w.category}</span></td>
-                <td className="px-4 py-3 text-xs text-gray-400">{w.factory_location_id ? `Location ${w.factory_location_id}` : 'All locations'}</td>
-                <td className="px-4 py-3 text-right"><button className="text-xs text-red-500 hover:text-red-700" onClick={() => archive.mutate(w.id)}>Archive</button></td>
+              <tr key={w.id}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+              >
+                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{w.code}</td>
+                <td style={TD}>{w.name}</td>
+                <td style={TD}><span className="badge-blue">{w.category}</span></td>
+                <td style={{ ...TD, color: 'var(--ink-2)' }}>{w.factory_location_id ? `Location ${w.factory_location_id}` : 'All locations'}</td>
+                <td style={{ ...TD, textAlign: 'right' }}>
+                  <button style={{ fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => archive.mutate(w.id)}>Archive</button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -80,19 +120,19 @@ function WorkstationsConfig() {
       </div>
 
       {showCreate && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4">
-            <h2 className="font-semibold text-gray-900">Add Workstation</h2>
+        <Modal>
+          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Add Workstation</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div><label className="label">Code</label><input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
             <div><label className="label">Name</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div><label className="label">Category</label><select className="input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></div>
-            <div><label className="label">Location (leave blank for both)</label><select className="input" value={form.factory_location_id} onChange={(e) => setForm({ ...form, factory_location_id: e.target.value })}><option value="">All locations</option>{locs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
-            <div className="flex gap-3 justify-end">
+            <div><label className="label">Location (blank = both)</label><select className="input" value={form.factory_location_id} onChange={(e) => setForm({ ...form, factory_location_id: e.target.value })}><option value="">All locations</option>{locs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
               <button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
               <button className="btn-primary" disabled={create.isPending} onClick={() => create.mutate({ ...form, factory_location_id: form.factory_location_id ? Number(form.factory_location_id) : null })}>Add</button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   )
@@ -108,27 +148,48 @@ function StorageConfig() {
     mutationFn: (data: Record<string, unknown>) => factoryApi.createStorage(data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['storage'] }); setShowCreate(false) },
   })
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end"><button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Storage Location</button></div>
-      <div className="card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200"><tr><th className="px-4 py-3 text-left font-medium text-gray-600">Code</th><th className="px-4 py-3 text-left font-medium text-gray-600">Name</th><th className="px-4 py-3 text-left font-medium text-gray-600">Location</th></tr></thead>
-          <tbody className="divide-y divide-gray-100">
-            {storage.map((s) => (<tr key={s.id} className="hover:bg-gray-50"><td className="px-4 py-3 font-mono font-medium">{s.code}</td><td className="px-4 py-3">{s.name}</td><td className="px-4 py-3 text-xs text-gray-400">{s.factory_location_id ? `Location ${s.factory_location_id}` : 'All'}</td></tr>))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Storage Location</button>
+      </div>
+      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={TH}>Code</th>
+              <th style={TH}>Name</th>
+              <th style={TH}>Location</th>
+            </tr>
+          </thead>
+          <tbody>
+            {storage.map((s) => (
+              <tr key={s.id}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+              >
+                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.code}</td>
+                <td style={TD}>{s.name}</td>
+                <td style={{ ...TD, color: 'var(--ink-2)' }}>{s.factory_location_id ? `Location ${s.factory_location_id}` : 'All'}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
       {showCreate && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm p-5 space-y-4">
-            <h2 className="font-semibold text-gray-900">Add Storage Location</h2>
+        <Modal>
+          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Add Storage Location</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div><label className="label">Code</label><input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
             <div><label className="label">Name</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
             <div><label className="label">Factory Location</label><select className="input" value={form.factory_location_id} onChange={(e) => setForm({ ...form, factory_location_id: e.target.value })}><option value="">All</option>{locs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
-            <div className="flex gap-3 justify-end"><button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button><button className="btn-primary" onClick={() => create.mutate({ ...form, factory_location_id: form.factory_location_id ? Number(form.factory_location_id) : null })}>Add</button></div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+              <button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
+              <button className="btn-primary" onClick={() => create.mutate({ ...form, factory_location_id: form.factory_location_id ? Number(form.factory_location_id) : null })}>Add</button>
+            </div>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   )
@@ -142,14 +203,20 @@ function SizesConfig() {
     mutationFn: (data: Record<string, unknown>) => productApi.createSize(data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['sizes'] }); setValue('') },
   })
+
   return (
-    <div className="space-y-4 max-w-sm">
-      <div className="flex gap-2">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 360 }}>
+      <div style={{ display: 'flex', gap: 10 }}>
         <input className="input" placeholder="Size in mm" type="number" value={value} onChange={(e) => setValue(e.target.value)} />
         <button className="btn-primary" onClick={() => create.mutate({ value_mm: Number(value) })}><Plus size={15} /> Add</button>
       </div>
-      <div className="card divide-y divide-gray-100">
-        {sizes.map((s) => (<div key={s.id} className="px-4 py-3 flex justify-between text-sm"><span className="font-medium">{s.value_mm}mm</span><span className="badge-green">active</span></div>))}
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        {sizes.map((s) => (
+          <div key={s.id} style={{ padding: '11px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, borderBottom: '1px solid var(--line)' }}>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--ink)' }}>{s.value_mm}mm</span>
+            <span className="badge-green">active</span>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -165,37 +232,58 @@ function DesignsConfig() {
     mutationFn: (data: Record<string, unknown>) => productApi.createDesign(data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['designs'] }); setShowCreate(false) },
   })
+
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end"><button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Design</button></div>
-      <div className="card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200"><tr><th className="px-4 py-3 text-left font-medium text-gray-600">Code</th><th className="px-4 py-3 text-left font-medium text-gray-600">Description</th><th className="px-4 py-3 text-left font-medium text-gray-600">Valid Sizes</th></tr></thead>
-          <tbody className="divide-y divide-gray-100">
-            {designs.map((d) => (<tr key={d.id} className="hover:bg-gray-50"><td className="px-4 py-3 font-medium">{d.code}</td><td className="px-4 py-3 text-gray-500">{d.description}</td><td className="px-4 py-3 text-xs">{d.valid_sizes_mm.join('mm, ')}mm</td></tr>))}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Design</button>
+      </div>
+      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={TH}>Code</th>
+              <th style={TH}>Description</th>
+              <th style={TH}>Valid Sizes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {designs.map((d) => (
+              <tr key={d.id}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}
+              >
+                <td style={{ ...TD, fontWeight: 600 }}>{d.code}</td>
+                <td style={{ ...TD, color: 'var(--ink-2)' }}>{d.description}</td>
+                <td style={TD}>{d.valid_sizes_mm.join('mm, ')}mm</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
       {showCreate && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4">
-            <h2 className="font-semibold text-gray-900">Add Design</h2>
+        <Modal>
+          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Add Design</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             <div><label className="label">Code / Drawing Number</label><input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
             <div><label className="label">Description</label><input className="input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
             <div>
               <label className="label">Valid Sizes</label>
-              <div className="space-y-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
                 {sizes.map((s) => (
-                  <label key={s.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink)', cursor: 'pointer' }}>
                     <input type="checkbox" checked={form.valid_size_ids.includes(s.id)} onChange={(e) => setForm({ ...form, valid_size_ids: e.target.checked ? [...form.valid_size_ids, s.id] : form.valid_size_ids.filter((id) => id !== s.id) })} />
                     {s.value_mm}mm
                   </label>
                 ))}
               </div>
             </div>
-            <div className="flex gap-3 justify-end"><button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button><button className="btn-primary" disabled={create.isPending} onClick={() => create.mutate(form)}>Add Design</button></div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+              <button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
+              <button className="btn-primary" disabled={create.isPending} onClick={() => create.mutate(form)}>Add Design</button>
+            </div>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   )
