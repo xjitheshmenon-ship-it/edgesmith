@@ -83,6 +83,28 @@ export default function UIDLookup() {
                 </div>
               ))}
             </div>
+
+            {/* Material Traceability */}
+            {(uid.alloy_heat_number || uid.ms_heat_number || uid.rolling_contractor) && (
+              <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', color: 'var(--ink-3)', marginBottom: 10 }}>MATERIAL ORIGIN</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+                  {[
+                    { label: 'Alloy Steel Heat No', value: uid.alloy_heat_number ?? '—' },
+                    { label: 'Alloy Grade / Supplier', value: uid.alloy_grade ? `${uid.alloy_grade} · ${uid.alloy_supplier ?? ''}` : '—' },
+                    { label: 'MS Heat No', value: uid.ms_heat_number ?? '—' },
+                    { label: 'MS Grade / Supplier', value: uid.ms_grade ? `${uid.ms_grade} · ${uid.ms_supplier ?? ''}` : '—' },
+                    { label: 'Rolling Contractor', value: uid.rolling_contractor ?? '—' },
+                  ].map(f => (
+                    <div key={f.label}>
+                      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-3)', marginBottom: 4 }}>{f.label}</div>
+                      <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{f.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
           </div>
 
           {/* Children */}
