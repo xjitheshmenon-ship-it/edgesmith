@@ -26,7 +26,7 @@ def mo_out(m: ManufacturingOrder) -> dict:
 
 
 @router.get("/orders")
-def list_orders(status: Optional[MOStatus] = None, db: Session = Depends(get_db), _=Depends(require_manager)):
+def list_orders(status: Optional[MOStatus] = None, db: Session = Depends(get_db), _=Depends(get_current_user)):
     q = db.query(ManufacturingOrder)
     if status:
         q = q.filter(ManufacturingOrder.status == status)
@@ -43,7 +43,7 @@ class MOCreate(BaseModel):
 
 
 @router.post("/orders", status_code=201)
-def create_order(body: MOCreate, db: Session = Depends(get_db), user=Depends(require_manager)):
+def create_order(body: MOCreate, db: Session = Depends(get_db), user=Depends(require_manager)):  # manager+ only
     if db.query(ManufacturingOrder).filter(ManufacturingOrder.mo_number == body.mo_number).first():
         raise HTTPException(status_code=400, detail="MO number already exists")
     mo = ManufacturingOrder(**body.model_dump(), created_by_id=user.id)
@@ -65,7 +65,7 @@ def list_mo_uids(mo_id: int, db: Session = Depends(get_db), _=Depends(get_curren
 
 
 @router.patch("/orders/{mo_id}/status")
-def update_mo_status(mo_id: int, status: MOStatus, db: Session = Depends(get_db), _=Depends(require_manager)):
+def update_mo_status(mo_id: int, status: MOStatus, db: Session = Depends(get_db), _=Depends(require_manager)):  # manager+ only
     mo = db.query(ManufacturingOrder).filter(ManufacturingOrder.id == mo_id).first()
     if not mo:
         raise HTTPException(status_code=404, detail="MO not found")

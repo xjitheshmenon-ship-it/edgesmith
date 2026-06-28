@@ -110,4 +110,5 @@ export const shiftApi = {
   listAllotments: (params?: Record<string, unknown>) => api.get('/shifts/allotments', { params }),
   createAllotment: (data: Record<string, unknown>) => api.post('/shifts/allotments', data),
   removeAllotment: (id: number) => api.delete(`/shifts/allotments/${id}`),
+  autoAssign: (data: Record<string, unknown>) => api.post('/shifts/allotments/auto-assign', data),
 }

@@ -246,3 +246,62 @@ def remove_allotment(
     j.is_active = 0
     db.commit()
     return {'ok': True}
+
+
+# ── Auto-Assign ───────────────────────────────────────────────────────────────
+
+class AutoAssignRequest(BaseModel):
+    shift_date: date_type
+    shift_period: ShiftPeriod
+
+@router.post('/allotments/auto-assign')
+def auto_assign_allotments(
+    data: AutoAssignRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_supervisor),
+):
+    """
+    For each shift assignment on the given date/period, find all active UIDs
+    whose current step's workstation matches the assigned workstation, then
+    allot those UIDs to the assigned operator (deactivating prior allotments).
+    """
+    from ..models.cycle import CycleStep
+
+    assignments = db.query(ShiftAssignment).filter(
+        ShiftAssignment.shift_date == data.shift_date,
+        ShiftAssignment.shift_period == data.shift_period,
+    ).all()
+
+    if not assignments:
+        return {'allotted': 0, 'detail': 'No shift assignments found for this date/period'}
+
+    total_allotted = 0
+    for assignment in assignments:
+        # Find UIDs whose current step is at this workstation
+        uids = db.query(UID).join(
+            CycleStep, UID.current_step_id == CycleStep.id
+        ).filter(
+            CycleStep.workstation_id == assignment.workstation_id,
+            UID.status.in_([UIDStatus.active, UIDStatus.on_hold]),
+        ).all()
+
+        for uid in uids:
+            # Deactivate existing active allotments for this UID
+            db.query(JobAllotment).filter(
+                JobAllotment.uid_id == uid.id,
+                JobAllotment.is_active == 1,
+            ).update({'is_active': 0})
+
+            allotment = JobAllotment(
+                uid_id=uid.id,
+                operator_id=assignment.operator_id,
+                workstation_id=assignment.workstation_id,
+                allotted_by_id=current_user.id,
+                notes=f'Auto-assigned for {data.shift_date} {data.shift_period}',
+                is_active=1,
+            )
+            db.add(allotment)
+            total_allotted += 1
+
+    db.commit()
+    return {'allotted': total_allotted}
