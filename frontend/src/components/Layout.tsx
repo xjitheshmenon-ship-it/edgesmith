@@ -91,7 +91,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             color: 'var(--ink-3)',
             marginTop: 5,
           }}>
-            INNOVATE. ENGINEER. EXCEL.
+            PRECISION WORKS.
           </div>
         </div>
 
@@ -127,7 +127,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   fontSize: 13,
                   fontWeight: active ? 600 : 400,
                   color: active ? 'var(--accent)' : 'var(--ink-2)',
-                  background: active ? 'var(--accent-dim)' : 'transparent',
+                  background: active ? 'rgba(212,238,203,.12)' : 'transparent',
                   transition: 'background 0.12s, color 0.12s',
                 }}
                 onMouseEnter={e => { if (!active) { (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'; (e.currentTarget as HTMLElement).style.color = 'var(--ink)' } }}
@@ -152,9 +152,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             width: 32,
             height: 32,
             borderRadius: '50%',
-            background: 'var(--accent-dim)',
+            background: 'rgba(212,238,203,.15)',
             color: 'var(--accent)',
-            border: '1px solid rgba(61,214,140,.3)',
+            border: '1px solid rgba(212,238,203,.3)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
