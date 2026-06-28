@@ -15,7 +15,7 @@ from app.database import engine, Base
 # Import all models so SQLAlchemy registers them before create_all
 import app.models  # noqa
 
-from app.routers import auth, users, factory, cycle, product, uid, manufacturing, shopfloor
+from app.routers import auth, users, factory, cycle, product, uid, manufacturing, shopfloor, shifts
 
 app = FastAPI(
     title="CPCMS — Edgesmith Tooling",
@@ -52,6 +52,7 @@ app.include_router(product.router)
 app.include_router(uid.router)
 app.include_router(manufacturing.router)
 app.include_router(shopfloor.router)
+app.include_router(shifts.router)
 
 
 @app.get("/health")

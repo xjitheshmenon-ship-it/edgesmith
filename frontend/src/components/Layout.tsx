@@ -4,7 +4,7 @@ import { authStore } from '../store/auth'
 import {
   LayoutDashboard, Package, Wrench, Settings, Search,
   Factory, ClipboardList, Monitor, Users, ChevronRight,
-  LogOut, Hammer, Layers
+  LogOut, Hammer, Layers, CalendarClock
 } from 'lucide-react'
 import clsx from 'clsx'
 
@@ -20,6 +20,7 @@ const NAV: NavItem[] = [
   { label: 'Shopfloor', to: '/shopfloor', icon: <Monitor size={18} /> },
   { label: 'UID Lookup', to: '/uid-lookup', icon: <Search size={18} /> },
   { label: 'My Queue', to: '/queue', icon: <ClipboardList size={18} />, roles: ['operator', 'supervisor'] },
+  { label: 'Shifts', to: '/shifts', icon: <CalendarClock size={18} />, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'UIDs', to: '/uids', icon: <Package size={18} />, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Mfg Orders', to: '/manufacturing', icon: <Hammer size={18} />, roles: ['admin', 'manager'] },
   { label: 'Cycles', to: '/cycles', icon: <Layers size={18} />, roles: ['admin', 'manager'] },

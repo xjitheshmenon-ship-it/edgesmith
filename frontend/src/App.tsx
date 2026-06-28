@@ -11,6 +11,7 @@ import Manufacturing from './pages/Manufacturing'
 import Cycles from './pages/Cycles'
 import Config from './pages/Config'
 import Users from './pages/Users'
+import Shifts from './pages/Shifts'
 
 function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user, isAuthenticated } = useAuth()
@@ -40,6 +41,7 @@ export default function App() {
                   <Route path="/manufacturing" element={<ProtectedRoute roles={['admin', 'manager']}><Manufacturing /></ProtectedRoute>} />
                   <Route path="/cycles" element={<ProtectedRoute roles={['admin', 'manager']}><Cycles /></ProtectedRoute>} />
                   <Route path="/config" element={<ProtectedRoute roles={['admin']}><Config /></ProtectedRoute>} />
+                  <Route path="/shifts" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Shifts /></ProtectedRoute>} />
                   <Route path="/users" element={<ProtectedRoute roles={['admin']}><Users /></ProtectedRoute>} />
                 </Routes>
               </Layout>

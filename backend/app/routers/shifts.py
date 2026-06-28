@@ -1,0 +1,248 @@
+from datetime import date as date_type
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+
+from ..database import get_db
+from ..auth import get_current_user, require_roles
+from ..models.shifts import ShiftAssignment, JobAllotment, ShiftPeriod
+from ..models.users import User, UserRole
+from ..models.uid import UID, UIDStatus
+
+router = APIRouter(prefix='/shifts', tags=['shifts'])
+
+require_supervisor = require_roles('admin', 'manager', 'supervisor')
+require_manager = require_roles('admin', 'manager')
+
+
+# ── Schemas ───────────────────────────────────────────────────────────────────
+
+class AssignmentCreate(BaseModel):
+    shift_date: date_type
+    shift_period: ShiftPeriod
+    workstation_id: int
+    operator_id: int
+    notes: Optional[str] = None
+
+class AssignmentConfirm(BaseModel):
+    confirmed: bool
+
+class AllotmentCreate(BaseModel):
+    uid_id: int
+    operator_id: int
+    workstation_id: int
+    notes: Optional[str] = None
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _assignment_out(a: ShiftAssignment):
+    return {
+        'id': a.id,
+        'shift_date': str(a.shift_date),
+        'shift_period': a.shift_period,
+        'workstation_id': a.workstation_id,
+        'workstation_code': a.workstation.code if a.workstation else None,
+        'workstation_name': a.workstation.name if a.workstation else None,
+        'operator_id': a.operator_id,
+        'operator_username': a.operator.username if a.operator else None,
+        'operator_full_name': a.operator.full_name if a.operator else None,
+        'assigned_by': a.assigned_by.username if a.assigned_by else None,
+        'confirmed_by': a.confirmed_by.username if a.confirmed_by else None,
+        'notes': a.notes,
+        'created_at': a.created_at.isoformat() if a.created_at else None,
+        'updated_at': a.updated_at.isoformat() if a.updated_at else None,
+    }
+
+def _allotment_out(j: JobAllotment):
+    return {
+        'id': j.id,
+        'uid_id': j.uid_id,
+        'uid_code': j.uid.uid_code if j.uid else None,
+        'uid_status': j.uid.status if j.uid else None,
+        'current_step': j.uid.current_step_number if j.uid else None,
+        'operator_id': j.operator_id,
+        'operator_username': j.operator.username if j.operator else None,
+        'operator_full_name': j.operator.full_name if j.operator else None,
+        'workstation_id': j.workstation_id,
+        'workstation_code': j.workstation.code if j.workstation else None,
+        'workstation_name': j.workstation.name if j.workstation else None,
+        'allotted_by': j.allotted_by.username if j.allotted_by else None,
+        'notes': j.notes,
+        'is_active': bool(j.is_active),
+        'created_at': j.created_at.isoformat() if j.created_at else None,
+    }
+
+
+# ── Shift Assignments ─────────────────────────────────────────────────────────
+
+@router.get('/assignments')
+def list_assignments(
+    shift_date: Optional[date_type] = None,
+    shift_period: Optional[ShiftPeriod] = None,
+    workstation_id: Optional[int] = None,
+    location_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    q = db.query(ShiftAssignment)
+    if shift_date:
+        q = q.filter(ShiftAssignment.shift_date == shift_date)
+    if shift_period:
+        q = q.filter(ShiftAssignment.shift_period == shift_period)
+    if workstation_id:
+        q = q.filter(ShiftAssignment.workstation_id == workstation_id)
+    if location_id:
+        from ..models.factory import Workstation
+        ws_ids = [w.id for w in db.query(Workstation).filter(
+            (Workstation.factory_location_id == location_id) | (Workstation.factory_location_id == None)
+        ).all()]
+        q = q.filter(ShiftAssignment.workstation_id.in_(ws_ids))
+    return [_assignment_out(a) for a in q.order_by(ShiftAssignment.shift_date, ShiftAssignment.shift_period).all()]
+
+
+@router.post('/assignments')
+def create_or_update_assignment(
+    data: AssignmentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_supervisor),
+):
+    # Check if assignment already exists for this slot
+    existing = db.query(ShiftAssignment).filter(
+        ShiftAssignment.shift_date == data.shift_date,
+        ShiftAssignment.shift_period == data.shift_period,
+        ShiftAssignment.workstation_id == data.workstation_id,
+    ).first()
+
+    # Validate operator has operator role
+    operator = db.query(User).filter(User.id == data.operator_id).first()
+    if not operator or operator.role != UserRole.operator:
+        raise HTTPException(400, 'Selected user is not an operator')
+
+    if existing:
+        existing.operator_id = data.operator_id
+        existing.assigned_by_id = current_user.id
+        existing.notes = data.notes
+        # Supervisor auto-confirms their own assignments; manager needs supervisor confirmation
+        if current_user.role in ('admin', 'supervisor'):
+            existing.confirmed_by_id = current_user.id
+        else:
+            existing.confirmed_by_id = None
+        db.commit()
+        db.refresh(existing)
+        return _assignment_out(existing)
+
+    assignment = ShiftAssignment(
+        shift_date=data.shift_date,
+        shift_period=data.shift_period,
+        workstation_id=data.workstation_id,
+        operator_id=data.operator_id,
+        assigned_by_id=current_user.id,
+        confirmed_by_id=current_user.id if current_user.role in ('admin', 'supervisor') else None,
+        notes=data.notes,
+    )
+    db.add(assignment)
+    db.commit()
+    db.refresh(assignment)
+    return _assignment_out(assignment)
+
+
+@router.post('/assignments/{assignment_id}/confirm')
+def confirm_assignment(
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_supervisor),
+):
+    a = db.query(ShiftAssignment).filter(ShiftAssignment.id == assignment_id).first()
+    if not a:
+        raise HTTPException(404, 'Assignment not found')
+    if current_user.role not in ('admin', 'supervisor'):
+        raise HTTPException(403, 'Only supervisors can confirm assignments')
+    a.confirmed_by_id = current_user.id
+    db.commit()
+    db.refresh(a)
+    return _assignment_out(a)
+
+
+@router.delete('/assignments/{assignment_id}')
+def delete_assignment(
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_supervisor),
+):
+    a = db.query(ShiftAssignment).filter(ShiftAssignment.id == assignment_id).first()
+    if not a:
+        raise HTTPException(404, 'Assignment not found')
+    db.delete(a)
+    db.commit()
+    return {'ok': True}
+
+
+# ── Job Allotments ────────────────────────────────────────────────────────────
+
+@router.get('/allotments')
+def list_allotments(
+    operator_id: Optional[int] = None,
+    workstation_id: Optional[int] = None,
+    active_only: bool = True,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    q = db.query(JobAllotment)
+    if active_only:
+        q = q.filter(JobAllotment.is_active == 1)
+    if operator_id:
+        q = q.filter(JobAllotment.operator_id == operator_id)
+    if workstation_id:
+        q = q.filter(JobAllotment.workstation_id == workstation_id)
+    # Operators only see their own allotments
+    if current_user.role == UserRole.operator:
+        q = q.filter(JobAllotment.operator_id == current_user.id)
+    return [_allotment_out(j) for j in q.order_by(JobAllotment.created_at.desc()).all()]
+
+
+@router.post('/allotments')
+def create_allotment(
+    data: AllotmentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_supervisor),
+):
+    uid = db.query(UID).filter(UID.id == data.uid_id).first()
+    if not uid:
+        raise HTTPException(404, 'UID not found')
+    if uid.status not in (UIDStatus.active, UIDStatus.on_hold):
+        raise HTTPException(400, f'UID is {uid.status}, cannot allot')
+
+    # Deactivate any existing active allotment for this UID
+    db.query(JobAllotment).filter(
+        JobAllotment.uid_id == data.uid_id,
+        JobAllotment.is_active == 1,
+    ).update({'is_active': 0})
+
+    allotment = JobAllotment(
+        uid_id=data.uid_id,
+        operator_id=data.operator_id,
+        workstation_id=data.workstation_id,
+        allotted_by_id=current_user.id,
+        notes=data.notes,
+        is_active=1,
+    )
+    db.add(allotment)
+    db.commit()
+    db.refresh(allotment)
+    return _allotment_out(allotment)
+
+
+@router.delete('/allotments/{allotment_id}')
+def remove_allotment(
+    allotment_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_supervisor),
+):
+    j = db.query(JobAllotment).filter(JobAllotment.id == allotment_id).first()
+    if not j:
+        raise HTTPException(404, 'Allotment not found')
+    j.is_active = 0
+    db.commit()
+    return {'ok': True}

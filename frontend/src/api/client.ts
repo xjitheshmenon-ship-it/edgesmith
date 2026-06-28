@@ -99,3 +99,14 @@ export const userApi = {
   create: (data: Record<string, unknown>) => api.post('/users/', data),
   update: (id: number, data: Record<string, unknown>) => api.patch(`/users/${id}`, data),
 }
+
+// ── Shifts ────────────────────────────────────────────────────────────────────
+export const shiftApi = {
+  listAssignments: (params?: Record<string, unknown>) => api.get('/shifts/assignments', { params }),
+  createAssignment: (data: Record<string, unknown>) => api.post('/shifts/assignments', data),
+  confirmAssignment: (id: number) => api.post(`/shifts/assignments/${id}/confirm`),
+  deleteAssignment: (id: number) => api.delete(`/shifts/assignments/${id}`),
+  listAllotments: (params?: Record<string, unknown>) => api.get('/shifts/allotments', { params }),
+  createAllotment: (data: Record<string, unknown>) => api.post('/shifts/allotments', data),
+  removeAllotment: (id: number) => api.delete(`/shifts/allotments/${id}`),
+}
