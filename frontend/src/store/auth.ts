@@ -1,7 +1,4 @@
-import { create } from 'zustand'
 import type { User } from '../types'
-
-// Minimal Zustand-like store using React context — avoids extra dep
 let _user: User | null = JSON.parse(localStorage.getItem('user') || 'null')
 let _listeners: (() => void)[] = []
 

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { shopfloorApi, factoryApi } from '../api/client'
 import type { ShopfloorStatus, FactoryLocation } from '../types'
 import { RefreshCw, AlertTriangle } from 'lucide-react'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -25,12 +25,15 @@ export default function Shopfloor() {
     queryFn: () => factoryApi.locations().then((r) => r.data),
   })
 
-  const { data: status, refetch, isFetching } = useQuery<ShopfloorStatus[]>({
+  const { data: status, refetch, isFetching, dataUpdatedAt } = useQuery<ShopfloorStatus[]>({
     queryKey: ['shopfloor-full', selectedLoc],
     queryFn: () => shopfloorApi.status(selectedLoc).then((r) => r.data),
     refetchInterval: 20_000,
-    onSuccess: () => setNow(new Date()),
   })
+
+  useEffect(() => {
+    if (dataUpdatedAt) setNow(new Date(dataUpdatedAt))
+  }, [dataUpdatedAt])
 
   return (
     <div className="p-6 space-y-6">
