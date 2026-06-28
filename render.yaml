@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: edgesmith-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: edgesmith-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: https://xjitheshmenon-ship-it.github.io
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 480
+
+databases:
+  - name: edgesmith-db
+    plan: free
