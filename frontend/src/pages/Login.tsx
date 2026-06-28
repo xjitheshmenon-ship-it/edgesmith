@@ -37,25 +37,25 @@ export default function Login() {
       justifyContent: 'center',
       padding: 24,
     }}>
-      <div style={{ width: '100%', maxWidth: 360 }}>
+      <div style={{ width: '100%', maxWidth: 380 }}>
 
         {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: 36 }}>
+        <div style={{ textAlign: 'center', marginBottom: 40 }}>
           <div style={{
             fontFamily: "'Archivo', sans-serif",
             fontWeight: 800,
-            fontSize: 34,
+            fontSize: 36,
             letterSpacing: '-0.035em',
             lineHeight: 1,
             color: 'var(--ink)',
           }}>
-            edgesmith<span style={{ color: 'var(--accent)' }}>.</span>
+            edgesmith<span style={{ color: '#d4eecb' }}>.</span>
           </div>
           <div style={{
             fontFamily: "'IBM Plex Mono', monospace",
-            fontSize: 9.5,
+            fontSize: 10,
             letterSpacing: '0.16em',
-            color: 'var(--ink-3)',
+            color: 'var(--ink-2)',
             marginTop: 8,
           }}>
             INNOVATE. ENGINEER. EXCEL.
@@ -63,16 +63,16 @@ export default function Login() {
         </div>
 
         {/* Card */}
-        <div className="card" style={{ padding: '28px 24px' }}>
-          <div style={{ marginBottom: 22 }}>
+        <div className="card" style={{ padding: '32px 28px' }}>
+          <div style={{ marginBottom: 24 }}>
             <div style={{
               fontFamily: "'Archivo', sans-serif",
               fontWeight: 700,
-              fontSize: 17,
+              fontSize: 18,
               letterSpacing: '-0.02em',
               color: 'var(--ink)',
             }}>
-              Sign in
+              Sign in to CPCMS
             </div>
             <div style={{
               fontFamily: "'IBM Plex Mono', monospace",
@@ -81,7 +81,7 @@ export default function Login() {
               marginTop: 4,
               letterSpacing: '0.04em',
             }}>
-              CPCMS
+              Manufacturing Management System
             </div>
           </div>
 
@@ -91,12 +91,10 @@ export default function Login() {
                 display: 'block',
                 fontFamily: "'IBM Plex Mono', monospace",
                 fontSize: 10.5,
-                letterSpacing: '0.1em',
+                letterSpacing: '0.08em',
                 color: 'var(--ink-2)',
                 marginBottom: 6,
-              }}>
-                USERNAME
-              </label>
+              }}>USERNAME</label>
               <input
                 className="input"
                 style={{ width: '100%' }}
@@ -112,12 +110,10 @@ export default function Login() {
                 display: 'block',
                 fontFamily: "'IBM Plex Mono', monospace",
                 fontSize: 10.5,
-                letterSpacing: '0.1em',
+                letterSpacing: '0.08em',
                 color: 'var(--ink-2)',
                 marginBottom: 6,
-              }}>
-                PASSWORD
-              </label>
+              }}>PASSWORD</label>
               <input
                 className="input"
                 style={{ width: '100%' }}
@@ -133,8 +129,8 @@ export default function Login() {
               <div style={{
                 padding: '8px 12px',
                 borderRadius: 8,
-                background: 'rgba(248,113,113,.12)',
-                border: '1px solid rgba(248,113,113,.3)',
+                background: '#fff0ef',
+                border: '1px solid #ffd0cc',
                 color: 'var(--error)',
                 fontSize: 13,
               }}>
@@ -155,10 +151,10 @@ export default function Login() {
 
         <div style={{
           textAlign: 'center',
-          marginTop: 18,
+          marginTop: 20,
           fontFamily: "'IBM Plex Mono', monospace",
-          fontSize: 9.5,
-          color: 'var(--ink-3)',
+          fontSize: 10,
+          color: 'var(--ink-2)',
           letterSpacing: '0.04em',
         }}>
           Edgesmith Tooling India Pvt Ltd

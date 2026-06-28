@@ -6,21 +6,22 @@
 
 /* ── Design tokens ──────────────────────────────────────────────────────── */
 :root {
-  --bg:        #0a1e47;
-  --surface:   #11305f;
-  --surface-2: #162d72;
-  --surface-3: #1e3d8a;
-  --line:      #1e4080;
-  --ink:       #eaf4e4;
-  --ink-2:     #9bb4d4;
-  --ink-3:     #5a7aaa;
-  --accent:    #d4eecb;
-  --accent-h:  #bde0b0;
-  --accent-dim:#1a3d2b;
-  --success:   #5dd68c;
-  --error:     #f87171;
-  --warning:   #fbbf24;
-  --info:      #60a5fa;
+  --bg:        #f3efe6;
+  --surface:   #fbf9f4;
+  --surface-2: #efe9dc;
+  --surface-3: #e5ddd0;
+  --line:      #ddd5c6;
+  --ink:       #1c1a17;
+  --ink-2:     #6b6358;
+  --ink-3:     #9c9080;
+  --accent:    #d2491f;
+  --accent-h:  #b83d18;
+  --accent-dim:#fdf0eb;
+  --accent-ink:#fff;
+  --success:   #22a06b;
+  --error:     #e5484d;
+  --warning:   #f59e0b;
+  --info:      #1d4ed8;
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */
@@ -37,10 +38,12 @@ body {
 }
 
 /* ── Scrollbar ────────────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-thumb {
   background: var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
 }
 ::-webkit-scrollbar-track { background: transparent; }
 
@@ -50,17 +53,17 @@ body {
   .card {
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 10px;
-    box-shadow: 0 4px 20px rgba(0,0,0,.3);
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.06);
   }
 
   /* Inputs */
   .input {
     height: 36px;
     padding: 0 12px;
-    background: var(--surface-2);
+    background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 9px;
     font-family: 'IBM Plex Sans', sans-serif;
     font-size: 13px;
     color: var(--ink);
@@ -71,19 +74,18 @@ body {
   .input::placeholder { color: var(--ink-3); }
   .input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(212,238,203,.15);
+    box-shadow: 0 0 0 3px rgba(210,73,31,.12);
   }
   textarea.input { height: auto; padding: 8px 12px; resize: vertical; }
   select.input {
     cursor: pointer;
     appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235a7aaa' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b6358' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 10px center;
     padding-right: 30px;
-    background-color: var(--surface-2);
+    background-color: var(--surface);
   }
-  select.input option { background: var(--surface-2); }
 
   /* Buttons */
   .btn-primary {
@@ -93,19 +95,19 @@ body {
     height: 36px;
     padding: 0 16px;
     background: var(--accent);
-    color: #0a1e47;
+    color: var(--accent-ink);
     border: none;
-    border-radius: 8px;
+    border-radius: 9px;
     font-family: 'IBM Plex Sans', sans-serif;
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     cursor: pointer;
     transition: background 0.15s;
     white-space: nowrap;
     flex-shrink: 0;
   }
   .btn-primary:hover:not(:disabled) { background: var(--accent-h); }
-  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .btn-secondary {
     display: inline-flex;
@@ -113,20 +115,20 @@ body {
     gap: 6px;
     height: 36px;
     padding: 0 14px;
-    background: var(--surface-2);
+    background: var(--surface);
     color: var(--ink);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 9px;
     font-family: 'IBM Plex Sans', sans-serif;
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s;
     white-space: nowrap;
     flex-shrink: 0;
   }
-  .btn-secondary:hover:not(:disabled) { background: var(--surface-3); border-color: var(--ink-3); }
-  .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-secondary:hover:not(:disabled) { background: var(--surface-2); }
+  .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 
   /* Badges */
   .badge {
@@ -140,19 +142,19 @@ body {
     font-weight: 600;
     letter-spacing: .02em;
   }
-  .badge-green  { @apply badge; background: rgba(93,214,140,.18); color: #5dd68c; }
-  .badge-blue   { @apply badge; background: rgba(96,165,250,.18);  color: #60a5fa; }
-  .badge-red    { @apply badge; background: rgba(248,113,113,.18); color: #f87171; }
-  .badge-yellow { @apply badge; background: rgba(251,191,36,.18);  color: #fbbf24; }
-  .badge-gray   { @apply badge; background: var(--surface-3); color: var(--ink-2); }
-  .badge-orange { @apply badge; background: rgba(251,146,60,.18);  color: #fb923c; }
+  .badge-blue   { @apply badge; background: #dbeafe; color: #1d4ed8; }
+  .badge-green  { @apply badge; background: #dcfce7; color: #15803d; }
+  .badge-red    { @apply badge; background: #fee2e2; color: #b91c1c; }
+  .badge-yellow { @apply badge; background: #fef3c7; color: #b45309; }
+  .badge-gray   { @apply badge; background: var(--surface-2); color: var(--ink-2); }
+  .badge-orange { @apply badge; background: #ffedd5; color: #c2410c; }
 
   /* Mono uppercase section labels */
   .label-caps {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 10px;
-    letter-spacing: 0.14em;
-    color: var(--ink-3);
+    letter-spacing: 0.16em;
+    color: var(--ink-2);
     text-transform: uppercase;
   }
 
@@ -183,7 +185,7 @@ body {
     font-size: 10px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: var(--ink-3);
+    color: var(--ink-2);
     border-bottom: 1px solid var(--line);
     font-weight: 600;
   }

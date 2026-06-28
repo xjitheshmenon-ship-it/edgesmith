@@ -9,10 +9,10 @@ type StatusFilter = 'all' | 'in_progress' | 'completed' | 'open' | 'cancelled'
 type ViewMode = 'list' | 'kanban'
 
 const STATUS_META: Record<string, { label: string; dot: string; bg: string; color: string }> = {
-  open:        { label: 'Draft',       dot: '#7a8fa6', bg: 'rgba(122,143,166,.15)', color: '#9bb4d4' },
-  in_progress: { label: 'In Progress', dot: '#fbbf24', bg: 'rgba(251,191,36,.15)',  color: '#fbbf24' },
-  completed:   { label: 'Done',        dot: '#5dd68c', bg: 'rgba(93,214,140,.15)',   color: '#5dd68c' },
-  cancelled:   { label: 'Cancelled',   dot: '#f87171', bg: 'rgba(248,113,113,.15)',  color: '#f87171' },
+  open:        { label: 'Draft',       dot: '#9c9080', bg: '#f0ece5', color: '#6b6358' },
+  in_progress: { label: 'In Progress', dot: '#d97706', bg: '#fef3c7', color: '#b45309' },
+  completed:   { label: 'Done',        dot: '#15803d', bg: '#dcfce7', color: '#15803d' },
+  cancelled:   { label: 'Cancelled',   dot: '#b91c1c', bg: '#fee2e2', color: '#b91c1c' },
 }
 
 function statusMeta(s: string) {
