@@ -63,9 +63,47 @@ WORKSTATIONS = [
 STORAGES = ["RM", "RM-Q", "RM-D", "HT-Q", "HT-D", "MC-Q", "MC-D", "QC-Q", "QC-D", "FG"]
 
 
+EXTRA_USERS = [
+    # 5 operators
+    ("operator3", "Muthukumar S",    "op123", UserRole.operator,    1),
+    ("operator4", "Vijayakumar R",   "op123", UserRole.operator,    1),
+    ("operator5", "Balamurugan K",   "op123", UserRole.operator,    2),
+    ("operator6", "Senthilkumar P",  "op123", UserRole.operator,    2),
+    ("operator7", "Arumugam D",      "op123", UserRole.operator,    1),
+    # 3 supervisors
+    ("supervisor3", "Kannan M",      "super123", UserRole.supervisor, 1),
+    ("supervisor4", "Prakash V",     "super123", UserRole.supervisor, 2),
+    ("supervisor5", "Murugesan T",   "super123", UserRole.supervisor, 1),
+]
+
+
+def seed_extra_users(db: Session):
+    """Idempotent — inserts extra users only if they don't already exist."""
+    loc1 = db.query(FactoryLocation).filter(FactoryLocation.code == "F1").first()
+    loc2 = db.query(FactoryLocation).filter(FactoryLocation.code == "F2").first()
+    if not loc1 or not loc2:
+        return
+    loc_map = {1: loc1.id, 2: loc2.id}
+    added = 0
+    for username, full_name, pwd, role, loc_idx in EXTRA_USERS:
+        if not db.query(User).filter(User.username == username).first():
+            db.add(User(
+                username=username,
+                full_name=full_name,
+                hashed_password=hash_password(pwd),
+                role=role,
+                primary_location_id=loc_map[loc_idx],
+            ))
+            added += 1
+    if added:
+        db.commit()
+        print(f"Added {added} extra users.")
+
+
 def seed(db: Session):
     if db.query(User).filter(User.username == "admin").first():
         print("Database already seeded.")
+        seed_extra_users(db)
         return
 
     print("Seeding database...")
