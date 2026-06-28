@@ -40,11 +40,21 @@ export default function Login() {
       <div style={{ width: '100%', maxWidth: 380 }}>
 
         {/* Logo */}
-        <div style={{ textAlign: 'center', marginBottom: 40 }}>
+        <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div style={{
+            fontFamily: "'IBM Plex Mono', monospace",
+            fontWeight: 700,
+            fontSize: 13,
+            letterSpacing: '0.22em',
+            color: 'var(--accent)',
+            marginBottom: 6,
+          }}>
+            CPCMS
+          </div>
           <div style={{
             fontFamily: "'Archivo', sans-serif",
             fontWeight: 800,
-            fontSize: 36,
+            fontSize: 32,
             letterSpacing: '-0.035em',
             lineHeight: 1,
             color: 'var(--ink)',
@@ -129,8 +139,8 @@ export default function Login() {
               <div style={{
                 padding: '8px 12px',
                 borderRadius: 8,
-                background: '#fff0ef',
-                border: '1px solid #ffd0cc',
+                background: 'rgba(248,113,113,.12)',
+                border: '1px solid rgba(248,113,113,.3)',
                 color: 'var(--error)',
                 fontSize: 13,
               }}>
@@ -149,9 +159,44 @@ export default function Login() {
           </form>
         </div>
 
+        {/* Demo credentials */}
+        <div className="card" style={{ padding: '16px 20px', marginTop: 16 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.16em', color: 'var(--ink-3)', marginBottom: 10, textTransform: 'uppercase' }}>
+            Demo Credentials
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {[
+              { role: 'Admin',       user: 'admin',       pwd: 'admin123',   color: '#c4b5fd' },
+              { role: 'Manager',     user: 'manager1',    pwd: 'manager123', color: '#93c5fd' },
+              { role: 'Supervisor',  user: 'supervisor1', pwd: 'super123',   color: '#6ee7b7' },
+              { role: 'Operator',    user: 'operator1',   pwd: 'op123',      color: '#fcd34d' },
+            ].map(d => (
+              <div
+                key={d.role}
+                onClick={() => { setUsername(d.user); setPassword(d.pwd) }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '7px 10px', borderRadius: 8,
+                  background: 'var(--surface-2)', cursor: 'pointer',
+                  border: '1px solid var(--line)', transition: 'border-color 0.1s',
+                }}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--line)'}
+              >
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600, color: d.color, width: 68 }}>{d.role}</span>
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink)', flex: 1 }}>{d.user}</span>
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)' }}>{d.pwd}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: 'var(--ink-3)', marginTop: 8 }}>
+            Click any row to fill credentials
+          </div>
+        </div>
+
         <div style={{
           textAlign: 'center',
-          marginTop: 20,
+          marginTop: 16,
           fontFamily: "'IBM Plex Mono', monospace",
           fontSize: 10,
           color: 'var(--ink-2)',
