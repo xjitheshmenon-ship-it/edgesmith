@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { shiftApi, factoryApi, userApi } from '../api/client'
 import { format } from 'date-fns'
-import { Plus, Trash2, CheckCircle, Clock, UserCheck, Briefcase } from 'lucide-react'
+import { Plus, Trash2, CheckCircle, Clock, UserCheck, Briefcase, Zap } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
 const SHIFTS = [
@@ -92,6 +92,15 @@ export default function Shifts() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['job-allotments'] }),
   })
 
+  const [autoAssignResult, setAutoAssignResult] = useState<{ allotted: number } | null>(null)
+  const autoAssign = useMutation({
+    mutationFn: () => shiftApi.autoAssign({ shift_date: selectedDate, shift_period: selectedShift }).then(r => r.data),
+    onSuccess: (data) => {
+      setAutoAssignResult(data)
+      qc.invalidateQueries({ queryKey: ['job-allotments'] })
+    },
+  })
+
   const shiftInfo = SHIFTS.find(s => s.value === selectedShift)!
 
   return (
@@ -150,8 +159,25 @@ export default function Shifts() {
       {/* ASSIGNMENTS TAB */}
       {activeTab === 'assignments' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace", ...SHIFT_PILL[selectedShift] }}>
-            <Clock size={12} /> {shiftInfo.label} Shift · {shiftInfo.time} · {format(new Date(selectedDate + 'T00:00:00'), 'dd MMM yyyy')}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace", ...SHIFT_PILL[selectedShift] }}>
+              <Clock size={12} /> {shiftInfo.label} Shift · {shiftInfo.time} · {format(new Date(selectedDate + 'T00:00:00'), 'dd MMM yyyy')}
+            </div>
+            {canEdit && (
+              <button
+                className="btn-secondary"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+                disabled={autoAssign.isPending || (assignments as any[]).length === 0}
+                onClick={() => { setAutoAssignResult(null); autoAssign.mutate() }}
+              >
+                <Zap size={13} /> {autoAssign.isPending ? 'Assigning…' : 'Auto-Assign UIDs'}
+              </button>
+            )}
+            {autoAssignResult && (
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: autoAssignResult.allotted > 0 ? '#22a06b' : 'var(--ink-3)' }}>
+                {autoAssignResult.allotted > 0 ? `✓ ${autoAssignResult.allotted} UIDs allotted` : 'No matching UIDs found'}
+              </span>
+            )}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
