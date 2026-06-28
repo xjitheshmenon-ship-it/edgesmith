@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { manufacturingApi, productApi } from '../api/client'
-import type { ManufacturingOrder, ConversionPattern, Size, Design } from '../types'
-import { Plus, Scissors, List, Columns } from 'lucide-react'
+import { manufacturingApi } from '../api/client'
+import type { ManufacturingOrder, UID } from '../types'
+import { Plus, Scissors, List, Columns, X, ChevronRight, Clock, CheckCircle2, XCircle } from 'lucide-react'
 import { format } from 'date-fns'
+import UIDStatusBadge from '../components/UIDStatusBadge'
+import PriorityBadge from '../components/PriorityBadge'
 
 type StatusFilter = 'all' | 'in_progress' | 'completed' | 'open' | 'cancelled'
 type ViewMode = 'list' | 'kanban'
@@ -27,12 +29,237 @@ const FILTER_OPTIONS: { key: StatusFilter; label: string }[] = [
   { key: 'cancelled',   label: 'Cancelled' },
 ]
 
+// ── UID Detail Panel ──────────────────────────────────────────────────────────
+
+function UIDDetailPanel({ uid, onClose }: { uid: UID; onClose: () => void }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', display: 'flex', alignItems: 'center', padding: 4 }}>
+          <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
+        </button>
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 15, color: 'var(--ink)' }}>{uid.code}</span>
+        <UIDStatusBadge status={uid.status} />
+        <PriorityBadge priority={uid.priority} />
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Key fields grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          {[
+            { label: 'Cycle', value: uid.cycle_type_name ?? '—' },
+            { label: 'Step', value: uid.current_step_number ? `${uid.current_step_number} — ${uid.current_step_name}` : '—' },
+            { label: 'Storage', value: uid.current_storage_code ?? '—' },
+            { label: 'Size / Design', value: `${uid.size_mm ? uid.size_mm + 'mm' : '—'} / ${uid.design_code ?? 'No design'}` },
+            { label: 'Location', value: uid.factory_location_code ?? '—' },
+            { label: 'Created', value: uid.created_at ? format(new Date(uid.created_at), 'dd MMM yyyy') : '—' },
+          ].map(f => (
+            <div key={f.label} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 4 }}>{f.label}</div>
+              <div style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink)' }}>{f.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Step history */}
+        {uid.step_history && uid.step_history.length > 0 && (
+          <div>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 10 }}>
+              Manufacturing History ({uid.step_history.length})
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {uid.step_history.map((h) => (
+                <div key={h.id} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 12px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <div style={{ flexShrink: 0, marginTop: 1 }}>
+                    {h.qc_result === 'pass' ? (
+                      <CheckCircle2 size={14} style={{ color: '#22a06b' }} />
+                    ) : h.qc_result === 'fail' ? (
+                      <XCircle size={14} style={{ color: 'var(--error)' }} />
+                    ) : (
+                      <Clock size={14} style={{ color: 'var(--ink-3)' }} />
+                    )}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)' }}>Step {h.step_number}</span>
+                      <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink)' }}>{h.operation_name}</span>
+                      {h.qc_result && (
+                        <span className={h.qc_result === 'pass' ? 'badge-green' : 'badge-red'} style={{ fontSize: 10 }}>QC: {h.qc_result}</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--ink-2)', marginTop: 3 }}>
+                      {format(new Date(h.performed_at), 'dd MMM yyyy, HH:mm')}
+                      {h.performed_by && ` · ${h.performed_by}`}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── MO Drawer ─────────────────────────────────────────────────────────────────
+
+function MODrawer({ mo, onClose }: { mo: ManufacturingOrder; onClose: () => void }) {
+  const [selectedUID, setSelectedUID] = useState<UID | null>(null)
+  const meta = statusMeta(mo.status)
+  const progress = mo.uid_count > 0 ? Math.round((mo.uid_count / mo.quantity) * 100) : 0
+
+  const { data: uids = [], isLoading } = useQuery<UID[]>({
+    queryKey: ['mo-uids', mo.id],
+    queryFn: () => manufacturingApi.orderUIDs(mo.id).then((r) => r.data),
+  })
+
+  // Status breakdown
+  const statusCounts = uids.reduce((acc, u) => {
+    acc[u.status] = (acc[u.status] ?? 0) + 1
+    return acc
+  }, {} as Record<string, number>)
+
+  return (
+    <>
+      {/* Overlay */}
+      <div
+        onClick={onClose}
+        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', zIndex: 40 }}
+      />
+      {/* Drawer */}
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: selectedUID ? 800 : 480,
+        background: 'var(--surface)',
+        borderLeft: '1px solid var(--line)',
+        zIndex: 41,
+        display: 'flex',
+        flexDirection: 'row',
+        boxShadow: '-8px 0 32px rgba(0,0,0,.35)',
+        transition: 'width 0.2s ease',
+        overflow: 'hidden',
+      }}>
+        {/* UID detail panel (left side when open) */}
+        {selectedUID && (
+          <div style={{ width: 320, borderRight: '1px solid var(--line)', flexShrink: 0, overflow: 'hidden' }}>
+            <UIDDetailPanel uid={selectedUID} onClose={() => setSelectedUID(null)} />
+          </div>
+        )}
+
+        {/* Main drawer content */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Header */}
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 17, color: 'var(--accent)' }}>{mo.mo_number}</div>
+                <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600, marginTop: 2 }}>{mo.customer || '—'}</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 6, background: meta.bg, color: meta.color, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.dot }} />
+                  {meta.label}
+                </span>
+                <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', display: 'flex', padding: 4 }}>
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+
+            {/* Stats row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+              {[
+                { label: 'Quantity', value: `${mo.quantity} pc` },
+                { label: 'UIDs Linked', value: `${mo.uid_count}` },
+                { label: 'Created', value: format(new Date(mo.created_at), 'dd MMM yyyy') },
+              ].map(f => (
+                <div key={f.label} style={{ background: 'var(--surface)', borderRadius: 7, padding: '8px 10px' }}>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 3 }}>{f.label}</div>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{f.value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Progress bar */}
+            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ flex: 1, height: 5, borderRadius: 5, background: 'var(--surface)', overflow: 'hidden' }}>
+                <div style={{ width: `${progress}%`, height: '100%', borderRadius: 5, background: meta.dot, transition: 'width 0.3s' }} />
+              </div>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)', width: 36, textAlign: 'right' }}>{progress}%</span>
+            </div>
+          </div>
+
+          {/* UID list */}
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {/* Status summary chips */}
+            {Object.keys(statusCounts).length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid var(--line)' }}>
+                {Object.entries(statusCounts).map(([s, count]) => (
+                  <span key={s} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, padding: '2px 8px', borderRadius: 10, background: 'var(--surface-2)', color: 'var(--ink-2)' }}>
+                    {s}: {count}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {isLoading && (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>Loading UIDs…</div>
+            )}
+            {!isLoading && uids.length === 0 && (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>No UIDs linked to this order</div>
+            )}
+            {uids.map((u) => (
+              <div
+                key={u.id}
+                onClick={() => setSelectedUID(u.id === selectedUID?.id ? null : u)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '11px 16px',
+                  borderBottom: '1px solid var(--line)',
+                  cursor: 'pointer',
+                  background: selectedUID?.id === u.id ? 'var(--surface-2)' : 'transparent',
+                  transition: 'background 0.1s',
+                  borderLeft: selectedUID?.id === u.id ? '3px solid var(--accent)' : '3px solid transparent',
+                }}
+                onMouseEnter={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,.04)' }}
+                onMouseLeave={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = '' }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>{u.code}</span>
+                    <UIDStatusBadge status={u.status} />
+                    <PriorityBadge priority={u.priority} />
+                  </div>
+                  <div style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>
+                    {u.current_step_number ? `Step ${u.current_step_number} — ${u.current_step_name}` : 'No active step'}
+                    {u.current_storage_code && <span style={{ marginLeft: 8, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>{u.current_storage_code}</span>}
+                  </div>
+                </div>
+                <ChevronRight size={14} style={{ color: 'var(--ink-3)', flexShrink: 0 }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
 export default function Manufacturing() {
   const [activeFilter, setActiveFilter] = useState<StatusFilter>('all')
   const [view, setView] = useState<ViewMode>('list')
   const [showCreateMO, setShowCreateMO] = useState(false)
   const [showCreatePattern, setShowCreatePattern] = useState(false)
   const [tab, setTab] = useState<'orders' | 'patterns'>('orders')
+  const [selectedMO, setSelectedMO] = useState<ManufacturingOrder | null>(null)
   const qc = useQueryClient()
 
   const { data: orders = [] } = useQuery<ManufacturingOrder[]>({
@@ -40,7 +267,7 @@ export default function Manufacturing() {
     queryFn: () => manufacturingApi.orders().then((r) => r.data),
   })
 
-  const { data: patterns = [] } = useQuery<ConversionPattern[]>({
+  const { data: patterns = [] } = useQuery<{ id: number; name: string; input_length_mm: number; output_lengths_mm: number[]; kerf_mm: number; num_cuts: number; scrap_mm: number; is_active: boolean }[]>({
     queryKey: ['patterns'],
     queryFn: () => manufacturingApi.patterns().then((r) => r.data),
   })
@@ -154,7 +381,6 @@ export default function Manufacturing() {
 
           {view === 'list' ? (
             <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
-              {/* Header row */}
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: '148px 1fr 90px 104px 150px 120px',
@@ -174,6 +400,7 @@ export default function Manufacturing() {
                 return (
                   <div
                     key={m.id}
+                    onClick={() => setSelectedMO(m)}
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '148px 1fr 90px 104px 150px 120px',
@@ -183,7 +410,7 @@ export default function Manufacturing() {
                       cursor: 'pointer',
                       transition: 'background 0.1s',
                     }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                     onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
                   >
                     <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, fontWeight: 600, color: 'var(--accent)' }}>{m.mo_number}</div>
@@ -227,13 +454,28 @@ export default function Manufacturing() {
                       <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, color: 'var(--ink-2)', letterSpacing: '0.08em' }}>{meta.label.toUpperCase()}</span>
                       <span style={{ marginLeft: 'auto', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-3)' }}>{col.length}</span>
                     </div>
-                    {col.map(m => (
-                      <div key={m.id} className="card" style={{ padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}>
-                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: 'var(--accent)', marginBottom: 4 }}>{m.mo_number}</div>
-                        <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{m.customer || '—'}</div>
-                        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)', marginTop: 2 }}>{m.quantity} pc</div>
-                      </div>
-                    ))}
+                    {col.map(m => {
+                      const progress = m.uid_count > 0 ? Math.round((m.uid_count / m.quantity) * 100) : 0
+                      return (
+                        <div
+                          key={m.id}
+                          className="card"
+                          onClick={() => setSelectedMO(m)}
+                          style={{ padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}
+                          onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'}
+                          onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--line)'}
+                        >
+                          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: 'var(--accent)', marginBottom: 4 }}>{m.mo_number}</div>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{m.customer || '—'}</div>
+                          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)', marginTop: 2 }}>{m.quantity} pc · {m.uid_count} UIDs</div>
+                          {m.uid_count > 0 && (
+                            <div style={{ marginTop: 8, height: 3, borderRadius: 3, background: 'var(--surface-2)', overflow: 'hidden' }}>
+                              <div style={{ width: `${progress}%`, height: '100%', borderRadius: 3, background: meta.dot }} />
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                     {col.length === 0 && <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--ink-3)', fontSize: 12 }}>Empty</div>}
                   </div>
                 )
@@ -276,6 +518,7 @@ export default function Manufacturing() {
         </div>
       )}
 
+      {selectedMO && <MODrawer mo={selectedMO} onClose={() => setSelectedMO(null)} />}
       {showCreateMO && <CreateMOModal onClose={() => { setShowCreateMO(false); qc.invalidateQueries({ queryKey: ['mo-orders'] }) }} />}
       {showCreatePattern && <CreatePatternModal onClose={() => { setShowCreatePattern(false); qc.invalidateQueries({ queryKey: ['patterns'] }) }} />}
     </div>

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { uidApi, factoryApi } from '../api/client'
-import type { UID, Workstation, FactoryLocation } from '../types'
+import type { UID, Workstation } from '../types'
 import UIDStatusBadge from '../components/UIDStatusBadge'
 import PriorityBadge from '../components/PriorityBadge'
 import { useAuth } from '../hooks/useAuth'
@@ -43,107 +43,101 @@ export default function OperatorQueue() {
   const ordered = [...urgent, ...high, ...normal]
 
   return (
-    <div className="p-6 space-y-5">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">My Job Queue</h1>
-        <p className="text-sm text-gray-500">{uids.length} UIDs pending — select one to mark step complete</p>
+    <div style={{ padding: '24px 28px 60px' }}>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: '-0.02em', color: 'var(--ink)' }}>My Job Queue</div>
+        <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>{uids.length} UIDs pending — select one to mark step complete</div>
       </div>
 
       {urgent.length > 0 && (
-        <div className="badge-red p-3 rounded-lg text-sm flex items-center gap-2">
-          <AlertTriangle size={16} /> {urgent.length} urgent UIDs require immediate attention
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', borderRadius: 8, background: 'rgba(248,113,113,.12)', border: '1px solid rgba(248,113,113,.3)', color: 'var(--error)', fontSize: 13, marginBottom: 16 }}>
+          <AlertTriangle size={15} /> {urgent.length} urgent UIDs require immediate attention
         </div>
       )}
 
-      <div className="grid lg:grid-cols-2 gap-6">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
         {/* Queue list */}
-        <div className="card overflow-hidden">
-          <div className="bg-gray-50 border-b border-gray-200 px-4 py-3">
-            <h2 className="font-medium text-gray-700">Queue ({ordered.length})</h2>
+        <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>Queue ({ordered.length})</div>
           </div>
-          <div className="divide-y divide-gray-100 max-h-[60vh] overflow-y-auto">
+          <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
             {ordered.map((u) => (
               <button
                 key={u.id}
                 onClick={() => setSelectedUID(u)}
-                className={`w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors ${selectedUID?.id === u.id ? 'bg-brand-50 border-l-2 border-brand-500' : ''}`}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '12px 16px',
+                  background: selectedUID?.id === u.id ? 'var(--accent-dim)' : 'transparent',
+                  borderLeft: selectedUID?.id === u.id ? '2px solid var(--accent)' : '2px solid transparent',
+                  border: 'none',
+                  borderBottom: '1px solid var(--line)',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)' }}
+                onMouseLeave={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = '' }}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-bold text-gray-900">{u.code}</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, color: 'var(--ink)', fontSize: 13 }}>{u.code}</span>
                     <PriorityBadge priority={u.priority} />
                     <UIDStatusBadge status={u.status} />
                   </div>
-                  <span className="text-xs text-gray-400">{u.factory_location_code}</span>
+                  <span style={{ fontSize: 11, color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>{u.factory_location_code}</span>
                 </div>
-                <div className="text-xs text-gray-500 mt-1">
+                <div style={{ fontSize: 12, color: 'var(--ink-2)', marginTop: 4 }}>
                   Step {u.current_step_number} — {u.current_step_name}
-                  {u.current_storage_code && <> · <span className="font-mono">{u.current_storage_code}</span></>}
+                  {u.current_storage_code && <> · <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{u.current_storage_code}</span></>}
                 </div>
                 {u.current_step_name?.toLowerCase().includes('converting') && (
-                  <div className="text-xs text-orange-600 mt-0.5">⚠ Converting step — supervisor action required</div>
+                  <div style={{ fontSize: 11, color: '#fdba74', marginTop: 2 }}>⚠ Converting step — supervisor action required</div>
                 )}
               </button>
             ))}
             {ordered.length === 0 && (
-              <div className="px-4 py-8 text-center text-gray-400">Queue is empty</div>
+              <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>Queue is empty</div>
             )}
           </div>
         </div>
 
         {/* Complete step panel */}
         {selectedUID && (
-          <div className="card p-5 space-y-4">
+          <div className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div>
-              <div className="flex items-center gap-2 mb-1">
-                <h2 className="font-bold text-gray-900 font-mono text-xl">{selectedUID.code}</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 20, color: 'var(--ink)' }}>{selectedUID.code}</span>
                 <PriorityBadge priority={selectedUID.priority} />
               </div>
-              <p className="text-sm text-gray-600">
-                Step <strong>{selectedUID.current_step_number}</strong> — {selectedUID.current_step_name}
-              </p>
+              <div style={{ fontSize: 13, color: 'var(--ink-2)' }}>
+                Step <strong style={{ color: 'var(--ink)' }}>{selectedUID.current_step_number}</strong> — {selectedUID.current_step_name}
+              </div>
               {selectedUID.current_storage_code && (
-                <p className="text-xs text-gray-500">Current storage: <span className="font-mono">{selectedUID.current_storage_code}</span></p>
+                <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 3 }}>Current storage: <span style={{ fontFamily: "'IBM Plex Mono', monospace" }}>{selectedUID.current_storage_code}</span></div>
               )}
               {!selectedUID.design_confirmed && (
-                <div className="mt-2 text-sm text-yellow-700 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2">
+                <div style={{ marginTop: 10, fontSize: 13, color: '#fcd34d', background: 'rgba(251,191,36,.12)', border: '1px solid rgba(251,191,36,.3)', borderRadius: 8, padding: '8px 12px' }}>
                   ⚠ Design not confirmed — manager must confirm before Step 16
                 </div>
               )}
             </div>
 
-            <div>
-              <label className="label">Workstation</label>
-              <select className="input" value={selectedWS ?? ''} onChange={(e) => setSelectedWS(Number(e.target.value))}>
-                <option value="">Select workstation…</option>
-                {workstations.map((w) => <option key={w.id} value={w.id}>{w.code} — {w.name}</option>)}
-              </select>
-            </div>
+            <div><label className="label">Workstation</label><select className="input" value={selectedWS ?? ''} onChange={(e) => setSelectedWS(Number(e.target.value))}><option value="">Select workstation…</option>{workstations.map((w) => <option key={w.id} value={w.id}>{w.code} — {w.name}</option>)}</select></div>
+            <div><label className="label">QC Result</label><select className="input" value={qcResult} onChange={(e) => setQCResult(e.target.value)}><option value="na">N/A</option><option value="pass">Pass</option><option value="fail">Fail</option></select></div>
+            <div><label className="label">Notes</label><textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes…" /></div>
 
-            <div>
-              <label className="label">QC Result</label>
-              <select className="input" value={qcResult} onChange={(e) => setQCResult(e.target.value)}>
-                <option value="na">N/A</option>
-                <option value="pass">Pass</option>
-                <option value="fail">Fail</option>
-              </select>
-            </div>
+            {completeStep.error && <p style={{ fontSize: 13, color: 'var(--error)' }}>Failed to complete step</p>}
 
-            <div>
-              <label className="label">Notes</label>
-              <textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes…" />
-            </div>
-
-            {completeStep.error && <p className="text-sm text-red-600">Failed to complete step</p>}
-
-            <div className="flex gap-3">
-              <button className="btn-secondary flex-1" onClick={() => setSelectedUID(null)}>Cancel</button>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setSelectedUID(null)}>Cancel</button>
               <button
-                className="btn-primary flex-1"
+                className="btn-primary"
+                style={{ flex: 1 }}
                 disabled={!selectedWS || completeStep.isPending || selectedUID.status !== 'active'}
                 onClick={() => completeStep.mutate({ uid_id: selectedUID.id, workstation_id: selectedWS! })}
               >
-                <CheckCircle size={16} />
+                <CheckCircle size={15} />
                 {completeStep.isPending ? 'Saving…' : 'Mark Complete'}
               </button>
             </div>

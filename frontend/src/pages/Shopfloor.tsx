@@ -5,15 +5,15 @@ import { RefreshCw, AlertTriangle } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { format } from 'date-fns'
 
-const CATEGORY_COLORS: Record<string, string> = {
-  'Cutting': 'bg-red-50 border-red-200',
-  'Heat Treatment': 'bg-orange-50 border-orange-200',
-  'Machining': 'bg-blue-50 border-blue-200',
-  'Grinding': 'bg-purple-50 border-purple-200',
-  'Coating': 'bg-teal-50 border-teal-200',
-  'QC': 'bg-green-50 border-green-200',
-  'Packing': 'bg-gray-50 border-gray-200',
-  'Other': 'bg-gray-50 border-gray-200',
+const CATEGORY_COLOR: Record<string, string> = {
+  'Cutting':       'rgba(248,113,113,.15)',
+  'Heat Treatment':'rgba(251,146,60,.15)',
+  'Machining':     'rgba(96,165,250,.15)',
+  'Grinding':      'rgba(167,139,250,.15)',
+  'Coating':       'rgba(45,212,191,.15)',
+  'QC':            'rgba(34,160,107,.15)',
+  'Packing':       'rgba(148,163,184,.1)',
+  'Other':         'rgba(148,163,184,.1)',
 }
 
 export default function Shopfloor() {
@@ -36,50 +36,42 @@ export default function Shopfloor() {
   }, [dataUpdatedAt])
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div style={{ padding: '24px 28px 60px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Shopfloor Live View</h1>
-          <p className="text-xs text-gray-400">Last updated: {format(now, 'HH:mm:ss')}</p>
+          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: '-0.02em', color: 'var(--ink)' }}>Shopfloor Live View</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-3)', marginTop: 3 }}>Last updated: {format(now, 'HH:mm:ss')}</div>
         </div>
-        <div className="flex items-center gap-3">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {locations && (
-            <select
-              className="input w-48"
-              value={selectedLoc ?? ''}
-              onChange={(e) => setSelectedLoc(e.target.value ? Number(e.target.value) : undefined)}
-            >
+            <select className="input" style={{ width: 180 }} value={selectedLoc ?? ''} onChange={(e) => setSelectedLoc(e.target.value ? Number(e.target.value) : undefined)}>
               <option value="">All locations</option>
               {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
             </select>
           )}
           <button className="btn-secondary" onClick={() => refetch()} disabled={isFetching}>
-            <RefreshCw size={15} className={isFetching ? 'animate-spin' : ''} />
+            <RefreshCw size={15} style={isFetching ? { animation: 'spin 1s linear infinite' } : {}} />
             Refresh
           </button>
         </div>
       </div>
 
       {status && status.map((loc) => (
-        <div key={loc.location_id} className="space-y-4">
-          <div className="flex items-center gap-3">
-            <h2 className="font-bold text-lg text-gray-900">{loc.location_name}</h2>
-            <div className="flex gap-2">
-              <span className="badge-blue">{loc.total_active_uids} active</span>
-              {loc.on_hold > 0 && <span className="badge-yellow flex items-center gap-1"><AlertTriangle size={12} />{loc.on_hold} on hold</span>}
-            </div>
+        <div key={loc.location_id} style={{ marginBottom: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
+            <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 17, color: 'var(--ink)' }}>{loc.location_name}</div>
+            <span className="badge-blue">{loc.total_active_uids} active</span>
+            {loc.on_hold > 0 && <span className="badge-yellow" style={{ display: 'flex', alignItems: 'center', gap: 4 }}><AlertTriangle size={11} />{loc.on_hold} on hold</span>}
           </div>
 
           {/* Storage grid */}
-          <div className="card p-4">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Storage Locations</h3>
-            <div className="grid grid-cols-5 sm:grid-cols-10 gap-3">
+          <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 12 }}>Storage Locations</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(10, 1fr)', gap: 10 }}>
               {loc.storage_locations.map((s) => (
-                <div key={s.storage_id} className="text-center p-2 rounded-lg bg-gray-50 border border-gray-200">
-                  <div className={`text-xl font-bold ${s.uid_count > 0 ? 'text-brand-600' : 'text-gray-300'}`}>
-                    {s.uid_count}
-                  </div>
-                  <div className="text-xs text-gray-500 font-medium">{s.code}</div>
+                <div key={s.storage_id} style={{ textAlign: 'center', padding: '8px 4px', borderRadius: 8, background: 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                  <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 18, color: s.uid_count > 0 ? 'var(--accent)' : 'var(--ink-3)' }}>{s.uid_count}</div>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 2 }}>{s.code}</div>
                 </div>
               ))}
             </div>
@@ -93,19 +85,23 @@ export default function Shopfloor() {
               grouped[w.category].push(w)
             })
             return Object.entries(grouped).map(([cat, wsList]) => (
-              <div key={cat} className="card p-4">
-                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">{cat}</h3>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              <div key={cat} className="card" style={{ padding: 16, marginBottom: 10 }}>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 12 }}>{cat}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))', gap: 8 }}>
                   {wsList.map((w) => (
                     <div
                       key={w.workstation_id}
-                      className={`p-3 rounded-lg border ${CATEGORY_COLORS[cat] ?? 'bg-gray-50 border-gray-200'} ${w.uid_count > 0 ? 'shadow-sm' : 'opacity-50'}`}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: 9,
+                        border: '1px solid var(--line)',
+                        background: w.uid_count > 0 ? CATEGORY_COLOR[cat] ?? 'var(--surface-2)' : 'var(--surface-2)',
+                        opacity: w.uid_count > 0 ? 1 : 0.5,
+                      }}
                     >
-                      <div className={`text-2xl font-bold ${w.uid_count > 0 ? 'text-gray-900' : 'text-gray-300'}`}>
-                        {w.uid_count}
-                      </div>
-                      <div className="text-xs font-medium text-gray-700">{w.code}</div>
-                      <div className="text-xs text-gray-400 truncate">{w.name}</div>
+                      <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 22, color: w.uid_count > 0 ? 'var(--ink)' : 'var(--ink-3)' }}>{w.uid_count}</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginTop: 2 }}>{w.code}</div>
+                      <div style={{ fontSize: 11, color: 'var(--ink-2)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{w.name}</div>
                     </div>
                   ))}
                 </div>

@@ -196,7 +196,10 @@ body {
     color: var(--ink);
   }
   .es-table tr:last-child td { border-bottom: none; }
-  .es-table tbody tr:hover td { background: var(--surface-2); }
+  .es-table tbody tr:hover td { background: var(--surface-3); }
+
+  /* Row hover helper — works across all themes */
+  .row-hover:hover { background: var(--surface-3) !important; }
 }
 
 /* ── Animation ────────────────────────────────────────────────────────────── */

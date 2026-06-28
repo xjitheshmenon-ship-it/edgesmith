@@ -85,6 +85,7 @@ export const manufacturingApi = {
   patterns: () => api.get('/manufacturing/patterns'),
   createPattern: (data: Record<string, unknown>) => api.post('/manufacturing/patterns', data),
   archivePattern: (id: number) => api.patch(`/manufacturing/patterns/${id}/archive`),
+  orderUIDs: (mo_id: number) => api.get(`/manufacturing/orders/${mo_id}/uids`),
 }
 
 // ── Shopfloor ─────────────────────────────────────────────────────────────────
