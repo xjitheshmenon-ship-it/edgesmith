@@ -81,7 +81,7 @@ export default function Login() {
               marginTop: 4,
               letterSpacing: '0.04em',
             }}>
-              Manufacturing Management System
+              CPCMS
             </div>
           </div>
 

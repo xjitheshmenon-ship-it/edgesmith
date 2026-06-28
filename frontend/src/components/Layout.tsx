@@ -104,7 +104,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           padding: '18px 20px 6px',
           textTransform: 'uppercase',
         }}>
-          Manufacturing
+          CPCMS
         </div>
 
         {/* Nav */}
