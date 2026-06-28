@@ -58,7 +58,7 @@ export default function Login() {
             color: 'var(--ink-3)',
             marginTop: 8,
           }}>
-            PRECISION WORKS.
+            INNOVATE. ENGINEER. EXCEL.
           </div>
         </div>
 

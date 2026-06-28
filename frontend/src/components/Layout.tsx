@@ -91,7 +91,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             color: 'var(--ink-3)',
             marginTop: 5,
           }}>
-            PRECISION WORKS.
+            INNOVATE. ENGINEER. EXCEL.
           </div>
         </div>
 
@@ -104,7 +104,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           padding: '18px 20px 6px',
           textTransform: 'uppercase',
         }}>
-          CPCMS
+          MANUFACTURING
         </div>
 
         {/* Nav */}

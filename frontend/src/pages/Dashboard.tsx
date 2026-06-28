@@ -2,19 +2,20 @@ import { useQuery } from '@tanstack/react-query'
 import { shopfloorApi } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import type { DashboardSummary, ShopfloorStatus } from '../types'
-import { Package, AlertTriangle, CheckCircle, TrendingUp, ClipboardList } from 'lucide-react'
+import { Package, AlertTriangle, CheckCircle, ClipboardList, TrendingUp } from 'lucide-react'
 
-function StatCard({ label, value, icon, color }: { label: string; value: number | string; icon: React.ReactNode; color: string }) {
+function StatCard({ label, value, icon, iconBg, iconColor }: {
+  label: string; value: number | string
+  icon: React.ReactNode; iconBg: string; iconColor: string
+}) {
   return (
-    <div className="card p-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-gray-500">{label}</p>
-          <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
-        </div>
-        <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
-          {icon}
-        </div>
+    <div className="card" style={{ padding: '20px 22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--ink-2)', marginBottom: 8 }}>{label}</div>
+        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 30, letterSpacing: '-0.03em', color: 'var(--ink)', lineHeight: 1 }}>{value}</div>
+      </div>
+      <div style={{ width: 48, height: 48, borderRadius: 12, background: iconBg, color: iconColor, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {icon}
       </div>
     </div>
   )
@@ -34,66 +35,67 @@ export default function Dashboard() {
   })
 
   return (
-    <div className="p-6 space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-sm text-gray-500">Welcome back, {user?.full_name}</p>
+    <div style={{ padding: '24px 28px 60px' }}>
+
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: '-0.02em', color: 'var(--ink)' }}>Dashboard</div>
+        <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>Welcome back, {user?.full_name}</div>
       </div>
 
       {summary && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard label="Active UIDs" value={summary.uid_active.toLocaleString()} icon={<Package size={22} className="text-blue-600" />} color="bg-blue-50" />
-          <StatCard label="On Hold" value={summary.uid_on_hold} icon={<AlertTriangle size={22} className="text-yellow-600" />} color="bg-yellow-50" />
-          <StatCard label="Dispatched" value={summary.uid_dispatched.toLocaleString()} icon={<CheckCircle size={22} className="text-green-600" />} color="bg-green-50" />
-          <StatCard label="Open MOs" value={summary.open_manufacturing_orders} icon={<ClipboardList size={22} className="text-purple-600" />} color="bg-purple-50" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14, marginBottom: 24 }}>
+          <StatCard label="Active UIDs"  value={summary.uid_active.toLocaleString()} icon={<Package size={22} />}      iconBg="rgba(96,165,250,.18)"  iconColor="#60a5fa" />
+          <StatCard label="On Hold"      value={summary.uid_on_hold}                 icon={<AlertTriangle size={22} />}  iconBg="rgba(251,191,36,.18)"  iconColor="#fbbf24" />
+          <StatCard label="Dispatched"   value={summary.uid_dispatched.toLocaleString()} icon={<CheckCircle size={22} />} iconBg="rgba(93,214,140,.18)"  iconColor="#5dd68c" />
+          <StatCard label="Open Orders"  value={summary.open_manufacturing_orders}   icon={<ClipboardList size={22} />}  iconBg="rgba(167,139,250,.18)" iconColor="#a78bfa" />
         </div>
       )}
 
       {summary && (summary.priority_urgent > 0 || summary.priority_high > 0) && (
-        <div className="card p-4 border-l-4 border-red-400 bg-red-50">
-          <div className="flex gap-2 items-center">
-            <TrendingUp size={18} className="text-red-600" />
-            <span className="text-sm font-medium text-red-800">
-              {summary.priority_urgent} urgent + {summary.priority_high} high-priority UIDs in production
-            </span>
-          </div>
+        <div style={{ padding: '12px 16px', borderRadius: 10, background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.25)', display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+          <TrendingUp size={16} style={{ color: 'var(--error)', flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: 'var(--error)', fontWeight: 500 }}>
+            {summary.priority_urgent} urgent + {summary.priority_high} high-priority UIDs in production
+          </span>
         </div>
       )}
 
-      {/* Per-location status */}
       {shopfloor && shopfloor.map((loc) => (
-        <div key={loc.location_id} className="card overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50">
+        <div key={loc.location_id} className="card" style={{ marginBottom: 16, overflow: 'hidden' }}>
+          {/* Location header */}
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface-2)' }}>
             <div>
-              <h2 className="font-semibold text-gray-900">{loc.location_name}</h2>
-              <p className="text-sm text-gray-500">{loc.total_active_uids} active UIDs · {loc.on_hold} on hold</p>
+              <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)' }}>{loc.location_name}</div>
+              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)', marginTop: 2 }}>
+                {loc.total_active_uids} active UIDs · {loc.on_hold} on hold
+              </div>
             </div>
-            <span className="text-xs badge badge-blue">{loc.location_code}</span>
+            <span className="badge-blue">{loc.location_code}</span>
           </div>
 
-          <div className="p-5">
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Storage</h3>
-            <div className="grid grid-cols-5 gap-2">
+          <div style={{ padding: '16px 20px' }}>
+            {/* Storage */}
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 12 }}>Storage</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 20 }}>
               {loc.storage_locations.map((s) => (
-                <div key={s.storage_id} className="text-center">
-                  <div className={`text-lg font-bold ${s.uid_count > 0 ? 'text-brand-600' : 'text-gray-300'}`}>
-                    {s.uid_count}
-                  </div>
-                  <div className="text-xs text-gray-500">{s.code}</div>
+                <div key={s.storage_id} style={{ textAlign: 'center' }}>
+                  <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 20, color: s.uid_count > 0 ? 'var(--accent)' : 'var(--ink-3)' }}>{s.uid_count}</div>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 2 }}>{s.code}</div>
                 </div>
               ))}
             </div>
 
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mt-4 mb-3">Workstations with active UIDs</h3>
-            <div className="flex flex-wrap gap-2">
-              {loc.workstations.filter((w) => w.uid_count > 0).map((w) => (
-                <div key={w.workstation_id} className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-                  <span className="text-sm font-medium text-gray-700">{w.code}</span>
-                  <span className="badge-blue text-xs">{w.uid_count}</span>
+            {/* Workstations */}
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 10 }}>Workstations with active UIDs</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {loc.workstations.filter(w => w.uid_count > 0).map(w => (
+                <div key={w.workstation_id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: 8, padding: '6px 12px' }}>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{w.code}</span>
+                  <span className="badge-blue">{w.uid_count}</span>
                 </div>
               ))}
-              {loc.workstations.filter((w) => w.uid_count > 0).length === 0 && (
-                <p className="text-sm text-gray-400">No UIDs currently at any workstation</p>
+              {loc.workstations.filter(w => w.uid_count > 0).length === 0 && (
+                <div style={{ fontSize: 12, color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No UIDs at any workstation</div>
               )}
             </div>
           </div>
