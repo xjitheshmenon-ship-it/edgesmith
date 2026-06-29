@@ -62,16 +62,8 @@ interface TempStep {
   workstation_code: string
 }
 
-/* Canonical tempering steps per spec PAGE 17 (Step 9 / 10 / 14 / 23-SR, all HT90).
-   Used to label columns even when a cycle's operation_name lacks the phrase. */
-const TEMPER_STEP_LABEL: Record<string, { label: string; sr?: boolean }> = {
-  '9': { label: 'Tempering 1' },
-  '10': { label: 'Tempering 2' },
-  '14': { label: 'Tempering 3' },
-  '23': { label: 'Tempering 4', sr: true },
-}
-
-/* Identify HT-furnace tempering steps within a cycle version. */
+/* Identify HT-furnace heat-treatment steps within a cycle version. The furnace
+   determines the operation: HT70 = Hardening, HT80 = Quenching, HT90 = Tempering. */
 const isTemperStep = (s: { workstation_code?: string; operation_name?: string }) =>
   s.workstation_code === 'HT90' ||
   /^HT(70|80|90)/i.test(s.workstation_code ?? '') ||
@@ -429,7 +421,7 @@ export default function Tempering() {
             Tempering Parameters
           </div>
           <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, marginTop: 3 }}>
-            Target temperatures, soak times &amp; deviation tolerances per cycle type · HT90 furnace
+            Target temperatures, soak times &amp; deviation tolerances per cycle type · Hardening (HT70) · Quenching (HT80) · Tempering (HT90)
           </div>
         </div>
         <span style={{ ...pill, background: isAdmin ? 'rgba(34,160,107,.14)' : C.surface3, color: isAdmin ? '#1c7a52' : C.ink2, gap: 5 }}>
@@ -476,10 +468,19 @@ export default function Tempering() {
                 <tr>
                   <th style={{ ...headTh, minWidth: 130 }}>Cycle</th>
                   {stepColumns.map((st, i) => {
-                    const canon = TEMPER_STEP_LABEL[st.step_number]
-                    const label = canon?.label ?? `Tempering ${i + 1}`
-                    const isSr = canon?.sr || /stress relief/i.test(st.operation_name)
-                    const ws = st.workstation_code || 'HT90'
+                    // Operation is determined by the furnace: HT70 = Hardening,
+                    // HT80 = Quenching, HT90 = Tempering (numbered in step order).
+                    const ws = (st.workstation_code || 'HT90').toUpperCase()
+                    const isSr = /stress relief/i.test(st.operation_name)
+                    let label: string
+                    if (ws.startsWith('HT70')) label = 'Hardening'
+                    else if (ws.startsWith('HT80')) label = 'Quenching'
+                    else {
+                      const temperNo = stepColumns
+                        .slice(0, i + 1)
+                        .filter((s) => (s.workstation_code || 'HT90').toUpperCase().startsWith('HT90')).length
+                      label = `Tempering ${temperNo}`
+                    }
                     return (
                       <th key={st.step_number} style={{ ...headTh, borderLeft: `1px solid var(--surface-2)` }}>
                         <div style={{ color: C.ink, fontWeight: 700, fontSize: 11, letterSpacing: '0.06em' }}>
@@ -551,7 +552,7 @@ export default function Tempering() {
             Each cell holds the <strong>target temperature</strong> (°C) and <strong>soak time</strong> (minutes) for one tempering step, plus the
             <strong> ± tolerance</strong> bands that flag a furnace batch as deviating.
           </li>
-          <li>All four tempering steps (Step 9, 10, 14, and 23 — Stress Relief) should be configured for every cycle type.</li>
+          <li>The furnace sets the operation: <strong>HT70 = Hardening</strong>, <strong>HT80 = Quenching</strong>, <strong>HT90 = Tempering</strong> (including the Stress Relief temper). Configure each cycle type's heat-treatment steps accordingly.</li>
           <li>
             {isAdmin
               ? 'Click any cell to edit. Saving creates a new parameter version with a timestamp; historical furnace batches keep the values active when they ran.'
