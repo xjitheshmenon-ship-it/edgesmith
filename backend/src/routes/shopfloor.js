@@ -122,6 +122,24 @@ router.get(
               < d.num_billets_dispatched`
     );
 
+    // Topbar alert — active furnace/tempering runs flagged with a deviation
+    const furnaceBatchesDeviation = await c(
+      'SELECT COUNT(*)::int AS n FROM furnace_batches WHERE deviation_flagged = TRUE AND ended_at IS NULL'
+    );
+    // Topbar alert — badges expiring within the next 30 days (and not already expired)
+    const badgesExpiring = await c(
+      `SELECT COUNT(*)::int AS n FROM employee_badges
+        WHERE is_active = TRUE AND expires_at IS NOT NULL
+          AND expires_at <= CURRENT_DATE + INTERVAL '30 days'
+          AND expires_at >= CURRENT_DATE`
+    );
+    // Topbar alert — active UIDs whose QC result was flagged borderline
+    const qcBorderlinePending = await c(
+      `SELECT COUNT(DISTINCT h.uid_id)::int AS n FROM uid_step_history h
+         JOIN uids u ON u.id = h.uid_id
+        WHERE h.qc_result = 'borderline' AND u.status = 'active'`
+    );
+
     res.json({
       uid_total: total,
       uid_active: active,
@@ -135,6 +153,12 @@ router.get(
       furnace_batches_running: furnaceRunning,
       uids_dispatched_today: dispatchedToday,
       faridabad_batches_in_transit: inTransit,
+      // Topbar alerts dropdown
+      furnace_batches_deviation: furnaceBatchesDeviation,
+      uid_awaiting_design: awaitingDesign,
+      badges_expiring: badgesExpiring,
+      qc_borderline_pending: qcBorderlinePending,
+      consignments_pending: inTransit,
     });
   })
 );

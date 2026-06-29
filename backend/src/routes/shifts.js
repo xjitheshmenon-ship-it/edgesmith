@@ -307,4 +307,129 @@ router.get(
   })
 );
 
+// ── Shift Handovers ─────────────────────────────────────────────────────────
+const HANDOVER_SELECT = `
+  SELECT h.*,
+    og.username AS outgoing_username, og.full_name AS outgoing_full_name,
+    inc.username AS incoming_username, inc.full_name AS incoming_full_name,
+    sb.username AS submitted_by_username, ab.username AS acknowledged_by_username
+  FROM shift_handovers h
+  LEFT JOIN users og ON og.id = h.outgoing_supervisor_id
+  LEFT JOIN users inc ON inc.id = h.incoming_supervisor_id
+  LEFT JOIN users sb ON sb.id = h.submitted_by_id
+  LEFT JOIN users ab ON ab.id = h.acknowledged_by_id
+`;
+
+function handoverOut(h) {
+  if (!h) return null;
+  return {
+    id: h.id,
+    shift_date: h.shift_date,
+    shift_period: h.shift_period,
+    factory_location_id: h.factory_location_id,
+    outgoing_supervisor_id: h.outgoing_supervisor_id,
+    outgoing_supervisor_name: h.outgoing_full_name || h.outgoing_username,
+    incoming_supervisor_id: h.incoming_supervisor_id,
+    incoming_supervisor_name: h.incoming_full_name || h.incoming_username,
+    furnace_notes: h.furnace_notes,
+    on_hold_notes: h.on_hold_notes,
+    equipment_issues: h.equipment_issues,
+    urgent_notes: h.urgent_notes,
+    workstation_status: h.workstation_status,
+    status: h.status,
+    submitted_at: h.submitted_at,
+    submitted_by: h.submitted_by_username,
+    acknowledged_at: h.acknowledged_at,
+    acknowledged_by: h.acknowledged_by_username,
+  };
+}
+
+router.post(
+  '/handover',
+  requireSupervisor,
+  asyncHandler(async (req, res) => {
+    const d = req.body || {};
+    if (!d.shift_date || !d.shift_period) throw new HttpError(400, 'shift_date and shift_period are required');
+    const created = await one(
+      `INSERT INTO shift_handovers
+         (shift_date, shift_period, factory_location_id, outgoing_supervisor_id,
+          furnace_notes, on_hold_notes, equipment_issues, urgent_notes, workstation_status,
+          status, submitted_by_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'submitted',$4)
+       RETURNING id`,
+      [
+        d.shift_date,
+        d.shift_period,
+        d.factory_location_id ?? null,
+        req.user.id,
+        d.furnace_notes ?? null,
+        d.on_hold_notes ?? null,
+        d.equipment_issues ?? null,
+        d.urgent_notes ?? null,
+        d.workstation_status ?? null,
+      ]
+    );
+    const h = await one(`${HANDOVER_SELECT} WHERE h.id = $1`, [created.id]);
+    res.json(handoverOut(h));
+  })
+);
+
+router.get(
+  '/handover',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { shift_date, shift_period, factory_location_id } = req.query;
+    if (!shift_date || !shift_period) throw new HttpError(400, 'shift_date and shift_period are required');
+    const params = [shift_date, shift_period];
+    let where = 'WHERE h.shift_date = $1 AND h.shift_period = $2';
+    if (factory_location_id) {
+      params.push(parseInt(factory_location_id, 10));
+      where += ` AND h.factory_location_id = $${params.length}`;
+    }
+    const h = await one(
+      `${HANDOVER_SELECT} ${where} ORDER BY h.submitted_at DESC LIMIT 1`,
+      params
+    );
+    res.json(handoverOut(h));
+  })
+);
+
+router.post(
+  '/handover/:id/acknowledge',
+  requireSupervisor,
+  asyncHandler(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const existing = await one('SELECT id FROM shift_handovers WHERE id = $1', [id]);
+    if (!existing) throw new HttpError(404, 'Handover not found');
+    await query(
+      `UPDATE shift_handovers
+         SET status = 'acknowledged', incoming_supervisor_id = $1,
+             acknowledged_by_id = $1, acknowledged_at = now()
+       WHERE id = $2`,
+      [req.user.id, id]
+    );
+    const h = await one(`${HANDOVER_SELECT} WHERE h.id = $1`, [id]);
+    res.json(handoverOut(h));
+  })
+);
+
+router.get(
+  '/history',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { factory_location_id } = req.query;
+    const params = [];
+    let where = '';
+    if (factory_location_id) {
+      params.push(parseInt(factory_location_id, 10));
+      where = `WHERE h.factory_location_id = $${params.length}`;
+    }
+    const rows = await query(
+      `${HANDOVER_SELECT} ${where} ORDER BY h.submitted_at DESC LIMIT 50`,
+      params
+    );
+    res.json(rows.map(handoverOut));
+  })
+);
+
 export default router;

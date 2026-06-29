@@ -47,6 +47,8 @@ export const uidApi = {
   transfer: (uid_id: number, data: Record<string, unknown>) => api.post(`/uids/${uid_id}/transfer`, data),
   bulkChangeCycle: (data: Record<string, unknown>) => api.post('/uids/bulk-change-cycle', data),
   operatorQueue: (location_id?: number) => api.get('/uids/queue/operator', { params: { location_id } }),
+  qcPending: (location_id?: number) => api.get('/uids/qc/pending', { params: location_id ? { location_id } : {} }),
+  qcSignoff: (uid_id: number, data: Record<string, unknown>) => api.post(`/uids/${uid_id}/qc-signoff`, data),
 }
 
 // ── Cycles ────────────────────────────────────────────────────────────────────
@@ -133,6 +135,7 @@ export const temperingApi = {
   availableUIDs: (cycle_step_id: number) => api.get('/tempering/available-uids', { params: { cycle_step_id } }),
   createBatch: (data: Record<string, unknown>) => api.post('/tempering/batches', data),
   completeBatch: (id: number, data: Record<string, unknown>) => api.post(`/tempering/batches/${id}/complete`, data),
+  parameterVersions: (id: number) => api.get(`/tempering/parameters/${id}/versions`),
 }
 
 // ── Shifts ────────────────────────────────────────────────────────────────────
@@ -146,4 +149,28 @@ export const shiftApi = {
   removeAllotment: (id: number) => api.delete(`/shifts/allotments/${id}`),
   autoAssign: (data: Record<string, unknown>) => api.post('/shifts/allotments/auto-assign', data),
   queueView: (shift_date: string, shift_period: string) => api.get('/shifts/queue-view', { params: { shift_date, shift_period } }),
+  submitHandover: (data: Record<string, unknown>) => api.post('/shifts/handover', data),
+  getHandover: (params: Record<string, unknown>) => api.get('/shifts/handover', { params }),
+  acknowledgeHandover: (id: number) => api.post(`/shifts/handover/${id}/acknowledge`),
+  history: (params?: Record<string, unknown>) => api.get('/shifts/history', { params }),
+}
+
+// ── Employee skill badges ───────────────────────────────────────────────────
+export const badgeApi = {
+  list: (user_id?: number) => api.get('/badges', { params: user_id ? { user_id } : {} }),
+  expiring: () => api.get('/badges/expiring'),
+  create: (data: Record<string, unknown>) => api.post('/badges', data),
+  update: (id: number, data: Record<string, unknown>) => api.patch(`/badges/${id}`, data),
+  remove: (id: number) => api.delete(`/badges/${id}`),
+}
+
+// ── Job execution timing ────────────────────────────────────────────────────
+export const jobApi = {
+  start: (uid_id: number) => api.post(`/jobs/${uid_id}/start`),
+  pause: (uid_id: number, data?: Record<string, unknown>) => api.post(`/jobs/${uid_id}/pause`, data ?? {}),
+  resume: (uid_id: number) => api.post(`/jobs/${uid_id}/resume`),
+  complete: (uid_id: number, data?: Record<string, unknown>) => api.post(`/jobs/${uid_id}/complete`, data ?? {}),
+  events: (uid_id: number) => api.get(`/jobs/${uid_id}/events`),
+  getPauseThreshold: () => api.get('/jobs/settings/pause-threshold'),
+  setPauseThreshold: (data: Record<string, unknown>) => api.put('/jobs/settings/pause-threshold', data),
 }

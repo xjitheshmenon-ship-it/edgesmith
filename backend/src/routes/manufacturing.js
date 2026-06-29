@@ -8,7 +8,10 @@ const router = Router();
 
 // ── Manufacturing Orders ───────────────────────────────────────────────────
 async function moOut(m) {
-  const cnt = await one('SELECT COUNT(*)::int AS n FROM uids WHERE mo_id = $1', [m.id]);
+  // When the row already carries aggregated UID counts (e.g. from the list
+  // endpoint), use them; otherwise fall back to a per-row count.
+  const linked = m.uids_linked != null ? m.uids_linked : (await one('SELECT COUNT(*)::int AS n FROM uids WHERE mo_id = $1', [m.id])).n;
+  const dispatched = m.uids_dispatched != null ? m.uids_dispatched : 0;
   return {
     id: m.id,
     mo_number: m.mo_number,
@@ -19,7 +22,10 @@ async function moOut(m) {
     size_mm: m.size_mm,
     design_id: m.design_id,
     design_code: m.design_code,
-    uid_count: cnt.n,
+    uid_count: linked,
+    uids_linked: linked,
+    uids_dispatched: dispatched,
+    uids_remaining: m.quantity != null ? Math.max(0, m.quantity - dispatched) : null,
     notes: m.notes,
     created_at: m.created_at,
   };
@@ -32,14 +38,34 @@ const MO_SELECT = `
   LEFT JOIN designs d ON d.id = mo.design_id
 `;
 
+// List-oriented select that also aggregates linked / dispatched UID counts per
+// MO in a single query (LEFT JOIN over a grouped subselect), avoiding per-row
+// COUNT queries.
+const MO_LIST_SELECT = `
+  SELECT mo.*, sz.value_mm AS size_mm, d.code AS design_code,
+         COALESCE(u.uids_linked, 0)     AS uids_linked,
+         COALESCE(u.uids_dispatched, 0) AS uids_dispatched
+  FROM manufacturing_orders mo
+  LEFT JOIN sizes sz ON sz.id = mo.size_id
+  LEFT JOIN designs d ON d.id = mo.design_id
+  LEFT JOIN (
+    SELECT mo_id,
+           COUNT(*)::int AS uids_linked,
+           COUNT(*) FILTER (WHERE status = 'dispatched')::int AS uids_dispatched
+    FROM uids
+    WHERE mo_id IS NOT NULL
+    GROUP BY mo_id
+  ) u ON u.mo_id = mo.id
+`;
+
 router.get(
   '/orders',
   requireAuth,
   asyncHandler(async (req, res) => {
     const { status } = req.query;
     const rows = status
-      ? await query(`${MO_SELECT} WHERE mo.status = $1 ORDER BY mo.id DESC`, [status])
-      : await query(`${MO_SELECT} ORDER BY mo.id DESC`);
+      ? await query(`${MO_LIST_SELECT} WHERE mo.status = $1 ORDER BY mo.id DESC`, [status])
+      : await query(`${MO_LIST_SELECT} ORDER BY mo.id DESC`);
     res.json(await Promise.all(rows.map(moOut)));
   })
 );

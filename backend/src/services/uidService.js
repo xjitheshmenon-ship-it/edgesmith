@@ -42,6 +42,7 @@ export async function bulkCreateUids(opts) {
     designId = null,
     priority = 'normal',
     moId = null,
+    receivingEventId = null,
   } = opts;
 
   return tx(async (c) => {
@@ -59,6 +60,56 @@ export async function bulkCreateUids(opts) {
       [version.id]
     );
 
+    // ── Material inheritance ───────────────────────────────────────────────
+    // Resolve the material chain from the receiving event, degrading gracefully:
+    // receiving_event → faridabad_dispatch → joining_operation → alloy/ms intakes.
+    // Set what's available, leave the rest null.
+    let material = {
+      faridabadDispatchId: null,
+      receivingEventId: null,
+      rollingContractor: null,
+      alloySupplier: null,
+      alloyGrade: null,
+      alloyHeatNumber: null,
+      msSupplier: null,
+      msGrade: null,
+      msHeatNumber: null,
+    };
+    if (receivingEventId) {
+      const event = await c.one('SELECT * FROM receiving_events WHERE id = $1', [receivingEventId]);
+      if (event) {
+        material.receivingEventId = event.id;
+        const dispatch = event.faridabad_dispatch_id
+          ? await c.one('SELECT * FROM faridabad_dispatches WHERE id = $1', [event.faridabad_dispatch_id])
+          : null;
+        if (dispatch) {
+          material.faridabadDispatchId = dispatch.id;
+          material.rollingContractor = dispatch.rolling_contractor_name;
+          const joining = dispatch.joining_operation_id
+            ? await c.one('SELECT * FROM joining_operations WHERE id = $1', [dispatch.joining_operation_id])
+            : null;
+          if (joining) {
+            const alloy = joining.alloy_intake_id
+              ? await c.one('SELECT * FROM raw_material_intakes WHERE id = $1', [joining.alloy_intake_id])
+              : null;
+            if (alloy) {
+              material.alloySupplier = alloy.supplier_name;
+              material.alloyGrade = alloy.steel_grade;
+              material.alloyHeatNumber = alloy.heat_number;
+            }
+            const ms = joining.ms_intake_id
+              ? await c.one('SELECT * FROM raw_material_intakes WHERE id = $1', [joining.ms_intake_id])
+              : null;
+            if (ms) {
+              material.msSupplier = ms.supplier_name;
+              material.msGrade = ms.steel_grade;
+              material.msHeatNumber = ms.heat_number;
+            }
+          }
+        }
+      }
+    }
+
     const created = [];
     for (let i = 0; i < quantity; i++) {
       const code = await nextUidCode(c, cycleType);
@@ -66,8 +117,11 @@ export async function bulkCreateUids(opts) {
         `INSERT INTO uids
            (code, factory_location_id, cycle_type_id, cycle_version_id,
             current_step_id, current_storage_id, product_type_id, size_id,
-            design_id, design_confirmed, priority, mo_id, created_by_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            design_id, design_confirmed, priority, mo_id, created_by_id,
+            faridabad_dispatch_id, receiving_event_id,
+            alloy_supplier, alloy_grade, alloy_heat_number,
+            ms_supplier, ms_grade, ms_heat_number, rolling_contractor)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
          RETURNING id, code`,
         [
           code,
@@ -83,6 +137,15 @@ export async function bulkCreateUids(opts) {
           priority,
           moId,
           createdById,
+          material.faridabadDispatchId,
+          material.receivingEventId,
+          material.alloySupplier,
+          material.alloyGrade,
+          material.alloyHeatNumber,
+          material.msSupplier,
+          material.msGrade,
+          material.msHeatNumber,
+          material.rollingContractor,
         ]
       );
       created.push(row);
@@ -136,6 +199,62 @@ export async function completeStep(opts) {
     } else {
       await c.query("UPDATE uids SET status = 'dispatched', current_step_id = NULL WHERE id = $1", [uidId]);
     }
+
+    return c.one('SELECT * FROM uids WHERE id = $1', [uidId]);
+  });
+}
+
+// QC sign-off on a UID's current step. Records a uid_step_history row carrying
+// the QC verdict, then:
+//   pass       → advance the UID to the next step (mirrors completeStep advance)
+//   fail       → set status='on_hold', do not advance
+//   borderline → keep the UID at its current step, do not advance
+export async function qcSignoff(opts) {
+  const { uidId, performedById, result, values = null, notes = null, workstationId = null } = opts;
+  if (!['pass', 'fail', 'borderline'].includes(result)) {
+    throw new HttpError(400, "result must be 'pass', 'fail', or 'borderline'");
+  }
+
+  return tx(async (c) => {
+    const uid = await c.one('SELECT * FROM uids WHERE id = $1', [uidId]);
+    if (!uid) throw new HttpError(404, 'UID not found');
+    if (uid.status !== 'active') {
+      throw new HttpError(400, `UID is not active (status: ${uid.status})`);
+    }
+
+    const step = uid.current_step_id
+      ? await c.one('SELECT * FROM cycle_steps WHERE id = $1', [uid.current_step_id])
+      : null;
+    if (!step) throw new HttpError(400, 'UID has no current step');
+
+    await c.query(
+      `INSERT INTO uid_step_history
+         (uid_id, cycle_step_id, workstation_id, factory_location_id, performed_by_id, qc_result, qc_values, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [uidId, step.id, workstationId ?? step.workstation_id, uid.factory_location_id, performedById,
+        result, values ? JSON.stringify(values) : null, notes]
+    );
+
+    if (result === 'pass') {
+      const nextStep = await c.one(
+        'SELECT * FROM cycle_steps WHERE cycle_version_id = $1 AND step_order > $2 ORDER BY step_order LIMIT 1',
+        [uid.cycle_version_id, step.step_order]
+      );
+      if (nextStep) {
+        const lockDesign = nextStep.step_number === '17';
+        await c.query(
+          `UPDATE uids SET current_step_id = $1, current_storage_id = $2
+             ${lockDesign ? ', design_locked = TRUE' : ''}
+           WHERE id = $3`,
+          [nextStep.id, nextStep.from_storage_id, uidId]
+        );
+      } else {
+        await c.query("UPDATE uids SET status = 'dispatched', current_step_id = NULL WHERE id = $1", [uidId]);
+      }
+    } else if (result === 'fail') {
+      await c.query("UPDATE uids SET status = 'on_hold' WHERE id = $1", [uidId]);
+    }
+    // borderline: no UID change — verdict captured in history only.
 
     return c.one('SELECT * FROM uids WHERE id = $1', [uidId]);
   });

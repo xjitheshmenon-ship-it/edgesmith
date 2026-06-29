@@ -27,6 +27,8 @@ import faridabadRoutes from './src/routes/faridabad.js';
 import temperingRoutes from './src/routes/tempering.js';
 import masterRoutes from './src/routes/master.js';
 import grindingRoutes from './src/routes/grinding.js';
+import badgesRoutes from './src/routes/badges.js';
+import jobsRoutes from './src/routes/jobs.js';
 
 const app = express();
 
@@ -68,6 +70,8 @@ app.use('/api/faridabad', faridabadRoutes);
 app.use('/api/tempering', temperingRoutes);
 app.use('/api/master', masterRoutes);
 app.use('/api/grinding', grindingRoutes);
+app.use('/api/badges', badgesRoutes);
+app.use('/api/jobs', jobsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
