@@ -6,9 +6,41 @@ from datetime import date
 
 from app.database import get_db
 from app.auth import require_admin, require_manager, get_current_user
-from app.models.faridabad import RawMaterialIntake, JoiningOperation, FaridabadDispatch, ReceivingEvent, MaterialType
+from app.models.faridabad import RollingContractor, RawMaterialIntake, JoiningOperation, FaridabadDispatch, ReceivingEvent, MaterialType
 
 router = APIRouter(prefix="/api/faridabad", tags=["faridabad"])
+
+
+# ── Rolling Contractors ────────────────────────────────────────────────────────
+
+class ContractorCreate(BaseModel):
+    name: str
+    contact_info: Optional[str] = None
+
+
+@router.get("/contractors")
+def list_contractors(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    return [{"id": c.id, "name": c.name, "contact_info": c.contact_info, "is_active": c.is_active}
+            for c in db.query(RollingContractor).filter(RollingContractor.is_active == True).all()]
+
+
+@router.post("/contractors", status_code=201)
+def create_contractor(body: ContractorCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
+    c = RollingContractor(name=body.name, contact_info=body.contact_info)
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return {"id": c.id, "name": c.name, "contact_info": c.contact_info, "is_active": c.is_active}
+
+
+@router.patch("/contractors/{contractor_id}/archive")
+def archive_contractor(contractor_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    c = db.query(RollingContractor).filter(RollingContractor.id == contractor_id).first()
+    if not c:
+        raise HTTPException(404, "Contractor not found")
+    c.is_active = False
+    db.commit()
+    return {"ok": True}
 
 
 # ── Serializers ──────────────────────────────────────────────────────────────

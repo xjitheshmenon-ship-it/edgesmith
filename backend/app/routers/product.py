@@ -77,13 +77,43 @@ def update_design_sizes(design_id: int, size_ids: List[int], db: Session = Depen
 
 # ── Product Types ──────────────────────────────────────────────────────────────
 
+def product_type_out(p: ProductType) -> dict:
+    return {
+        "id": p.id, "code": p.code, "name": p.name, "is_active": p.is_active,
+        "default_cycle_type_id": p.default_cycle_type_id,
+        "valid_cycle_type_ids": [ct.id for ct in p.valid_cycle_types],
+    }
+
+
 @router.get("/types")
 def list_product_types(db: Session = Depends(get_db), _=Depends(get_current_user)):
-    return [
-        {
-            "id": p.id, "code": p.code, "name": p.name, "is_active": p.is_active,
-            "default_cycle_type_id": p.default_cycle_type_id,
-            "valid_cycle_type_ids": [ct.id for ct in p.valid_cycle_types],
-        }
-        for p in db.query(ProductType).all()
-    ]
+    return [product_type_out(p) for p in db.query(ProductType).filter(ProductType.is_active == True).all()]
+
+
+class ProductTypeCreate(BaseModel):
+    code: str
+    name: str
+    valid_cycle_type_ids: List[int] = []
+    default_cycle_type_id: Optional[int] = None
+
+
+@router.post("/types", status_code=201)
+def create_product_type(body: ProductTypeCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
+    from app.models.cycle import CycleType as CT
+    p = ProductType(code=body.code, name=body.name, default_cycle_type_id=body.default_cycle_type_id)
+    if body.valid_cycle_type_ids:
+        p.valid_cycle_types = db.query(CT).filter(CT.id.in_(body.valid_cycle_type_ids)).all()
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return product_type_out(p)
+
+
+@router.patch("/types/{type_id}/archive")
+def archive_product_type(type_id: int, db: Session = Depends(get_db), _=Depends(require_admin)):
+    p = db.query(ProductType).filter(ProductType.id == type_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Not found")
+    p.is_active = False
+    db.commit()
+    return {"ok": True}

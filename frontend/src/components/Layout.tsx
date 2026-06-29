@@ -7,7 +7,7 @@ import { format } from 'date-fns'
 import {
   LayoutDashboard, Package, Settings, Search,
   ClipboardList, Monitor, Users, LogOut,
-  Hammer, CalendarClock,
+  Hammer, CalendarClock, Flame, Factory, Plus,
   Zap, ChevronRight,
 } from 'lucide-react'
 
@@ -25,6 +25,8 @@ const NAV: NavItem[] = [
   { label: 'Shifts',       to: '/shifts',         icon: <CalendarClock size={16} />, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'UIDs',         to: '/uids',           icon: <Package size={16} />,       roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Mfg Orders',   to: '/manufacturing',  icon: <Hammer size={16} />,        roles: ['admin', 'manager'] },
+  { label: 'Faridabad',    to: '/faridabad',      icon: <Factory size={16} />,       roles: ['admin', 'manager'] },
+  { label: 'Tempering',    to: '/tempering',      icon: <Flame size={16} />,         roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Config',       to: '/config',         icon: <Settings size={16} />,      roles: ['admin'] },
   { label: 'Users',        to: '/users',          icon: <Users size={16} />,         roles: ['admin'] },
 ]

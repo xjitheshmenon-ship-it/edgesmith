@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { faridabadApi } from '../api/client'
-import { Package, ArrowRight, Truck, ChevronRight, Plus, X } from 'lucide-react'
+import { Plus, X } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
 type Tab = 'intakes' | 'joinings' | 'dispatches' | 'receivings'
@@ -225,6 +225,7 @@ function JoiningForm({ intakes, onDone }: { intakes: any[]; onDone: () => void }
 // ── Dispatch Form ─────────────────────────────────────────────────────────────
 
 function DispatchForm({ joinings, onDone }: { joinings: any[]; onDone: () => void }) {
+  const { data: contractors = [] } = useQuery({ queryKey: ['contractors'], queryFn: () => faridabadApi.contractors().then(r => r.data) })
   const [form, setForm] = useState({
     joining_operation_id: '',
     rolling_contractor_name: '',
@@ -255,7 +256,14 @@ function DispatchForm({ joinings, onDone }: { joinings: any[]; onDone: () => voi
         </div>
         <div>
           <label style={{ display: 'block', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.08em', color: 'var(--ink-3)', marginBottom: 4 }}>ROLLING CONTRACTOR</label>
-          <input className="input" value={form.rolling_contractor_name} onChange={e => setForm(f => ({ ...f, rolling_contractor_name: e.target.value }))} />
+          {(contractors as any[]).length > 0 ? (
+            <select className="input" value={form.rolling_contractor_name} onChange={e => setForm(f => ({ ...f, rolling_contractor_name: e.target.value }))}>
+              <option value="">Select contractor…</option>
+              {(contractors as any[]).map((c: any) => <option key={c.id} value={c.name}>{c.name}</option>)}
+            </select>
+          ) : (
+            <input className="input" value={form.rolling_contractor_name} onChange={e => setForm(f => ({ ...f, rolling_contractor_name: e.target.value }))} placeholder="Add contractors in Config first" />
+          )}
         </div>
         <div>
           <label style={{ display: 'block', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.08em', color: 'var(--ink-3)', marginBottom: 4 }}>BILLETS DISPATCHED</label>
