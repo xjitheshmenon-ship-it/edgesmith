@@ -9,6 +9,7 @@ from ..auth import get_current_user, require_roles
 from ..models.shifts import ShiftAssignment, JobAllotment, ShiftPeriod
 from ..models.users import User, UserRole
 from ..models.uid import UID, UIDStatus
+from ..models.cycle import CycleStep
 
 router = APIRouter(prefix='/api/shifts', tags=['shifts'])
 
@@ -56,15 +57,17 @@ def _assignment_out(a: ShiftAssignment):
     }
 
 def _allotment_out(j: JobAllotment):
+    uid = j.uid
+    step = uid.current_step if uid else None
     return {
         'id': j.id,
         'uid_id': j.uid_id,
-        'uid_code': j.uid.code if j.uid else None,
-        'uid_status': j.uid.status if j.uid else None,
-        'current_step': j.uid.current_step.step_number if (j.uid and j.uid.current_step) else None,
-        'current_step_name': j.uid.current_step.operation_name if (j.uid and j.uid.current_step) else None,
-        'from_storage_code': j.uid.current_step.from_storage.code if (j.uid and j.uid.current_step and j.uid.current_step.from_storage) else None,
-        'to_storage_code': j.uid.current_step.to_storage.code if (j.uid and j.uid.current_step and j.uid.current_step.to_storage) else None,
+        'uid_code': uid.code if uid else None,
+        'uid_status': uid.status if uid else None,
+        'current_step': step.step_number if step else None,
+        'current_step_name': step.operation_name if step else None,
+        'from_storage_code': step.from_storage.code if (step and step.from_storage) else None,
+        'to_storage_code': step.to_storage.code if (step and step.to_storage) else None,
         'operator_id': j.operator_id,
         'operator_username': j.operator.username if j.operator else None,
         'operator_full_name': j.operator.full_name if j.operator else None,
@@ -111,14 +114,12 @@ def create_or_update_assignment(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_supervisor),
 ):
-    # Check if assignment already exists for this slot
     existing = db.query(ShiftAssignment).filter(
         ShiftAssignment.shift_date == data.shift_date,
         ShiftAssignment.shift_period == data.shift_period,
         ShiftAssignment.workstation_id == data.workstation_id,
     ).first()
 
-    # Validate operator has operator role
     operator = db.query(User).filter(User.id == data.operator_id).first()
     if not operator or operator.role != UserRole.operator:
         raise HTTPException(400, 'Selected user is not an operator')
@@ -127,7 +128,6 @@ def create_or_update_assignment(
         existing.operator_id = data.operator_id
         existing.assigned_by_id = current_user.id
         existing.notes = data.notes
-        # Supervisor auto-confirms their own assignments; manager needs supervisor confirmation
         if current_user.role in ('admin', 'supervisor'):
             existing.confirmed_by_id = current_user.id
         else:
@@ -199,7 +199,6 @@ def list_allotments(
         q = q.filter(JobAllotment.operator_id == operator_id)
     if workstation_id:
         q = q.filter(JobAllotment.workstation_id == workstation_id)
-    # Operators only see their own allotments
     if current_user.role == UserRole.operator:
         q = q.filter(JobAllotment.operator_id == current_user.id)
     return [_allotment_out(j) for j in q.order_by(JobAllotment.created_at.desc()).all()]
@@ -217,7 +216,6 @@ def create_allotment(
     if uid.status not in (UIDStatus.active, UIDStatus.on_hold):
         raise HTTPException(400, f'UID is {uid.status}, cannot allot')
 
-    # Deactivate any existing active allotment for this UID
     db.query(JobAllotment).filter(
         JobAllotment.uid_id == data.uid_id,
         JobAllotment.is_active == 1,
@@ -268,8 +266,6 @@ def auto_assign_allotments(
     whose current step's workstation matches the assigned workstation, then
     allot those UIDs to the assigned operator (deactivating prior allotments).
     """
-    from ..models.cycle import CycleStep
-
     assignments = db.query(ShiftAssignment).filter(
         ShiftAssignment.shift_date == data.shift_date,
         ShiftAssignment.shift_period == data.shift_period,
@@ -280,7 +276,6 @@ def auto_assign_allotments(
 
     total_allotted = 0
     for assignment in assignments:
-        # Find UIDs whose current step is at this workstation
         uids = db.query(UID).join(
             CycleStep, UID.current_step_id == CycleStep.id
         ).filter(
@@ -289,7 +284,6 @@ def auto_assign_allotments(
         ).all()
 
         for uid in uids:
-            # Deactivate existing active allotments for this UID
             db.query(JobAllotment).filter(
                 JobAllotment.uid_id == uid.id,
                 JobAllotment.is_active == 1,
@@ -323,11 +317,9 @@ def queue_view(
     For the given shift, return each assigned workstation with:
     - operator info
     - already allotted UIDs (their queue)
-    - ready UIDs (at source storage of that workstation's step, not yet allotted)
+    - ready UIDs (at that workstation's step, not yet allotted)
     Source/destination auto-derived from cycle step config.
     """
-    from ..models.cycle import CycleStep
-
     assignments = db.query(ShiftAssignment).filter(
         ShiftAssignment.shift_date == shift_date,
         ShiftAssignment.shift_period == shift_period,
@@ -335,7 +327,6 @@ def queue_view(
 
     result = []
     for a in assignments:
-        # UIDs currently allotted to this workstation (active allotments)
         allotted = db.query(JobAllotment).filter(
             JobAllotment.workstation_id == a.workstation_id,
             JobAllotment.is_active == 1,
@@ -343,19 +334,19 @@ def queue_view(
 
         allotted_uid_ids = {j.uid_id for j in allotted}
 
-        # Find step(s) for this workstation to get source/destination
         steps = db.query(CycleStep).filter(CycleStep.workstation_id == a.workstation_id).all()
         from_codes = list({s.from_storage.code for s in steps if s.from_storage})
         to_codes = list({s.to_storage.code for s in steps if s.to_storage})
 
-        # Ready UIDs: at this workstation's step but not yet allotted
-        ready_uids = db.query(UID).join(
+        ready_q = db.query(UID).join(
             CycleStep, UID.current_step_id == CycleStep.id
         ).filter(
             CycleStep.workstation_id == a.workstation_id,
             UID.status.in_([UIDStatus.active, UIDStatus.on_hold]),
-            UID.id.notin_(allotted_uid_ids),
-        ).order_by(UID.created_at).all()
+        )
+        if allotted_uid_ids:
+            ready_q = ready_q.filter(UID.id.notin_(allotted_uid_ids))
+        ready_uids = ready_q.order_by(UID.created_at).all()
 
         result.append({
             'assignment_id': a.id,
