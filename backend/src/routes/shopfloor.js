@@ -27,19 +27,38 @@ router.get(
       );
       const wsMap = Object.fromEntries(wsCounts.map((r) => [r.workstation_id, r.count]));
 
+      // "Running" = active UIDs that have been allotted to an operator (claimed
+      // and being worked). "Queued" = at the workstation but not yet allotted.
+      const wsRunning = await query(
+        `SELECT cs.workstation_id, COUNT(DISTINCT u.id)::int AS count
+           FROM cycle_steps cs
+           JOIN uids u ON u.current_step_id = cs.id
+           JOIN job_allotments ja ON ja.uid_id = u.id AND ja.is_active = 1
+          WHERE u.factory_location_id = $1 AND u.status = 'active'
+          GROUP BY cs.workstation_id`,
+        [loc.id]
+      );
+      const runMap = Object.fromEntries(wsRunning.map((r) => [r.workstation_id, r.count]));
+
       const workstations = await query(
         `SELECT * FROM workstations
           WHERE (factory_location_id = $1 OR factory_location_id IS NULL) AND is_active = TRUE
           ORDER BY id`,
         [loc.id]
       );
-      const wsStatus = workstations.map((w) => ({
-        workstation_id: w.id,
-        code: w.code,
-        name: w.name,
-        category: w.category,
-        uid_count: wsMap[w.id] || 0,
-      }));
+      const wsStatus = workstations.map((w) => {
+        const total = wsMap[w.id] || 0;
+        const running = Math.min(runMap[w.id] || 0, total);
+        return {
+          workstation_id: w.id,
+          code: w.code,
+          name: w.name,
+          category: w.category,
+          uid_count: total,
+          running_count: running,
+          queued_count: total - running,
+        };
+      });
 
       const storageCounts = await query(
         `SELECT current_storage_id, COUNT(id)::int AS count

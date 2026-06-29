@@ -9,6 +9,9 @@ export const UID_SELECT = `
     ct.name AS cycle_type_name,
     cs.step_number AS current_step_number,
     cs.operation_name AS current_step_name,
+    cs.workstation_id AS current_step_workstation_id,
+    cw.code AS current_step_workstation_code,
+    cw.name AS current_step_workstation_name,
     sl.code AS current_storage_code,
     sz.value_mm AS size_mm,
     d.code AS design_code,
@@ -22,6 +25,7 @@ export const UID_SELECT = `
   LEFT JOIN factory_locations fl ON fl.id = u.factory_location_id
   LEFT JOIN cycle_types ct ON ct.id = u.cycle_type_id
   LEFT JOIN cycle_steps cs ON cs.id = u.current_step_id
+  LEFT JOIN workstations cw ON cw.id = cs.workstation_id
   LEFT JOIN storage_locations sl ON sl.id = u.current_storage_id
   LEFT JOIN sizes sz ON sz.id = u.size_id
   LEFT JOIN designs d ON d.id = u.design_id
@@ -43,6 +47,9 @@ export function serializeUid(u) {
     current_step_id: u.current_step_id,
     current_step_number: u.current_step_number,
     current_step_name: u.current_step_name,
+    current_step_workstation_id: u.current_step_workstation_id,
+    current_step_workstation_code: u.current_step_workstation_code,
+    current_step_workstation_name: u.current_step_workstation_name,
     current_storage_id: u.current_storage_id,
     current_storage_code: u.current_storage_code,
     product_type_id: u.product_type_id,
