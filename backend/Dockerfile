@@ -1,6 +1,8 @@
-FROM python:3.11-slim
+FROM node:20-slim
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY package.json package-lock.json* ./
+RUN npm install --omit=dev
 COPY . .
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENV NODE_ENV=production
+EXPOSE 8000
+CMD ["node", "app.js"]

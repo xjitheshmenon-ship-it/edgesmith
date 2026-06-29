@@ -171,6 +171,11 @@ export interface DashboardSummary {
   priority_urgent: number
   priority_high: number
   open_manufacturing_orders: number
+  // 6 dashboard metric cards (Design Correction 6)
+  awaiting_design_confirmation: number
+  furnace_batches_running: number
+  uids_dispatched_today: number
+  faridabad_batches_in_transit: number
 }
 
 export interface ShopfloorStatus {

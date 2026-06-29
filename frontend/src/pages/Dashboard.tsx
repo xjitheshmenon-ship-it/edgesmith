@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { shopfloorApi, shiftApi } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import type { DashboardSummary, ShopfloorStatus } from '../types'
-import { Package, AlertTriangle, CheckCircle, ClipboardList, TrendingUp, Box, Zap, ChevronRight } from 'lucide-react'
+import { Package, AlertTriangle, CheckCircle, ClipboardList, TrendingUp, Box, Zap, ChevronRight, FileClock, Flame, Truck } from 'lucide-react'
 import { format } from 'date-fns'
 import { Link } from 'react-router-dom'
 
@@ -203,10 +203,12 @@ export default function Dashboard() {
 
       {summary && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
-          <StatCard label="Active UIDs"   value={summary.uid_active.toLocaleString()}       icon={<Package size={20} />}       color="#3b82f6" />
-          <StatCard label="On Hold"       value={summary.uid_on_hold}                        icon={<AlertTriangle size={20} />}  color="#f59e0b" />
-          <StatCard label="Dispatched"    value={summary.uid_dispatched.toLocaleString()}    icon={<CheckCircle size={20} />}    color="#22a06b" />
-          <StatCard label="Open Orders"   value={summary.open_manufacturing_orders}          icon={<ClipboardList size={20} />}  color="#a78bfa" />
+          <StatCard label="Active UIDs"                  value={summary.uid_active.toLocaleString()}        icon={<Package size={20} />}        color="#3b82f6" />
+          <StatCard label="On Hold"                      value={summary.uid_on_hold}                         icon={<AlertTriangle size={20} />}  color="#f59e0b" />
+          <StatCard label="Awaiting Design Confirmation" value={summary.awaiting_design_confirmation}        icon={<FileClock size={20} />}      color="#a78bfa" />
+          <StatCard label="Furnace Batches Running"      value={summary.furnace_batches_running}             icon={<Flame size={20} />}          color="#ef4444" />
+          <StatCard label="UIDs Dispatched Today"        value={summary.uids_dispatched_today.toLocaleString()} icon={<CheckCircle size={20} />} color="#22a06b" />
+          <StatCard label="Faridabad Batches in Transit" value={summary.faridabad_batches_in_transit}        icon={<Truck size={20} />}          color="#0ea5e9" />
         </div>
       )}
 
