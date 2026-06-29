@@ -25,10 +25,11 @@ export default function Shopfloor() {
     queryFn: () => factoryApi.locations().then((r) => r.data),
   })
 
-  const { data: status, refetch, isFetching, dataUpdatedAt } = useQuery<ShopfloorStatus[]>({
+  const { data: status, refetch, isFetching, dataUpdatedAt, isError, isLoading } = useQuery<ShopfloorStatus[]>({
     queryKey: ['shopfloor-full', selectedLoc],
     queryFn: () => shopfloorApi.status(selectedLoc).then((r) => r.data),
     refetchInterval: 20_000,
+    retry: 1,
   })
 
   useEffect(() => {
@@ -56,6 +57,17 @@ export default function Shopfloor() {
         </div>
       </div>
 
+      {isLoading && (
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-3)', padding: '20px 0' }}>Loading shopfloor data…</div>
+      )}
+      {isError && (
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--error)', padding: '12px 16px', background: 'rgba(229,72,77,.1)', borderRadius: 10, border: '1px solid rgba(229,72,77,.25)' }}>
+          Could not load shopfloor data. The server may be starting up — try refreshing in a moment.
+        </div>
+      )}
+      {status && status.length === 0 && !isLoading && (
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-3)', padding: '20px 0' }}>No factory locations found.</div>
+      )}
       {status && status.map((loc) => (
         <div key={loc.location_id} style={{ marginBottom: 28 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>

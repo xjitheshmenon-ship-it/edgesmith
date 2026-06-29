@@ -22,6 +22,23 @@ class LocationCreate(BaseModel):
     name: str
 
 
+class LocationUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+
+
+@router.patch("/locations/{loc_id}")
+def update_location(loc_id: int, body: LocationUpdate, db: Session = Depends(get_db), _=Depends(require_admin)):
+    loc = db.query(FactoryLocation).filter(FactoryLocation.id == loc_id).first()
+    if not loc:
+        raise HTTPException(status_code=404, detail="Location not found")
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(loc, field, value)
+    db.commit()
+    db.refresh(loc)
+    return {"id": loc.id, "code": loc.code, "name": loc.name}
+
+
 @router.post("/locations", status_code=201)
 def create_location(body: LocationCreate, db: Session = Depends(get_db), _=Depends(require_admin)):
     loc = FactoryLocation(code=body.code, name=body.name)

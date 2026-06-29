@@ -5,7 +5,7 @@ import type { Workstation, StorageLocation, Size, Design, FactoryLocation, Cycle
 import { Plus, Download, Upload, ChevronRight } from 'lucide-react'
 import { format } from 'date-fns'
 
-type Tab = 'workstations' | 'storage' | 'sizes' | 'designs' | 'cycles' | 'products' | 'contractors' | 'tempering_params'
+type Tab = 'locations' | 'workstations' | 'storage' | 'sizes' | 'designs' | 'cycles' | 'products' | 'contractors' | 'tempering_params'
 
 const TH: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--ink-2)', fontWeight: 500, background: 'var(--surface-2)', borderBottom: '1px solid var(--line)' }
 const TD: React.CSSProperties = { padding: '11px 16px', fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }
@@ -14,6 +14,7 @@ export default function Config() {
   const [tab, setTab] = useState<Tab>('workstations')
 
   const tabs: { key: Tab; label: string }[] = [
+    { key: 'locations', label: 'Locations' },
     { key: 'workstations', label: 'Workstations' },
     { key: 'storage', label: 'Storage' },
     { key: 'sizes', label: 'Sizes' },
@@ -53,6 +54,7 @@ export default function Config() {
         ))}
       </div>
 
+      {tab === 'locations' && <LocationsConfig />}
       {tab === 'workstations' && <WorkstationsConfig />}
       {tab === 'storage' && <StorageConfig />}
       {tab === 'sizes' && <SizesConfig />}
@@ -71,6 +73,61 @@ function Modal({ children }: { children: React.ReactNode }) {
       <div className="card" style={{ width: '100%', maxWidth: 440, padding: '24px 24px 20px' }}>
         {children}
       </div>
+    </div>
+  )
+}
+
+function LocationsConfig() {
+  const qc = useQueryClient()
+  const [editId, setEditId] = useState<number | null>(null)
+  const [editName, setEditName] = useState('')
+  const { data: locs = [] } = useQuery<FactoryLocation[]>({ queryKey: ['locations'], queryFn: () => factoryApi.locations().then((r) => r.data) })
+
+  const update = useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) => factoryApi.updateLocation(id, { name }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['locations'] }); setEditId(null) },
+  })
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={TH}>Code</th>
+              <th style={TH}>Name</th>
+              <th style={{ ...TH, textAlign: 'right' }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {locs.map((l) => (
+              <tr key={l.id}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
+              >
+                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{l.code}</td>
+                <td style={TD}>{l.name}</td>
+                <td style={{ ...TD, textAlign: 'right' }}>
+                  <button style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}
+                    onClick={() => { setEditId(l.id); setEditName(l.name) }}>Rename</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {editId !== null && (
+        <Modal>
+          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Rename Location</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div><label className="label">Name</label><input className="input" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus /></div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+              <button className="btn-secondary" onClick={() => setEditId(null)}>Cancel</button>
+              <button className="btn-primary" disabled={update.isPending} onClick={() => update.mutate({ id: editId, name: editName })}>Save</button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   )
 }

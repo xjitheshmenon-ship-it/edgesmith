@@ -61,6 +61,7 @@ export const factoryApi = {
   locations: () => api.get('/factory/locations'),
   workstations: (location_id?: number) => api.get('/factory/workstations', { params: { location_id } }),
   storage: () => api.get('/factory/storage'),
+  updateLocation: (id: number, data: Record<string, unknown>) => api.patch(`/factory/locations/${id}`, data),
   createWorkstation: (data: Record<string, unknown>) => api.post('/factory/workstations', data),
   updateWorkstation: (id: number, data: Record<string, unknown>) => api.patch(`/factory/workstations/${id}`, data),
   createStorage: (data: Record<string, unknown>) => api.post('/factory/storage', data),

@@ -174,15 +174,17 @@ function WorkstationCard({ code, name, count }: { code: string; name: string; co
 
 export default function Dashboard() {
   const { user } = useAuth()
-  const { data: summary } = useQuery<DashboardSummary>({
+  const { data: summary, isError: summaryError } = useQuery<DashboardSummary>({
     queryKey: ['dashboard'],
     queryFn: () => shopfloorApi.dashboard().then((r) => r.data),
     refetchInterval: 15_000,
+    retry: 1,
   })
-  const { data: shopfloor } = useQuery<ShopfloorStatus[]>({
+  const { data: shopfloor, isLoading: shopfloorLoading, isError: shopfloorError } = useQuery<ShopfloorStatus[]>({
     queryKey: ['shopfloor'],
     queryFn: () => shopfloorApi.status().then((r) => r.data),
     refetchInterval: 15_000,
+    retry: 1,
   })
 
   return (
@@ -217,6 +219,22 @@ export default function Dashboard() {
 
       <LiveShiftSection />
 
+      {shopfloorLoading && (
+        <div style={{ ...mono, fontSize: 12, color: T.ink3, padding: '20px 0' }}>Loading shopfloor data…</div>
+      )}
+      {shopfloorError && (
+        <div style={{ ...mono, fontSize: 12, color: '#e5484d', padding: '12px 16px', background: 'rgba(229,72,77,.1)', borderRadius: 10, border: '1px solid rgba(229,72,77,.25)' }}>
+          Could not load shopfloor data. The server may be starting up — refresh in a moment.
+        </div>
+      )}
+      {summaryError && !summary && (
+        <div style={{ ...mono, fontSize: 12, color: '#e5484d', padding: '12px 16px', background: 'rgba(229,72,77,.1)', borderRadius: 10, border: '1px solid rgba(229,72,77,.25)', marginBottom: 20 }}>
+          Could not load dashboard summary.
+        </div>
+      )}
+      {shopfloor && shopfloor.length === 0 && !shopfloorLoading && (
+        <div style={{ ...mono, fontSize: 12, color: T.ink3, padding: '20px 0' }}>No factory locations configured.</div>
+      )}
       {shopfloor && shopfloor.map((loc) => (
         <div key={loc.location_id} style={{
           background: T.surface, border: `1px solid ${T.line}`,

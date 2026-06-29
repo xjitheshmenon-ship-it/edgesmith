@@ -109,8 +109,8 @@ def seed(db: Session):
     print("Seeding database...")
 
     # Factory locations
-    loc1 = FactoryLocation(code="F1", name="Factory Location 1")
-    loc2 = FactoryLocation(code="F2", name="Factory Location 2")
+    loc1 = FactoryLocation(code="F1", name="Dharmapuri")
+    loc2 = FactoryLocation(code="F2", name="Faridabad")
     db.add_all([loc1, loc2])
     db.flush()
 
