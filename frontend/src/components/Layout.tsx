@@ -4,7 +4,7 @@ import { authStore } from '../store/auth'
 import {
   LayoutDashboard, Package, Settings, Search,
   ClipboardList, Monitor, Users, LogOut,
-  Hammer, Layers, CalendarClock, Plus,
+  Hammer, Layers, CalendarClock, Plus, Factory, Flame,
 } from 'lucide-react'
 
 interface NavItem {
@@ -21,6 +21,8 @@ const NAV: NavItem[] = [
   { label: 'My Queue',     to: '/queue',          icon: <ClipboardList size={16} />, roles: ['operator', 'supervisor'] },
   { label: 'Shifts',       to: '/shifts',         icon: <CalendarClock size={16} />, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'UIDs',         to: '/uids',           icon: <Package size={16} />,       roles: ['admin', 'manager', 'supervisor'] },
+  { label: 'Faridabad',    to: '/faridabad',      icon: <Factory size={16} />,       roles: ['admin', 'manager'] },
+  { label: 'Tempering',   to: '/tempering',      icon: <Flame size={16} />,         roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Mfg Orders',   to: '/manufacturing',  icon: <Hammer size={16} />,        roles: ['admin', 'manager'] },
   { label: 'Cycles',       to: '/cycles',         icon: <Layers size={16} />,        roles: ['admin', 'manager'] },
   { label: 'Config',       to: '/config',         icon: <Settings size={16} />,      roles: ['admin'] },

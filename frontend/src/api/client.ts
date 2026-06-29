@@ -101,6 +101,29 @@ export const userApi = {
   update: (id: number, data: Record<string, unknown>) => api.patch(`/users/${id}`, data),
 }
 
+// ── Faridabad ─────────────────────────────────────────────────────────────────
+export const faridabadApi = {
+  intakes: (material_type?: string) => api.get('/faridabad/intakes', { params: material_type ? { material_type } : {} }),
+  createIntake: (data: Record<string, unknown>) => api.post('/faridabad/intakes', data),
+  joinings: () => api.get('/faridabad/joinings'),
+  createJoining: (data: Record<string, unknown>) => api.post('/faridabad/joinings', data),
+  dispatches: () => api.get('/faridabad/dispatches'),
+  getDispatch: (id: number) => api.get(`/faridabad/dispatches/${id}`),
+  createDispatch: (data: Record<string, unknown>) => api.post('/faridabad/dispatches', data),
+  receivings: () => api.get('/faridabad/receivings'),
+  createReceiving: (data: Record<string, unknown>) => api.post('/faridabad/receivings', data),
+}
+
+// ── Tempering ─────────────────────────────────────────────────────────────────
+export const temperingApi = {
+  parameters: (cycle_type_id?: number) => api.get('/tempering/parameters', { params: cycle_type_id ? { cycle_type_id } : {} }),
+  upsertParameter: (data: Record<string, unknown>) => api.post('/tempering/parameters', data),
+  batches: (cycle_type_id?: number) => api.get('/tempering/batches', { params: cycle_type_id ? { cycle_type_id } : {} }),
+  getBatch: (id: number) => api.get(`/tempering/batches/${id}`),
+  createBatch: (data: Record<string, unknown>) => api.post('/tempering/batches', data),
+  completeBatch: (id: number, data: Record<string, unknown>) => api.post(`/tempering/batches/${id}/complete`, data),
+}
+
 // ── Shifts ────────────────────────────────────────────────────────────────────
 export const shiftApi = {
   listAssignments: (params?: Record<string, unknown>) => api.get('/shifts/assignments', { params }),

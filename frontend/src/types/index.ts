@@ -111,6 +111,16 @@ export interface UID {
   created_at: string
   notes: string | null
   step_history?: StepHistory[]
+  // Material traceability
+  faridabad_dispatch_id: number | null
+  receiving_event_id: number | null
+  alloy_supplier: string | null
+  alloy_grade: string | null
+  alloy_heat_number: string | null
+  ms_supplier: string | null
+  ms_grade: string | null
+  ms_heat_number: string | null
+  rolling_contractor: string | null
 }
 
 export interface StepHistory {

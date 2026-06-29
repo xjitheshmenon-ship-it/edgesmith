@@ -43,6 +43,16 @@ def uid_out(u: UID, include_history: bool = False) -> dict:
         "children": [{"id": c.id, "code": c.code, "status": c.status} for c in (u.children or [])],
         "created_at": u.created_at,
         "notes": u.notes,
+        # Material traceability
+        "faridabad_dispatch_id": u.faridabad_dispatch_id,
+        "receiving_event_id": u.receiving_event_id,
+        "alloy_supplier": u.alloy_supplier,
+        "alloy_grade": u.alloy_grade,
+        "alloy_heat_number": u.alloy_heat_number,
+        "ms_supplier": u.ms_supplier,
+        "ms_grade": u.ms_grade,
+        "ms_heat_number": u.ms_heat_number,
+        "rolling_contractor": u.rolling_contractor,
     }
     if include_history:
         data["step_history"] = [
