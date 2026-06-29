@@ -37,7 +37,7 @@ const SECTIONS: NavSection[] = [
   { title: 'DHARMAPURI', location: 'F1', items: [
     { label: 'Receiving', to: '/receiving', icon: <Download size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'UID Creation', to: '/uids', icon: <Tag size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
-    { label: 'Production Floor', to: '/queue', icon: <Factory size={sz} />, roles: ['admin', 'manager', 'supervisor', 'operator'] },
+    { label: 'Production Floor', to: '/production', icon: <Factory size={sz} />, roles: ['admin', 'manager', 'supervisor', 'operator'] },
     { label: 'Batch Management', to: '/tempering', icon: <Layers size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'QC', to: '/qc', icon: <CheckCircle2 size={sz} />, roles: ['admin', 'manager', 'supervisor', 'operator'] },
   ]},
