@@ -3,6 +3,7 @@ import { query, one } from '../db/pool.js';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth, requireAdmin, HttpError } from '../middleware/auth.js';
 import { createNewVersion, exportCycle } from '../services/cycleService.js';
+import { enrichStepCapacity } from '../utils/capacity.js';
 
 const router = Router();
 
@@ -24,10 +25,7 @@ async function stepsForVersion(versionId) {
       ORDER BY cs.step_order`,
     [versionId]
   );
-  return rows.map((r) => ({
-    ...r,
-    total_capacity: r.capacity_per_unit != null ? r.capacity_per_unit * r.active_units : null,
-  }));
+  return rows.map(enrichStepCapacity);
 }
 
 async function versionOut(v) {
