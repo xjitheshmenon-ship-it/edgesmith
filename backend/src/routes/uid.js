@@ -88,21 +88,34 @@ router.get(
   '/',
   requireAuth,
   asyncHandler(async (req, res) => {
-    const { location_id, cycle_type_id, status, search } = req.query;
+    const { location_id, cycle_type_id, status, search, order } = req.query;
     const skip = parseInt(req.query.skip || '0', 10);
-    const limit = parseInt(req.query.limit || '100', 10);
+    const limit = Math.min(parseInt(req.query.limit || '100', 10), 500);
 
     const conds = [];
     const params = [];
     if (location_id) { params.push(parseInt(location_id, 10)); conds.push(`u.factory_location_id = $${params.length}`); }
     if (cycle_type_id) { params.push(parseInt(cycle_type_id, 10)); conds.push(`u.cycle_type_id = $${params.length}`); }
     if (status) { params.push(status); conds.push(`u.status = $${params.length}`); }
-    if (search) { params.push(`%${search}%`); conds.push(`u.code ILIKE $${params.length}`); }
+    if (search) {
+      // Match UID code, current step number/name, or its workstation code/name.
+      // Uses a subquery on u.current_step_id so the COUNT and SELECT share one WHERE.
+      params.push(`%${search}%`);
+      const p = `$${params.length}`;
+      conds.push(`(u.code ILIKE ${p} OR u.current_step_id IN (
+        SELECT cs.id FROM cycle_steps cs LEFT JOIN workstations cw ON cw.id = cs.workstation_id
+         WHERE cs.step_number ILIKE ${p} OR cs.operation_name ILIKE ${p}
+            OR cw.code ILIKE ${p} OR cw.name ILIKE ${p}))`);
+    }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    // ?order=priority → urgent → high → normal, then oldest first (job-queue order).
+    const orderBy = order === 'priority'
+      ? `CASE u.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END, u.created_at`
+      : 'u.id DESC';
 
     const totalRow = await one(`SELECT COUNT(*)::int AS n FROM uids u ${where}`, params);
     const rows = await query(
-      `${UID_SELECT} ${where} ORDER BY u.id DESC OFFSET $${params.length + 1} LIMIT $${params.length + 2}`,
+      `${UID_SELECT} ${where} ORDER BY ${orderBy} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`,
       [...params, skip, limit]
     );
     res.json({ total: totalRow.n, items: rows.map(serializeUid) });

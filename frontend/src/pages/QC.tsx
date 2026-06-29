@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { uidApi } from '../api/client'
 import type { UID, StepHistory } from '../types'
@@ -16,6 +16,9 @@ import {
   Info,
   Factory,
   Download,
+  ScanLine,
+  Loader2,
+  X,
 } from 'lucide-react'
 import { formatDistanceToNowStrict, format } from 'date-fns'
 
@@ -107,8 +110,15 @@ export default function QC() {
 
   const [search, setSearch] = useState('')
   const [resultFilter, setResultFilter] = useState<'all' | 'pass' | 'fail' | 'borderline'>('all')
-  const [selectedUid, setSelectedUid] = useState<number | null>(null)
+  // The UID loaded into the sign-off panel. Set either by scanning/typing a code
+  // (resolved via uidApi.lookup) or by clicking a row in the pending queue.
+  // With 12,000 jobs we never list every UID — the operator scans the one in hand.
+  const [resolvedUid, setResolvedUid] = useState<UID | null>(null)
   const [pendingUid, setPendingUid] = useState<number | null>(null)
+  // Bumped after each successful sign-off to remount the form with a clean slate
+  // (scan box, measurement, notes) ready for the next UID.
+  const [signoffNonce, setSignoffNonce] = useState(0)
+  const selectedUid = resolvedUid?.id ?? null
 
   // ── Live data ──────────────────────────────────────────────────────────────
   // Pending QC queue now comes straight from the dedicated endpoint, which
@@ -165,10 +175,7 @@ export default function QC() {
       .filter((r) => !term || r.uid.code.toLowerCase().includes(term))
   }, [qcRecords, resultFilter, search])
 
-  const selected = useMemo(
-    () => pending.find((u) => u.id === selectedUid) ?? null,
-    [pending, selectedUid]
-  )
+  const selected = resolvedUid
 
   // ── Sign-off: dedicated QC endpoint ─────────────────────────────────────────
   //   pass       → advances the UID
@@ -184,7 +191,8 @@ export default function QC() {
     onMutate: ({ uid_id }) => setPendingUid(uid_id),
     onSettled: () => setPendingUid(null),
     onSuccess: () => {
-      setSelectedUid(null)
+      setResolvedUid(null)
+      setSignoffNonce((n) => n + 1)
       qc.invalidateQueries({ queryKey: ['qc-pending'] })
       qc.invalidateQueries({ queryKey: ['qc-uids-active'] })
       qc.invalidateQueries({ queryKey: ['qc-uids-hold'] })
@@ -244,9 +252,9 @@ export default function QC() {
           <SectionLabel
             icon={<ShieldCheck size={13} style={{ color: C.ink3 }} />}
             right={pending.length > 0
-              ? <span style={{ ...pill, background: 'rgba(245,158,11,.16)', color: C.orange }}>{pending.length} waiting</span>
+              ? <span style={{ ...pill, background: 'rgba(245,158,11,.16)', color: C.orange }}>{pending.length} awaiting QC</span>
               : undefined}
-          >Pending Sign-offs</SectionLabel>
+          >Pending QC Queue</SectionLabel>
 
           {pendingLoading && (pendingRows ?? []).length === 0 ? (
             <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '20px 0' }}>Loading QC queue…</div>
@@ -256,7 +264,19 @@ export default function QC() {
               No UIDs awaiting QC sign-off.
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+                // Never an unbounded block: with up to ~200 queued UIDs the list
+                // scrolls internally so the page stays compact.
+                maxHeight: 560,
+                overflowY: 'auto',
+                margin: '0 -4px',
+                padding: '0 4px',
+              }}
+            >
               {pending.map((u) => {
                 const onHold = u.status === 'on_hold'
                 const isSelected = selectedUid === u.id
@@ -264,7 +284,7 @@ export default function QC() {
                 return (
                   <div
                     key={u.id}
-                    onClick={() => setSelectedUid(isSelected ? null : u.id)}
+                    onClick={() => setResolvedUid(isSelected ? null : u)}
                     className="row-hover"
                     style={{
                       padding: '12px 14px',
@@ -355,14 +375,24 @@ export default function QC() {
               })}
             </div>
           )}
+
+          {pending.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 12, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
+              <Info size={11} />
+              Showing the QC queue (server-capped) — scan or type a UID on the right to sign off any of the ~12,000 jobs.
+            </div>
+          )}
         </div>
 
         {/* Log QC measurement */}
         <LogMeasurementForm
+          key={signoffNonce}
           selected={selected}
           loggedBy={user?.full_name ?? user?.username ?? '—'}
           canSignOff={canSignOff}
           isPending={selected != null && pendingUid === selected.id}
+          onResolve={setResolvedUid}
+          scopedLocation={scopedLocation}
           onSignOff={(result, values, notes) => {
             if (!selected) return
             signOff.mutate({ uid_id: selected.id, result, values, notes })
@@ -595,23 +625,86 @@ function LogMeasurementForm({
   canSignOff,
   isPending,
   onSignOff,
+  onResolve,
+  scopedLocation,
 }: {
   selected: UID | null
   loggedBy: string
   canSignOff: boolean
   isPending: boolean
   onSignOff: (result: 'pass' | 'fail' | 'borderline', values: Record<string, unknown>, notes?: string) => void
+  /* Push a freshly-resolved UID up so it drives the sign-off panel. */
+  onResolve: (uid: UID | null) => void
+  scopedLocation?: number
 }) {
-  const [uidCode, setUidCode] = useState('')
+  // Scan-or-type box. The operator scans/types the UID code in hand; we resolve
+  // it via uidApi.lookup rather than listing all 12,000 UIDs in a dropdown.
+  const [scanCode, setScanCode] = useState('')
+  const [lookupState, setLookupState] = useState<'idle' | 'loading' | 'not_found' | 'error'>('idle')
   const [checkType, setCheckType] = useState<CheckType>('Hardness HRC')
   const [measured, setMeasured] = useState('')
   const [result, setResult] = useState<ResultKind>('Pass')
   const [notes, setNotes] = useState('')
 
-  const effectiveCode = selected?.code ?? uidCode
+  // Keep the scan box in sync with the loaded UID's identity. When a UID is
+  // loaded from outside this box — clicked in the queue, or cleared to null after
+  // a sign-off — mirror that into the input. While the operator is typing, the
+  // selected id is null, so this only fires on real external changes.
+  const selectedId = selected?.id ?? null
+  useEffect(() => {
+    if (selected) {
+      setScanCode(selected.code)
+      setLookupState('idle')
+    }
+    // selected === null is left untouched here: that state is produced both by a
+    // completed sign-off (handled below) and by mid-typing edits, which must not
+    // be clobbered. The post-sign-off reset is keyed off selectedId via the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId])
+
+  // Resolve a scanned/typed code to a single UID via the lookup endpoint.
+  const resolveCode = async () => {
+    const code = scanCode.trim()
+    if (!code) {
+      onResolve(null)
+      setLookupState('idle')
+      return
+    }
+    // Already showing this UID — nothing to do.
+    if (selected && selected.code.toLowerCase() === code.toLowerCase()) return
+    setLookupState('loading')
+    try {
+      const { data } = await uidApi.lookup(code)
+      const uid = data as UID
+      if (!uid || !uid.id) {
+        onResolve(null)
+        setLookupState('not_found')
+        return
+      }
+      // Respect the operator's/supervisor's location scope, if any.
+      if (scopedLocation != null && uid.factory_location_id !== scopedLocation) {
+        onResolve(null)
+        setLookupState('not_found')
+        return
+      }
+      onResolve(uid)
+      setLookupState('idle')
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      onResolve(null)
+      setLookupState(status === 404 ? 'not_found' : 'error')
+    }
+  }
+
+  const clearScan = () => {
+    setScanCode('')
+    setLookupState('idle')
+    onResolve(null)
+  }
+
   const stepLabel = selected
     ? `${selected.current_step_number ?? '—'} — ${selected.current_step_name ?? '—'}`
-    : 'Select a pending UID'
+    : 'Scan or type a UID'
   const needsNotes = result === 'Fail' || result === 'Borderline'
   const isMeasurable = MEASURABLE.has(checkType)
 
@@ -643,18 +736,90 @@ function LogMeasurementForm({
 
   return (
     <div className="card" style={{ padding: '18px 20px' }}>
+      <style>{`.qc-spin{animation:qc-spin 0.8s linear infinite}@keyframes qc-spin{to{transform:rotate(360deg)}}`}</style>
       <SectionLabel icon={<Ruler size={13} style={{ color: C.ink3 }} />}>Log QC Measurement</SectionLabel>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div>
-          <label className="label">UID (scan or type)</label>
-          <input
-            className="input"
-            placeholder="UID code…"
-            value={effectiveCode}
-            disabled={!!selected}
-            onChange={(e) => setUidCode(e.target.value)}
-          />
+          <label className="label">UID</label>
+          <div style={{ position: 'relative' }}>
+            <ScanLine size={15} style={{ position: 'absolute', left: 11, top: 11, color: C.ink3, pointerEvents: 'none' }} />
+            <input
+              className="input"
+              style={{ paddingLeft: 34, paddingRight: scanCode ? 32 : 12, fontFamily: MONO }}
+              placeholder="scan or type UID"
+              value={scanCode}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(e) => {
+                setScanCode(e.target.value)
+                if (lookupState !== 'idle') setLookupState('idle')
+                // Typing away from a resolved UID clears the panel until re-resolved.
+                if (selected && e.target.value.trim().toLowerCase() !== selected.code.toLowerCase()) {
+                  onResolve(null)
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void resolveCode()
+                }
+              }}
+              onBlur={() => void resolveCode()}
+            />
+            {scanCode && (
+              <button
+                type="button"
+                onClick={clearScan}
+                aria-label="Clear UID"
+                style={{
+                  position: 'absolute', right: 8, top: 8, width: 22, height: 22,
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  border: 'none', background: 'transparent', cursor: 'pointer', color: C.ink3, borderRadius: 6,
+                }}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          {/* Resolution feedback: identity, loading, or not-found. */}
+          {lookupState === 'loading' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 7, fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
+              <Loader2 size={12} className="qc-spin" />
+              Looking up UID…
+            </div>
+          ) : selected ? (
+            <div style={{ marginTop: 8, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 9, padding: '9px 11px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <CheckCircle2 size={14} style={{ color: C.green }} />
+                <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: C.ink }}>{selected.code}</span>
+                <span style={{ ...pill, background: 'rgba(45,111,181,.14)', color: C.accent }}>{selected.cycle_type_name}</span>
+                {selected.status === 'on_hold' && (
+                  <span style={{ ...pill, background: 'rgba(229,72,77,.13)', color: C.redText }}>On Hold</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
+                <span>Step {selected.current_step_number ?? '—'}</span>
+                <span style={{ color: C.ink2 }}>{selected.current_step_name ?? '—'}</span>
+              </div>
+            </div>
+          ) : lookupState === 'not_found' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 7, fontFamily: MONO, fontSize: 10.5, color: C.redText, letterSpacing: '0.03em' }}>
+              <AlertTriangle size={12} />
+              No UID found for that code{scopedLocation != null ? ' in your location' : ''}.
+            </div>
+          ) : lookupState === 'error' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 7, fontFamily: MONO, fontSize: 10.5, color: C.orange, letterSpacing: '0.03em' }}>
+              <AlertTriangle size={12} />
+              Lookup failed — check the connection and try again.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 7, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
+              <ScanLine size={11} />
+              Scan the barcode or type the UID, then press Enter.
+            </div>
+          )}
         </div>
 
         <div>
@@ -742,7 +907,7 @@ function LogMeasurementForm({
         {!selected ? (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
             <Info size={12} style={{ marginTop: 1, flexShrink: 0 }} />
-            Select a UID from Pending Sign-offs to record its measurement and sign off.
+            Scan or type a UID above (or click one in the queue) to record its measurement and sign off.
           </div>
         ) : !canSignOff ? (
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>

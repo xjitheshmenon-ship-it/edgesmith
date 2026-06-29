@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { shiftApi, uidApi, userApi, factoryApi } from '../api/client'
+import { shiftApi, uidApi, userApi } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { format, formatDistanceToNowStrict } from 'date-fns'
 import {
@@ -11,11 +11,11 @@ import {
   AlertTriangle,
   ChevronRight,
   Clock,
-  Filter,
   RefreshCw,
   Users,
   ListChecks,
   CircleSlash,
+  Search,
 } from 'lucide-react'
 
 /* ── Micro-styles ─────────────────────────────────────────────────────────── */
@@ -25,9 +25,9 @@ const ARCH = "'Archivo', sans-serif"
 
 /* ── Shift definitions (mirror of Shifts.tsx) ─────────────────────────────── */
 const SHIFTS = [
-  { value: 'morning', label: 'Morning', time: '06:00 – 14:00', color: '#f59e0b' },
-  { value: 'afternoon', label: 'Afternoon', time: '14:00 – 22:00', color: '#3b82f6' },
-  { value: 'night', label: 'Night', time: '22:00 – 06:00', color: '#a78bfa' },
+  { value: 'morning', label: 'Morning', n: 1, time: '06:00 – 14:00', color: '#f59e0b' },
+  { value: 'afternoon', label: 'Afternoon', n: 2, time: '14:00 – 22:00', color: '#3b82f6' },
+  { value: 'night', label: 'Night', n: 3, time: '22:00 – 06:00', color: '#a78bfa' },
 ]
 
 /* Furnace steps always go to the Supervisor on duty — never auto-assigned. */
@@ -37,6 +37,18 @@ const isFurnaceStep = (name?: string | null) => {
 }
 
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2 }
+
+const fmtInt = (n: number) => n.toLocaleString('en-US')
+
+/* Filter chips — applied to the capped, server-paged result set. The list is
+   already search-first + priority-ordered server-side; chips refine the page. */
+const JOB_CHIPS: { key: string; label: string; match: (u: any) => boolean }[] = [
+  { key: 'all', label: 'All', match: () => true },
+  { key: 'urgent', label: 'Urgent', match: (u) => u.priority === 'urgent' },
+  { key: 'furnace', label: 'Furnace', match: (u) => isFurnaceStep(u.current_step_name) },
+  { key: 'grinding', label: 'Grinding', match: (u) => (u.current_step_name ?? '').toLowerCase().includes('grind') },
+  { key: 'qc', label: 'QC', match: (u) => (u.current_step_name ?? '').toLowerCase().includes('qc') },
+]
 
 /* ── Small primitives ─────────────────────────────────────────────────────── */
 function PriorityPill({ priority }: { priority: string }) {
@@ -118,6 +130,16 @@ function initials(name?: string | null) {
     .toUpperCase()
 }
 
+/* Debounce a fast-changing value (search box → server query). */
+function useDebounced<T>(value: T, ms = 300): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), ms)
+    return () => clearTimeout(t)
+  }, [value, ms])
+  return debounced
+}
+
 /* ── Page ─────────────────────────────────────────────────────────────────── */
 export default function JobAssignment() {
   const { user } = useAuth()
@@ -138,11 +160,10 @@ function SupervisorBoard() {
   const [shiftDate, setShiftDate] = useState(today)
   const [shiftPeriod, setShiftPeriod] = useState('morning')
 
-  // Left-panel filters
+  /* Left-panel: search-first + a single active chip (capped page). */
   const [search, setSearch] = useState('')
-  const [wsFilter, setWsFilter] = useState('')
-  const [cycleFilter, setCycleFilter] = useState('')
-  const [priorityFilter, setPriorityFilter] = useState('')
+  const debouncedSearch = useDebounced(search, 300)
+  const [chip, setChip] = useState('all')
 
   // Manual-assign selection
   const [selectedJob, setSelectedJob] = useState<any>(null)
@@ -152,18 +173,31 @@ function SupervisorBoard() {
   const scopedLocation =
     user?.role === 'operator' || user?.role === 'supervisor' ? user?.primary_location_id ?? undefined : undefined
 
-  /* ── Data: candidate jobs (active UIDs ready for their next step) ──────── */
+  /* ── Data: unassigned jobs — SERVER-side search + cap + total ─────────────
+     NEVER fetches all 12,000 jobs. Drives the list from a capped, priority-
+     ordered, server-searched page. The badge/caption use the server `total`. */
   const {
     data: uidResult,
     isLoading: uidLoading,
+    isFetching: uidFetching,
     isError: uidError,
   } = useQuery({
-    queryKey: ['ja-uids', scopedLocation],
-    queryFn: () => uidApi.list({ status: 'active', location_id: scopedLocation, limit: 200 }).then((r) => r.data),
+    queryKey: ['ja-uids', scopedLocation, debouncedSearch],
+    queryFn: () =>
+      uidApi
+        .list({
+          status: 'active',
+          order: 'priority',
+          search: debouncedSearch.trim() || undefined,
+          location_id: scopedLocation,
+          limit: 60,
+        })
+        .then((r) => r.data),
     refetchInterval: 30_000,
     retry: false,
   })
-  const allUids: any[] = uidResult?.items ?? []
+  const total: number = uidResult?.total ?? 0
+  const pageItems: any[] = uidResult?.items ?? []
 
   /* ── Data: current allotments for this shift (already-assigned jobs) ───── */
   const { data: allotments = [] } = useQuery({
@@ -185,11 +219,6 @@ function SupervisorBoard() {
     queryFn: () => shiftApi.queueView(shiftDate, shiftPeriod).then((r) => r.data),
     refetchInterval: 30_000,
     retry: 1,
-  })
-
-  const { data: workstations = [] } = useQuery({
-    queryKey: ['ja-workstations', scopedLocation],
-    queryFn: () => factoryApi.workstations(scopedLocation).then((r) => r.data),
   })
 
   const { data: users = [] } = useQuery({
@@ -240,33 +269,17 @@ function SupervisorBoard() {
     return s
   }, [allotments, queueData])
 
-  /* ── Derived: unassigned jobs queue (left panel) ───────────────────────── */
+  /* ── Derived: the capped page, minus already-allotted jobs, chip-filtered ─
+     The server already applied: status=active, search, priority order, cap.
+     We only drop jobs that are already on the board and apply the active chip
+     client-side (priority/step-type chips the list endpoint doesn't take). */
+  const chipDef = JOB_CHIPS.find((c) => c.key === chip) ?? JOB_CHIPS[0]
   const unassigned = useMemo(() => {
-    const term = search.trim().toLowerCase()
-    return (allUids as any[])
+    return (pageItems as any[])
       .filter((u) => u.current_step_id != null) // ready for a next step
       .filter((u) => !allottedUidIds.has(u.id))
-      .filter((u) => (term ? u.code.toLowerCase().includes(term) : true))
-      .filter((u) => (cycleFilter ? u.cycle_type_name === cycleFilter : true))
-      .filter((u) => (priorityFilter ? u.priority === priorityFilter : true))
-      .filter((u) =>
-        wsFilter
-          ? wsFilter === 'furnace'
-            ? isFurnaceStep(u.current_step_name)
-            : (u.current_step_name ?? '').toLowerCase().includes(wsFilter.toLowerCase())
-          : true,
-      )
-      .sort((a, b) => {
-        const pr = (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3)
-        if (pr !== 0) return pr
-        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-      })
-  }, [allUids, allottedUidIds, search, wsFilter, cycleFilter, priorityFilter])
-
-  const cycleOptions = useMemo(
-    () => Array.from(new Set((allUids as any[]).map((u) => u.cycle_type_name).filter(Boolean))).sort(),
-    [allUids],
-  )
+      .filter((u) => chipDef.match(u))
+  }, [pageItems, allottedUidIds, chipDef])
 
   /* ── Operator board rows ───────────────────────────────────────────────── */
   const operators = (users as any[]).filter((u) => u.role === 'operator')
@@ -301,10 +314,8 @@ function SupervisorBoard() {
     })
   }
 
-  const filtersActive = !!(search || wsFilter || cycleFilter || priorityFilter)
-
   return (
-    <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
+    <div style={{ padding: '28px 28px 60px', maxWidth: 1320 }}>
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 22, flexWrap: 'wrap' }}>
         <div>
@@ -315,7 +326,7 @@ function SupervisorBoard() {
             Job Assignment
           </h1>
           <p style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-2)', marginTop: 5 }}>
-            Allot ready jobs to operators for the shift — auto or manual
+            Allot ready jobs to operators for the shift — search-first at scale
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -350,8 +361,8 @@ function SupervisorBoard() {
         </div>
       </div>
 
-      {/* ── Shift info + summary strip ─────────────────────────────────────── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+      {/* ── Shift info strip ───────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18, flexWrap: 'wrap' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 20, background: 'var(--surface-3)', border: '1px solid var(--line)' }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: shiftInfo.color }} />
           <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: 'var(--ink-2)' }}>
@@ -359,28 +370,9 @@ function SupervisorBoard() {
           </span>
         </div>
         <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink-2)' }}>
-          <strong style={{ color: 'var(--ink)', fontFamily: ARCH, fontWeight: 800 }}>{unassigned.length}</strong> unassigned ·{' '}
+          <strong style={{ color: 'var(--ink)', fontFamily: ARCH, fontWeight: 800 }}>{fmtInt(total)}</strong> queued ·{' '}
           <strong style={{ color: 'var(--ink)', fontFamily: ARCH, fontWeight: 800 }}>{totalAssigned}</strong> assigned ·{' '}
           <strong style={{ color: 'var(--ink)', fontFamily: ARCH, fontWeight: 800 }}>{(queueData as any[]).length}</strong> operators
-        </div>
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-          {autoResult && (
-            <span style={{ fontFamily: MONO, fontSize: 12, color: autoResult.allotted > 0 ? '#22a06b' : 'var(--ink-3)' }}>
-              {autoResult.allotted > 0 ? `✓ ${autoResult.allotted} jobs assigned` : 'No jobs matched'}
-            </span>
-          )}
-          {canEdit && (
-            <button
-              className="btn-primary"
-              onClick={() => {
-                setAutoResult(null)
-                autoAssign.mutate()
-              }}
-              disabled={autoAssign.isPending}
-            >
-              <Zap size={14} /> {autoAssign.isPending ? 'Assigning…' : 'Auto Assign'}
-            </button>
-          )}
         </div>
       </div>
 
@@ -404,69 +396,83 @@ function SupervisorBoard() {
         Furnace steps (tempering / hardening / quenching) are reserved for the Supervisor on duty and are excluded from operator auto-assignment.
       </div>
 
-      {/* ── Two-panel body ─────────────────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 0.85fr) minmax(440px, 1.4fr)', gap: 20, alignItems: 'start' }}>
-        {/* ════ LEFT: Unassigned jobs queue ════════════════════════════════ */}
-        <div className="card" style={{ padding: '18px 20px', position: 'sticky', top: 20 }}>
-          <SectionLabel
-            icon={<ListChecks size={13} style={{ color: 'var(--ink-3)' }} />}
-            right={
-              <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: unassigned.length ? 'var(--accent)' : 'var(--ink-3)' }}>
-                {unassigned.length}
-              </span>
-            }
-          >
-            Unassigned Jobs
-          </SectionLabel>
-
-          {/* Filters */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-            <input
-              className="input"
-              placeholder="Search UID code…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-              <select className="input" value={cycleFilter} onChange={(e) => setCycleFilter(e.target.value)}>
-                <option value="">All cycles</option>
-                {cycleOptions.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-              <select className="input" value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
-                <option value="">All priorities</option>
-                <option value="urgent">Urgent</option>
-                <option value="high">High</option>
-                <option value="normal">Normal</option>
-              </select>
+      {/* ── Two-panel body: 380px left · fluid right ───────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: 18, alignItems: 'start' }}>
+        {/* ════ LEFT: Unassigned jobs — search-first, capped ═══════════════ */}
+        <div className="card" style={{ padding: 0, overflow: 'hidden', position: 'sticky', top: 20 }}>
+          {/* Card header: title + QUEUED badge */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '15px 18px 11px' }}>
+            <div style={{ fontFamily: ARCH, fontWeight: 800, fontSize: 16, letterSpacing: '-.01em', color: 'var(--ink)' }}>
+              Unassigned Jobs
             </div>
-            <select className="input" value={wsFilter} onChange={(e) => setWsFilter(e.target.value)}>
-              <option value="">All steps</option>
-              <option value="furnace">Furnace steps only</option>
-              <option value="grind">Grinding</option>
-              <option value="vmc">VMC / machining</option>
-              <option value="qc">QC</option>
-            </select>
-            {filtersActive && (
-              <button
-                onClick={() => {
-                  setSearch('')
-                  setWsFilter('')
-                  setCycleFilter('')
-                  setPriorityFilter('')
-                }}
-                style={{ alignSelf: 'flex-start', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontFamily: MONO, fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 5, padding: 0 }}
-              >
-                <Filter size={11} /> Clear filters
-              </button>
-            )}
+            <span
+              style={{
+                fontFamily: MONO,
+                fontSize: 10,
+                fontWeight: 600,
+                color: 'var(--warning)',
+                background: 'rgba(217,122,43,.12)',
+                padding: '3px 9px',
+                borderRadius: 20,
+              }}
+            >
+              {fmtInt(total)} QUEUED
+            </span>
           </div>
 
-          {/* Job list */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 'calc(100vh - 360px)', overflowY: 'auto' }}>
+          {/* Search + chips */}
+          <div style={{ padding: '0 18px 12px', display: 'flex', flexDirection: 'column', gap: 9, borderBottom: '1px solid var(--line)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 9, background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: 10, padding: '8px 12px' }}>
+              <Search size={15} style={{ color: 'var(--ink-3)', flexShrink: 0 }} />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search UID, step or workstation…"
+                style={{ border: 'none', outline: 'none', flex: 1, fontFamily: SANS, fontSize: 12.5, color: 'var(--ink)', background: 'none' }}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  title="Clear search"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)', display: 'flex', padding: 0, flexShrink: 0 }}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              {JOB_CHIPS.map((c) => {
+                const active = chip === c.key
+                return (
+                  <button
+                    key={c.key}
+                    onClick={() => setChip(c.key)}
+                    style={{
+                      fontFamily: MONO,
+                      fontSize: 10,
+                      fontWeight: 600,
+                      letterSpacing: '.04em',
+                      padding: '4px 10px',
+                      borderRadius: 20,
+                      cursor: 'pointer',
+                      border: `1px solid ${active ? 'var(--accent)' : 'var(--line)'}`,
+                      background: active ? 'var(--accent)' : 'var(--surface)',
+                      color: active ? 'var(--accent-ink)' : 'var(--ink-2)',
+                    }}
+                  >
+                    {c.label}
+                  </button>
+                )
+              })}
+              <span style={{ flex: 1 }} />
+              <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>
+                showing {unassigned.length} of {fmtInt(total)} · priority order
+              </span>
+            </div>
+          </div>
+
+          {/* Compact job list (capped page) */}
+          <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 300px)', overflowY: 'auto' }}>
             {uidLoading ? (
               <div style={{ padding: '28px 0', textAlign: 'center', fontFamily: MONO, fontSize: 12, color: 'var(--ink-3)' }}>Loading jobs…</div>
             ) : uidError ? (
@@ -474,8 +480,10 @@ function SupervisorBoard() {
                 Could not load jobs — refresh in a moment.
               </div>
             ) : unassigned.length === 0 ? (
-              <div style={{ padding: '28px 12px', textAlign: 'center', fontFamily: SANS, fontSize: 13, color: 'var(--ink-3)' }}>
-                {filtersActive ? 'No jobs match the current filters.' : 'No unassigned jobs — everything is allotted.'}
+              <div style={{ padding: '28px 16px', textAlign: 'center', fontFamily: SANS, fontSize: 13, color: 'var(--ink-3)' }}>
+                {debouncedSearch || chip !== 'all'
+                  ? 'No jobs match this search/filter.'
+                  : 'No unassigned jobs — everything is allotted.'}
               </div>
             ) : (
               unassigned.map((u) => {
@@ -492,37 +500,42 @@ function SupervisorBoard() {
                     style={{
                       textAlign: 'left',
                       width: '100%',
-                      padding: '11px 13px',
-                      borderRadius: 11,
-                      border: `1px solid ${selected ? 'var(--accent)' : 'var(--line)'}`,
-                      background: selected ? 'var(--accent-dim)' : 'var(--surface-2)',
-                      cursor: canEdit ? 'pointer' : 'default',
+                      padding: '13px 18px',
+                      border: 'none',
+                      borderBottom: '1px solid var(--line)',
+                      background: selected ? 'var(--accent-dim)' : 'transparent',
+                      boxShadow: selected ? 'inset 3px 0 0 var(--accent)' : 'none',
+                      cursor: canEdit ? 'grab' : 'default',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: 7,
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-                      <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: 'var(--ink)' }}>{u.code}</span>
+                    {/* row 1: UID + cycle · spacer · priority */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 7 }}>
+                      <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 600, color: 'var(--accent)' }}>{u.code}</span>
                       <CyclePill name={u.cycle_type_name} />
+                      <span style={{ flex: 1 }} />
                       <PriorityPill priority={u.priority} />
-                      {furnace && (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontFamily: MONO, fontSize: 9.5, fontWeight: 600, color: 'var(--warning)' }}>
-                          <Flame size={10} /> FURNACE
-                        </span>
-                      )}
                     </div>
-                    <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--ink-2)' }}>
-                      <span style={{ fontFamily: MONO, color: 'var(--ink-2)', marginRight: 5 }}>{u.current_step_number ?? '—'}</span>
+                    {/* row 2: step name */}
+                    <div style={{ fontFamily: SANS, fontSize: 12, fontWeight: 500, color: 'var(--ink)', marginBottom: 6 }}>
+                      <span style={{ fontFamily: MONO, color: 'var(--ink-3)', marginRight: 6 }}>{u.current_step_number ?? '—'}</span>
                       {u.current_step_name ?? '—'}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>
-                        <Clock size={10} /> {waitLabel(u.created_at)} waiting
-                      </span>
-                      {u.current_storage_code && (
-                        <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>{u.current_storage_code}</span>
+                    {/* row 3: workstation/storage · badges · spacer · wait */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>
+                      <span style={{ color: 'var(--ink-2)', fontWeight: 600 }}>{u.current_storage_code ?? '—'}</span>
+                      {furnace ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--warning)', fontWeight: 600 }}>
+                          <Flame size={10} /> FURNACE
+                        </span>
+                      ) : (
+                        <span>· {u.cycle_type_name ?? 'job'}</span>
                       )}
+                      <span style={{ flex: 1 }} />
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <Clock size={10} /> {waitLabel(u.created_at)}
+                      </span>
                     </div>
                   </button>
                 )
@@ -530,8 +543,16 @@ function SupervisorBoard() {
             )}
           </div>
 
+          {/* Footer hint: searching at scale */}
+          <div style={{ padding: '10px 18px', borderTop: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 9.5, color: 'var(--ink-3)', letterSpacing: '.04em' }}>
+            {uidFetching ? <RefreshCw size={11} className="" /> : <Search size={11} />}
+            {total > unassigned.length
+              ? `Search to narrow ${fmtInt(total)} jobs — showing top ${unassigned.length} by priority`
+              : 'All queued jobs shown'}
+          </div>
+
           {selectedJob && canEdit && (
-            <div style={{ marginTop: 14, padding: '10px 12px', borderRadius: 10, background: 'var(--accent-dim)', border: '1px solid var(--accent)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ margin: 14, padding: '10px 12px', borderRadius: 10, background: 'var(--accent-dim)', border: '1px solid var(--accent)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontFamily: SANS, fontSize: 12, color: 'var(--ink)' }}>
                 <strong style={{ fontFamily: MONO }}>{selectedJob.code}</strong> selected — pick an operator on the right
               </span>
@@ -544,19 +565,40 @@ function SupervisorBoard() {
 
         {/* ════ RIGHT: Operator assignment board ═══════════════════════════ */}
         <div>
-          <SectionLabel
-            icon={<Users size={13} style={{ color: 'var(--ink-3)' }} />}
-            right={
+          {/* Board header: title + Auto Assign */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Users size={15} style={{ color: 'var(--ink-3)' }} />
+              <span style={{ fontFamily: ARCH, fontWeight: 800, fontSize: 16, letterSpacing: '-.01em', color: 'var(--ink)' }}>
+                Operator Board · Shift {shiftInfo.n}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {autoResult && (
+                <span style={{ fontFamily: MONO, fontSize: 12, color: autoResult.allotted > 0 ? '#22a06b' : 'var(--ink-3)' }}>
+                  {autoResult.allotted > 0 ? `✓ ${autoResult.allotted} jobs assigned` : 'No jobs matched'}
+                </span>
+              )}
               <button
                 onClick={() => refetchQueue()}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)', display: 'flex', alignItems: 'center', gap: 4, fontFamily: MONO, fontSize: 10, letterSpacing: '.06em' }}
               >
                 <RefreshCw size={11} /> REFRESH
               </button>
-            }
-          >
-            Operator Board · {shiftInfo.label} Shift
-          </SectionLabel>
+              {canEdit && (
+                <button
+                  className="btn-primary"
+                  onClick={() => {
+                    setAutoResult(null)
+                    autoAssign.mutate()
+                  }}
+                  disabled={autoAssign.isPending}
+                >
+                  <Zap size={14} /> {autoAssign.isPending ? 'Assigning…' : 'Auto Assign'}
+                </button>
+              )}
+            </div>
+          </div>
 
           {queueLoading ? (
             <div className="card" style={{ padding: 40, textAlign: 'center', fontFamily: MONO, fontSize: 12, color: 'var(--ink-3)' }}>Loading operator board…</div>
@@ -575,7 +617,7 @@ function SupervisorBoard() {
               </div>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
               {boardCards.map((ws: any) => (
                 <OperatorCard
                   key={ws.assignment_id ?? `${ws.operator_id}-${ws.workstation_id}`}
@@ -620,7 +662,7 @@ function SupervisorBoard() {
 
       {/* ── Footer ─────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 24, fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)', letterSpacing: '.06em' }}>
-        <Clock size={11} /> Live data refreshes every 30s.
+        <Clock size={11} /> Live data refreshes every 30s · unassigned list is search-first (capped at 60 by priority).
       </div>
     </div>
   )
@@ -663,17 +705,19 @@ function OperatorCard({
       }}
     >
       {/* Operator header */}
-      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--line)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--surface-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)', fontFamily: ARCH, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
-            {initials(ws.operator_name)}
-          </div>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontFamily: SANS, fontWeight: 600, fontSize: 13, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {ws.operator_name ?? 'Unassigned'}
+      <div style={{ padding: '17px', borderBottom: '1px solid var(--line)' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 }}>
+            <div style={{ width: 38, height: 38, borderRadius: '50%', background: '#eaf0f7', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)', fontFamily: ARCH, fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+              {initials(ws.operator_name)}
             </div>
-            <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>
-              {ws.workstation_code} — {ws.workstation_name}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontFamily: SANS, fontWeight: 600, fontSize: 13.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {ws.operator_name ?? 'Unassigned'}
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>
+                {ws.operator_id != null ? `OP-${ws.operator_id}` : '—'} · {qCount} job{qCount === 1 ? '' : 's'}
+              </div>
             </div>
           </div>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '.04em', color: statusColor, textTransform: 'uppercase', flexShrink: 0 }}>
@@ -682,15 +726,22 @@ function OperatorCard({
           </span>
         </div>
 
-        {/* Capacity strip */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
-          <span style={{ fontFamily: ARCH, fontWeight: 800, fontSize: 18, color: 'var(--accent)', letterSpacing: '-.02em' }}>{qCount}</span>
-          <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>job{qCount === 1 ? '' : 's'} in queue</span>
-          {ready > 0 && (
-            <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: MONO, fontSize: 10, color: '#22a06b' }}>
-              <Plus size={10} /> {ready} ready
+        {/* Workstation info block */}
+        <div style={{ background: 'var(--surface-2)', borderRadius: 9, padding: '11px 13px', marginTop: 12 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+            <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--ink-3)' }}>WORKSTATION</span>
+            <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: 'var(--ink)' }}>{ws.workstation_code ?? '—'}</span>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--ink-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {ws.workstation_name ?? '—'}
             </span>
-          )}
+            {ready > 0 && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: MONO, fontSize: 10, color: '#22a06b', flexShrink: 0, marginLeft: 8 }}>
+                <Plus size={10} /> {ready} ready
+              </span>
+            )}
+          </div>
         </div>
       </div>
 

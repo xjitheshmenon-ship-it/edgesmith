@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { manufacturingApi, uidApi, productApi } from '../api/client'
 import type { ManufacturingOrder, UID, Size, Design } from '../types'
@@ -655,52 +655,52 @@ function LinkUidsDrawer({
   onClose: () => void
   onLinked: () => void
 }) {
+  // Server-capped page size: at 12,000 active UIDs we never load the whole pool.
+  const PAGE_LIMIT = 40
+
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState('active')
-  const [cycleFilter, setCycleFilter] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   // Whether to restrict candidates to the MO's own size & design (spec filter).
   const [matchSpec, setMatchSpec] = useState(true)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(0)
 
+  // Debounce the search box (~300ms) so each keystroke doesn't hit the server.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300)
+    return () => clearTimeout(t)
+  }, [search])
+
   const linkedIds = useMemo(() => new Set(linkedUids.map((u) => u.id)), [linkedUids])
 
-  // Candidate UIDs to link: filter by status, then by code/size/design client-side.
-  const { data: result, isLoading } = useQuery({
-    queryKey: ['link-candidates', statusFilter],
-    queryFn: () => uidApi.list({ status: statusFilter || undefined, limit: 200 }).then((r) => r.data),
+  // Server-side search + cap: the backend matches the term against UID code /
+  // current step / workstation and returns one capped page plus the full total.
+  const { data: result, isLoading, isFetching } = useQuery({
+    queryKey: ['link-candidates', 'active', debouncedSearch, PAGE_LIMIT],
+    queryFn: () =>
+      uidApi
+        .list({ status: 'active', search: debouncedSearch || undefined, limit: PAGE_LIMIT })
+        .then((r) => r.data as { total: number; items: UID[] }),
     retry: false,
   })
-  const allUids: UID[] = result?.items ?? []
+  const pageUids: UID[] = result?.items ?? []
+  const total: number = result?.total ?? 0
 
-  // Distinct cycle types among the loaded UID pool (spec: filter by cycle).
-  const cycleOptions = useMemo(() => {
-    const seen = new Map<number, string>()
-    for (const u of allUids) {
-      if (u.cycle_type_id != null && !seen.has(u.cycle_type_id)) {
-        seen.set(u.cycle_type_id, u.cycle_type_name ?? `Cycle ${u.cycle_type_id}`)
-      }
-    }
-    return [...seen.entries()].map(([id, name]) => ({ id, name }))
-  }, [allUids])
-
+  // Client-side refinement on the returned page only (we never have the whole
+  // pool in memory): drop already-linked / other-MO UIDs and, when the toggle is
+  // on, restrict to the MO's own size & design.
   const candidates = useMemo(() => {
-    const term = search.trim().toLowerCase()
-    const cyId = cycleFilter ? Number(cycleFilter) : null
-    return allUids.filter((u) => {
+    return pageUids.filter((u) => {
       if (linkedIds.has(u.id)) return false
       if (u.mo_id != null && u.mo_id !== mo.id) return false // already on another MO
-      if (term && !u.code.toLowerCase().includes(term)) return false
-      if (cyId != null && u.cycle_type_id !== cyId) return false // filter by cycle
-      // Optionally match the MO's size / design (spec: filter by size/design).
       if (matchSpec) {
         if (mo.size_id != null && u.size_id != null && u.size_id !== mo.size_id) return false
         if (mo.design_id != null && u.design_id != null && u.design_id !== mo.design_id) return false
       }
       return true
     })
-  }, [allUids, search, cycleFilter, matchSpec, linkedIds, mo.size_id, mo.design_id, mo.id])
+  }, [pageUids, matchSpec, linkedIds, mo.size_id, mo.design_id, mo.id])
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -752,29 +752,23 @@ function LinkUidsDrawer({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <div style={{ position: 'relative', flex: 1 }}>
-            <Search size={14} style={{ position: 'absolute', left: 11, top: 11, color: C.ink3 }} />
-            <input className="input" style={{ paddingLeft: 32 }} placeholder="Search UID code…" value={search} onChange={(e) => setSearch(e.target.value)} />
-          </div>
-          <select className="input" style={{ width: 150 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="">All statuses</option>
-            <option value="active">Active</option>
-            <option value="on_hold">On hold</option>
-            <option value="converted">Converted</option>
-            <option value="dispatched">Dispatched</option>
-          </select>
+        {/* Server-driven search: queries active UIDs (code / step / workstation)
+            and returns one capped page — the full pool is never loaded up front. */}
+        <div style={{ position: 'relative' }}>
+          <Search size={14} style={{ position: 'absolute', left: 11, top: 11, color: C.ink3 }} />
+          <input
+            className="input"
+            style={{ paddingLeft: 32, width: '100%' }}
+            placeholder="Search UID…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          {isFetching && (
+            <RefreshCw size={13} style={{ position: 'absolute', right: 11, top: 11, color: C.ink3, animation: 'spin 1s linear infinite' }} />
+          )}
         </div>
 
-        {/* Cycle filter (spec: filter UIDs by cycle, size, design, status) */}
-        <select className="input" value={cycleFilter} onChange={(e) => setCycleFilter(e.target.value)}>
-          <option value="">All cycles</option>
-          {cycleOptions.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-
-        {/* Apply MO's size & design — yes/no spec toggle */}
+        {/* Apply MO's size & design — yes/no spec toggle (applies to this page) */}
         {(mo.size_mm != null || mo.design_code) && (
           <label style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', fontFamily: SANS, fontSize: 12.5, color: C.ink2, background: C.surface2, borderRadius: 9, padding: '9px 11px' }}>
             <input type="checkbox" checked={matchSpec} onChange={(e) => setMatchSpec(e.target.checked)} />
@@ -785,10 +779,20 @@ function LinkUidsDrawer({
           </label>
         )}
 
+        {/* Caption: how much of the matching set this page represents. */}
+        <div style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: '0.04em', color: C.ink3 }}>
+          showing {pageUids.length} of {total.toLocaleString()}
+          {total > PAGE_LIMIT && (
+            <span> · refine your search to narrow the {total.toLocaleString()} active UIDs</span>
+          )}
+        </div>
+
         {isLoading ? (
           <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '24px 0', textAlign: 'center' }}>Loading UIDs…</div>
         ) : candidates.length === 0 ? (
-          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink3, padding: '24px 0', textAlign: 'center' }}>No unlinked UIDs match the filter.</div>
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink3, padding: '24px 0', textAlign: 'center' }}>
+            {debouncedSearch ? 'No active UIDs match this search.' : 'No linkable active UIDs on this page.'}
+          </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {candidates.map((u) => {
