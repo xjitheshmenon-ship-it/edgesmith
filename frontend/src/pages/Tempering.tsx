@@ -1,466 +1,437 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { temperingApi, cycleApi } from '../api/client'
+import type { CycleType } from '../types'
 import { useAuth } from '../hooks/useAuth'
-import { Flame, AlertTriangle, CheckCircle, Plus, X } from 'lucide-react'
+import { Flame, AlertTriangle, Lock, Check, X, Thermometer, Timer, Save, History } from 'lucide-react'
+import { format } from 'date-fns'
 
-type Tab = 'parameters' | 'batches'
+/* ─── design tokens ─────────────────────────────────────────────────────────── */
+const C = {
+  ink: 'var(--ink)',
+  ink2: 'var(--ink-2)',
+  ink3: 'var(--ink-3)',
+  accent: 'var(--accent)',
+  line: 'var(--line)',
+  surface: 'var(--surface)',
+  surface2: 'var(--surface-2)',
+  surface3: 'var(--surface-3)',
+  red: '#e5484d',
+  orange: '#d97a2b',
+  amber: '#f0c674',
+  green: '#22a06b',
+}
+const MONO = "'IBM Plex Mono', monospace"
+const SANS = "'IBM Plex Sans', sans-serif"
+const ARCHIVO = "'Archivo', sans-serif"
 
-export default function Tempering() {
-  const [tab, setTab] = useState<Tab>('batches')
-  const [showForm, setShowForm] = useState(false)
-  const [selectedBatch, setSelectedBatch] = useState<any>(null)
-  const qc = useQueryClient()
-  const { user } = useAuth()
-  const isAdmin = user?.role === 'admin'
-  const isSupervisor = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'supervisor'
+/* A tempering parameter row as returned by GET /tempering/parameters. */
+interface ParamRow {
+  id: number
+  cycle_type_id: number
+  cycle_type_name: string
+  cycle_step_id: number
+  step_number: string
+  operation_name: string
+  target_temp_c: number | null
+  target_soak_minutes: number | null
+  tolerance_temp_c: number | null
+  tolerance_soak_minutes: number | null
+  updated_at?: string | null
+  updated_by_name?: string | null
+}
 
-  const cycles = useQuery({ queryKey: ['cycles'], queryFn: () => cycleApi.list().then(r => r.data) })
-  const params = useQuery({ queryKey: ['tempering-params'], queryFn: () => temperingApi.parameters().then(r => r.data) })
-  const batches = useQuery({ queryKey: ['furnace-batches'], queryFn: () => temperingApi.batches().then(r => r.data) })
+/* A tempering step belonging to a cycle's current version. */
+interface TempStep {
+  cycle_step_id: number
+  step_number: string
+  operation_name: string
+}
 
+/* Identify HT-furnace tempering steps within a cycle version. */
+const isTemperStep = (s: { workstation_code?: string; operation_name?: string }) =>
+  s.workstation_code === 'HT90' ||
+  /^HT(70|80|90)/i.test(s.workstation_code ?? '') ||
+  (s.operation_name ?? '').toLowerCase().includes('temper') ||
+  (s.operation_name ?? '').toLowerCase().includes('stress relief')
+
+/* ─── small primitives ─────────────────────────────────────────────────────── */
+function SectionLabel({ icon, children, right }: { icon?: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div style={{ padding: 24, maxWidth: 1100, margin: '0 auto' }}>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 22, color: 'var(--ink)', letterSpacing: '-0.03em', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Flame size={20} color="var(--accent)" />
-          Tempering
-        </div>
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.1em', marginTop: 4 }}>
-          FURNACE BATCH TRACKING · HT90 · TARGET vs ACTUAL PARAMETERS
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
-        {(['batches', 'parameters'] as Tab[]).map(t => (
-          <button
-            key={t}
-            onClick={() => { setTab(t); setShowForm(false) }}
-            style={{
-              padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
-              fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: '0.08em',
-              background: tab === t ? 'var(--accent)' : 'var(--surface-2)',
-              color: tab === t ? 'var(--accent-ink)' : 'var(--ink-2)',
-              fontWeight: tab === t ? 700 : 400,
-            }}
-          >
-            {t.toUpperCase()}
-          </button>
-        ))}
-        {((tab === 'batches' && isSupervisor) || (tab === 'parameters' && isAdmin)) && (
-          <button onClick={() => setShowForm(s => !s)} className="btn-primary" style={{ marginLeft: 'auto', gap: 6 }}>
-            {showForm ? <X size={13} /> : <Plus size={13} />}
-            {showForm ? 'Cancel' : tab === 'batches' ? 'New Furnace Batch' : 'Set Parameter'}
-          </button>
-        )}
-      </div>
-
-      {showForm && tab === 'parameters' && isAdmin && (
-        <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-          <ParameterForm cycles={cycles.data || []} onDone={() => { setShowForm(false); qc.invalidateQueries({ queryKey: ['tempering-params'] }) }} />
-        </div>
-      )}
-
-      {showForm && tab === 'batches' && isSupervisor && (
-        <div className="card" style={{ padding: 20, marginBottom: 20 }}>
-          <BatchForm cycles={cycles.data || []} params={params.data || []} onDone={() => { setShowForm(false); qc.invalidateQueries({ queryKey: ['furnace-batches'] }) }} />
-        </div>
-      )}
-
-      {tab === 'parameters' && (
-        <ParametersTable data={params.data || []} loading={params.isLoading} />
-      )}
-      {tab === 'batches' && (
-        <BatchesTable data={batches.data || []} loading={batches.isLoading} onSelect={setSelectedBatch} />
-      )}
-
-      {selectedBatch && (
-        <BatchDrawer batchId={selectedBatch.id} onClose={() => setSelectedBatch(null)} />
-      )}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+      {icon}
+      <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase' }}>{children}</span>
+      <div style={{ flex: 1 }} />
+      {right}
     </div>
   )
 }
 
-// ── Parameter Form ────────────────────────────────────────────────────────────
-
-function ParameterForm({ cycles, onDone }: { cycles: any[]; onDone: () => void }) {
-  const [cycleId, setCycleId] = useState('')
-  const [stepId, setStepId] = useState('')
-  const [targetTemp, setTargetTemp] = useState('')
-  const [targetSoak, setTargetSoak] = useState('')
-  const [tolTemp, setTolTemp] = useState('5')
-  const [tolSoak, setTolSoak] = useState('5')
-
-  const selectedCycle = cycles.find((c: any) => c.id === parseInt(cycleId))
-  const temperingSteps = (selectedCycle?.current_version?.steps || []).filter((s: any) => s.is_qc_step === false && (s.workstation_code === 'HT90' || s.operation_name?.toLowerCase().includes('temper')))
-
-  const mut = useMutation({
-    mutationFn: () => temperingApi.upsertParameter({
-      cycle_type_id: parseInt(cycleId),
-      cycle_step_id: parseInt(stepId),
-      target_temp_c: parseFloat(targetTemp),
-      target_soak_minutes: parseInt(targetSoak),
-      tolerance_temp_c: parseFloat(tolTemp),
-      tolerance_soak_minutes: parseInt(tolSoak),
-    }),
-    onSuccess: onDone,
-  })
-
-  const L = ({ children }: { children: React.ReactNode }) => (
-    <label style={{ display: 'block', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.08em', color: 'var(--ink-3)', marginBottom: 4 }}>{children}</label>
-  )
-
-  return (
-    <div>
-      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)', marginBottom: 16, letterSpacing: '0.06em' }}>SET TEMPERING PARAMETERS</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <div>
-          <L>CYCLE TYPE</L>
-          <select className="input" value={cycleId} onChange={e => { setCycleId(e.target.value); setStepId('') }}>
-            <option value="">Select cycle…</option>
-            {cycles.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <L>TEMPERING STEP</L>
-          <select className="input" value={stepId} onChange={e => setStepId(e.target.value)} disabled={!cycleId}>
-            <option value="">Select step…</option>
-            {temperingSteps.map((s: any) => <option key={s.id} value={s.id}>Step {s.step_number} — {s.operation_name}</option>)}
-          </select>
-        </div>
-        <div>
-          <L>TARGET TEMPERATURE (°C)</L>
-          <input className="input" type="number" value={targetTemp} onChange={e => setTargetTemp(e.target.value)} placeholder="e.g. 180" />
-        </div>
-        <div>
-          <L>TARGET SOAK TIME (MIN)</L>
-          <input className="input" type="number" value={targetSoak} onChange={e => setTargetSoak(e.target.value)} placeholder="e.g. 90" />
-        </div>
-        <div>
-          <L>TEMP TOLERANCE (±°C)</L>
-          <input className="input" type="number" value={tolTemp} onChange={e => setTolTemp(e.target.value)} />
-        </div>
-        <div>
-          <L>SOAK TOLERANCE (±MIN)</L>
-          <input className="input" type="number" value={tolSoak} onChange={e => setTolSoak(e.target.value)} />
-        </div>
-      </div>
-      <button className="btn-primary" onClick={() => mut.mutate()} disabled={mut.isPending || !cycleId || !stepId || !targetTemp || !targetSoak}>
-        {mut.isPending ? 'Saving…' : 'Save Parameters'}
-      </button>
-    </div>
-  )
+const pill: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center',
+  fontFamily: MONO, fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+  letterSpacing: '0.04em', padding: '3px 9px', borderRadius: 20, whiteSpace: 'nowrap',
 }
 
-// ── Batch Form ────────────────────────────────────────────────────────────────
-
-function BatchForm({ cycles, params, onDone }: { cycles: any[]; params: any[]; onDone: () => void }) {
-  const [cycleId, setCycleId] = useState('')
-  const [stepId, setStepId] = useState('')
-  const [intakeCount, setIntakeCount] = useState('')
-
-  const selectedCycle = cycles.find((c: any) => c.id === parseInt(cycleId))
-  const temperingSteps = (selectedCycle?.current_version?.steps || []).filter((s: any) =>
-    s.workstation_code === 'HT90' || s.operation_name?.toLowerCase().includes('temper')
-  )
-  const matchingParam = params.find((p: any) => p.cycle_type_id === parseInt(cycleId) && p.cycle_step_id === parseInt(stepId))
-
-  const { data: available, isLoading: loadingUIDs } = useQuery({
-    queryKey: ['tempering-available', stepId],
-    queryFn: () => temperingApi.availableUIDs(parseInt(stepId)).then(r => r.data),
-    enabled: !!stepId,
-  })
-
-  const availableCount = available?.length ?? 0
-  const intake = intakeCount ? Math.min(parseInt(intakeCount), availableCount) : availableCount
-
-  const mut = useMutation({
-    mutationFn: () => temperingApi.createBatch({
-      cycle_type_id: parseInt(cycleId),
-      cycle_step_id: parseInt(stepId),
-      intake_count: intakeCount ? intake : null,
-    }),
-    onSuccess: onDone,
-  })
-
-  const L = ({ children }: { children: React.ReactNode }) => (
-    <label style={{ display: 'block', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.08em', color: 'var(--ink-3)', marginBottom: 4 }}>{children}</label>
-  )
-
-  return (
-    <div>
-      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)', marginBottom: 16, letterSpacing: '0.06em' }}>NEW FURNACE BATCH — HT90</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <div>
-          <L>CYCLE TYPE</L>
-          <select className="input" value={cycleId} onChange={e => { setCycleId(e.target.value); setStepId(''); setIntakeCount('') }}>
-            <option value="">Select cycle…</option>
-            {cycles.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-        <div>
-          <L>TEMPERING STEP</L>
-          <select className="input" value={stepId} onChange={e => { setStepId(e.target.value); setIntakeCount('') }} disabled={!cycleId}>
-            <option value="">Select step…</option>
-            {temperingSteps.map((s: any) => <option key={s.id} value={s.id}>Step {s.step_number} — {s.operation_name}</option>)}
-          </select>
-        </div>
-      </div>
-
-      {matchingParam && (
-        <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)' }}>
-          Target: <span style={{ color: 'var(--accent)' }}>{matchingParam.target_temp_c}°C</span> for <span style={{ color: 'var(--accent)' }}>{matchingParam.target_soak_minutes} min</span>
-          <span style={{ color: 'var(--ink-3)', marginLeft: 12 }}>±{matchingParam.tolerance_temp_c}°C / ±{matchingParam.tolerance_soak_minutes}min</span>
-        </div>
-      )}
-
-      {stepId && (
-        <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
-          {loadingUIDs ? (
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>Checking availability…</div>
-          ) : (
-            <>
-              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)', marginBottom: availableCount > 0 ? 10 : 0 }}>
-                <span style={{ color: availableCount > 0 ? '#6ee7b7' : 'var(--error)', fontWeight: 700, fontSize: 16 }}>{availableCount}</span>
-                <span style={{ marginLeft: 8 }}>knives available at source (FIFO auto-selection)</span>
-              </div>
-              {availableCount > 0 && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <L>INTAKE COUNT (leave blank for all {availableCount})</L>
-                    <input
-                      className="input"
-                      type="number"
-                      min={1}
-                      max={availableCount}
-                      value={intakeCount}
-                      onChange={e => setIntakeCount(e.target.value)}
-                      placeholder={`Max ${availableCount}`}
-                    />
-                  </div>
-                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)', paddingTop: 20 }}>
-                    → <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{intake}</span> will be loaded
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      <button
-        className="btn-primary"
-        style={{ marginTop: 4 }}
-        onClick={() => mut.mutate()}
-        disabled={mut.isPending || !cycleId || !stepId || availableCount === 0}
-      >
-        {mut.isPending ? 'Creating…' : `Load ${intake} Knives into Furnace`}
-      </button>
-      {mut.isError && <div style={{ color: 'var(--error)', fontSize: 12, marginTop: 8, fontFamily: "'IBM Plex Mono', monospace" }}>Failed — no UIDs available at this step</div>}
-    </div>
-  )
+function CycleBadge({ name }: { name: string }) {
+  const key = name.toUpperCase()
+  const map: Record<string, { bg: string; fg: string }> = {
+    EAT: { bg: 'rgba(45,111,181,.14)', fg: C.accent },
+    SWAN: { bg: 'rgba(34,160,107,.14)', fg: '#1c7a52' },
+    OVEN: { bg: 'rgba(217,122,43,.14)', fg: C.orange },
+  }
+  const s = map[key] ?? { bg: C.surface3, fg: C.ink2 }
+  return <span style={{ ...pill, background: s.bg, color: s.fg }}>{key}</span>
 }
 
-// ── Tables ────────────────────────────────────────────────────────────────────
+/* ─── editable parameter cell ──────────────────────────────────────────────── */
+function ParamCell({
+  param,
+  editable,
+  saving,
+  onSave,
+}: {
+  param: ParamRow | undefined
+  editable: boolean
+  saving: boolean
+  onSave: (vals: { target_temp_c: number; target_soak_minutes: number; tolerance_temp_c: number; tolerance_soak_minutes: number }) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [temp, setTemp] = useState('')
+  const [soak, setSoak] = useState('')
+  const [tolT, setTolT] = useState('')
+  const [tolS, setTolS] = useState('')
 
-const TH = ({ children }: { children: React.ReactNode }) => (
-  <th style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', color: 'var(--ink-3)', textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--line)', fontWeight: 500 }}>{children}</th>
-)
-const TD = ({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) => (
-  <td style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink)', padding: '9px 12px', borderBottom: '1px solid var(--line)', ...style }}>{children}</td>
-)
+  const begin = () => {
+    if (!editable) return
+    setTemp(param?.target_temp_c != null ? String(param.target_temp_c) : '')
+    setSoak(param?.target_soak_minutes != null ? String(param.target_soak_minutes) : '')
+    setTolT(param?.tolerance_temp_c != null ? String(param.tolerance_temp_c) : '5')
+    setTolS(param?.tolerance_soak_minutes != null ? String(param.tolerance_soak_minutes) : '5')
+    setEditing(true)
+  }
 
-function ParametersTable({ data, loading }: { data: any[]; loading: boolean }) {
-  if (loading) return <div style={{ color: 'var(--ink-3)', padding: 16 }}>Loading…</div>
-  return (
-    <div className="card" style={{ overflow: 'hidden' }}>
-      <table className="es-table" style={{ width: '100%' }}>
-        <thead><tr>
-          <TH>CYCLE TYPE</TH><TH>STEP</TH><TH>OPERATION</TH>
-          <TH>TARGET TEMP</TH><TH>TARGET SOAK</TH><TH>TEMP TOL</TH><TH>SOAK TOL</TH><TH>UPDATED</TH>
-        </tr></thead>
-        <tbody>
-          {data.map((p: any) => (
-            <tr key={p.id}>
-              <TD>{p.cycle_type_name}</TD>
-              <TD>Step {p.step_number}</TD>
-              <TD>{p.operation_name}</TD>
-              <TD><span style={{ color: '#fcd34d' }}>{p.target_temp_c}°C</span></TD>
-              <TD><span style={{ color: '#fcd34d' }}>{p.target_soak_minutes} min</span></TD>
-              <TD>±{p.tolerance_temp_c}°C</TD>
-              <TD>±{p.tolerance_soak_minutes} min</TD>
-              <TD>{p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '—'}</TD>
-            </tr>
-          ))}
-          {data.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>No parameters configured — Admin sets these</td></tr>}
-        </tbody>
-      </table>
-    </div>
-  )
-}
+  const commit = () => {
+    const t = parseFloat(temp)
+    const s = parseInt(soak, 10)
+    if (Number.isNaN(t) || Number.isNaN(s)) return
+    onSave({
+      target_temp_c: t,
+      target_soak_minutes: s,
+      tolerance_temp_c: tolT === '' ? 0 : parseFloat(tolT),
+      tolerance_soak_minutes: tolS === '' ? 0 : parseInt(tolS, 10),
+    })
+    setEditing(false)
+  }
 
-function BatchesTable({ data, loading, onSelect }: { data: any[]; loading: boolean; onSelect: (b: any) => void }) {
-  if (loading) return <div style={{ color: 'var(--ink-3)', padding: 16 }}>Loading…</div>
-  return (
-    <div className="card" style={{ overflow: 'hidden' }}>
-      <table className="es-table" style={{ width: '100%' }}>
-        <thead><tr>
-          <TH>BATCH NO</TH><TH>CYCLE</TH><TH>STEP</TH><TH>TARGET</TH>
-          <TH>ACTUAL</TH><TH>UIDS</TH><TH>STATUS</TH><TH>STARTED</TH>
-        </tr></thead>
-        <tbody>
-          {data.map((b: any) => (
-            <tr key={b.id} onClick={() => onSelect(b)} style={{ cursor: 'pointer' }} className="row-hover">
-              <TD><span style={{ color: 'var(--accent)', fontWeight: 700 }}>{b.batch_number}</span></TD>
-              <TD>{b.cycle_type_name}</TD>
-              <TD>Step {b.step_number}</TD>
-              <TD style={{ color: '#fcd34d' }}>{b.target_temp_c ? `${b.target_temp_c}°C / ${b.target_soak_minutes}min` : '—'}</TD>
-              <TD>
-                {b.actuals_recorded ? (
-                  <span style={{ color: b.deviation_flagged ? 'var(--error)' : '#6ee7b7' }}>
-                    {b.actual_temp_c}°C / {b.actual_soak_minutes}min
-                  </span>
-                ) : b.ended_at ? <span style={{ color: 'var(--ink-3)' }}>Not recorded</span> : '—'}
-              </TD>
-              <TD>{b.uid_count}</TD>
-              <TD>
-                {b.deviation_flagged ? (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--error)' }}>
-                    <AlertTriangle size={12} /> DEVIATION
-                  </span>
-                ) : b.ended_at ? (
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#6ee7b7' }}>
-                    <CheckCircle size={12} /> DONE
-                  </span>
-                ) : (
-                  <span style={{ color: '#fcd34d' }}>IN PROGRESS</span>
-                )}
-              </TD>
-              <TD>{b.started_at ? new Date(b.started_at).toLocaleString() : '—'}</TD>
-            </tr>
-          ))}
-          {data.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>No furnace batches yet</td></tr>}
-        </tbody>
-      </table>
-    </div>
-  )
-}
+  const mini: React.CSSProperties = {
+    height: 30, padding: '0 8px', width: '100%',
+    fontFamily: MONO, fontSize: 12,
+  }
+  const fieldLabel: React.CSSProperties = { fontFamily: MONO, fontSize: 8.5, letterSpacing: '0.1em', color: C.ink3, textTransform: 'uppercase', marginBottom: 3, display: 'block' }
 
-// ── Batch Drawer ──────────────────────────────────────────────────────────────
-
-function BatchDrawer({ batchId, onClose }: { batchId: number; onClose: () => void }) {
-  const [actualTemp, setActualTemp] = useState('')
-  const [actualSoak, setActualSoak] = useState('')
-  const qc = useQueryClient()
-  const { user } = useAuth()
-  const isSupervisor = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'supervisor'
-
-  const { data: batch, isLoading } = useQuery({
-    queryKey: ['furnace-batch', batchId],
-    queryFn: () => temperingApi.getBatch(batchId).then(r => r.data),
-  })
-
-  const complete = useMutation({
-    mutationFn: () => temperingApi.completeBatch(batchId, {
-      actual_temp_c: actualTemp ? parseFloat(actualTemp) : null,
-      actual_soak_minutes: actualSoak ? parseInt(actualSoak) : null,
-    }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['furnace-batches'] })
-      qc.invalidateQueries({ queryKey: ['furnace-batch', batchId] })
-    },
-  })
-
-  return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 50,
-      background: 'rgba(0,0,0,0.5)',
-      display: 'flex', justifyContent: 'flex-end',
-    }} onClick={onClose}>
-      <div style={{
-        width: 480, height: '100%', background: 'var(--surface)',
-        borderLeft: '1px solid var(--line)', overflowY: 'auto', padding: 24,
-      }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+  if (editing) {
+    return (
+      <td style={{ ...cellTd, background: C.surface2, verticalAlign: 'top' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 7 }}>
           <div>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 14, color: 'var(--accent)', letterSpacing: '0.06em' }}>
-              {isLoading ? '…' : batch?.batch_number}
-            </div>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 4 }}>
-              FURNACE BATCH
-            </div>
+            <span style={fieldLabel}>Temp °C</span>
+            <input className="input" style={mini} type="number" autoFocus value={temp} onChange={(e) => setTemp(e.target.value)} placeholder="180" />
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)' }}>
-            <X size={16} />
+          <div>
+            <span style={fieldLabel}>Soak min</span>
+            <input className="input" style={mini} type="number" value={soak} onChange={(e) => setSoak(e.target.value)} placeholder="90" />
+          </div>
+          <div>
+            <span style={fieldLabel}>Tol ±°C</span>
+            <input className="input" style={mini} type="number" value={tolT} onChange={(e) => setTolT(e.target.value)} placeholder="5" />
+          </div>
+          <div>
+            <span style={fieldLabel}>Tol ±min</span>
+            <input className="input" style={mini} type="number" value={tolS} onChange={(e) => setTolS(e.target.value)} placeholder="5" />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 9 }}>
+          <button className="btn-primary" style={{ height: 28, padding: '0 10px', fontSize: 12 }} disabled={saving || temp === '' || soak === ''} onClick={commit}>
+            <Check size={12} /> {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button className="btn-secondary" style={{ height: 28, padding: '0 10px', fontSize: 12 }} disabled={saving} onClick={() => setEditing(false)}>
+            <X size={12} /> Cancel
           </button>
         </div>
+      </td>
+    )
+  }
 
-        {isLoading && <div style={{ color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>Loading…</div>}
+  const empty = !param || param.target_temp_c == null
+  return (
+    <td
+      style={{
+        ...cellTd,
+        cursor: editable ? 'pointer' : 'default',
+        verticalAlign: 'top',
+      }}
+      className={editable ? 'row-hover' : undefined}
+      onClick={begin}
+      title={editable ? 'Click to edit' : undefined}
+    >
+      {empty ? (
+        <span style={{ fontFamily: MONO, fontSize: 12, color: C.ink3 }}>
+          {editable ? '+ set' : '—'}
+        </span>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Thermometer size={12} style={{ color: C.orange, flexShrink: 0 }} />
+            <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.02em', color: C.ink }}>{param!.target_temp_c}°C</span>
+            <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3 }}>±{param!.tolerance_temp_c ?? 0}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Timer size={12} style={{ color: C.accent, flexShrink: 0 }} />
+            <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: C.ink }}>{param!.target_soak_minutes} min</span>
+            <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3 }}>±{param!.tolerance_soak_minutes ?? 0}</span>
+          </div>
+        </div>
+      )}
+    </td>
+  )
+}
 
-        {batch && (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 20 }}>
-              {[
-                ['Cycle', batch.cycle_type_name],
-                ['Step', `Step ${batch.step_number} — ${batch.operation_name}`],
-                ['Target Temp', batch.target_temp_c ? `${batch.target_temp_c}°C` : '—'],
-                ['Target Soak', batch.target_soak_minutes ? `${batch.target_soak_minutes} min` : '—'],
-                ['Actual Temp', batch.actual_temp_c ? `${batch.actual_temp_c}°C` : '—'],
-                ['Actual Soak', batch.actual_soak_minutes != null ? `${batch.actual_soak_minutes} min` : '—'],
-                ['Started', batch.started_at ? new Date(batch.started_at).toLocaleString() : '—'],
-                ['Ended', batch.ended_at ? new Date(batch.ended_at).toLocaleString() : 'In progress'],
-              ].map(([k, v]) => (
-                <div key={k} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '8px 12px' }}>
-                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: 'var(--ink-3)', letterSpacing: '0.1em', marginBottom: 2 }}>{k}</div>
-                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink)' }}>{v}</div>
-                </div>
-              ))}
-            </div>
+const headTh: React.CSSProperties = {
+  textAlign: 'left', padding: '12px 14px', fontFamily: MONO, fontSize: 10, fontWeight: 600,
+  letterSpacing: '0.1em', textTransform: 'uppercase', color: C.ink3,
+  borderBottom: `1px solid ${C.line}`, verticalAlign: 'top',
+}
+const cellTd: React.CSSProperties = {
+  padding: '12px 14px', borderBottom: `1px solid var(--surface-2)`, borderLeft: `1px solid var(--surface-2)`,
+  fontSize: 12.5, color: C.ink, verticalAlign: 'middle', minWidth: 150,
+}
 
-            {batch.deviation_flagged && (
-              <div style={{ background: 'rgba(248,113,113,.1)', border: '1px solid rgba(248,113,113,.3)', borderRadius: 8, padding: '10px 14px', marginBottom: 16, color: 'var(--error)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-                <AlertTriangle size={14} style={{ marginTop: 1, flexShrink: 0 }} />
-                <div><div style={{ fontWeight: 700, marginBottom: 4 }}>DEVIATION FLAGGED</div>{batch.deviation_notes}</div>
-              </div>
-            )}
+/* ─── page ─────────────────────────────────────────────────────────────────── */
+export default function Tempering() {
+  const { user } = useAuth()
+  const qc = useQueryClient()
+  const isAdmin = user?.role === 'admin'
+  const [savingKey, setSavingKey] = useState<string | null>(null)
 
-            {!batch.ended_at && isSupervisor && (
-              <div style={{ marginBottom: 20, padding: 16, background: 'var(--surface-2)', borderRadius: 10 }}>
-                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)', marginBottom: 12, letterSpacing: '0.06em' }}>COMPLETE BATCH</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-                  <div>
-                    <label style={{ display: 'block', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginBottom: 4 }}>ACTUAL TEMP (°C)</label>
-                    <input className="input" type="number" value={actualTemp} onChange={e => setActualTemp(e.target.value)} placeholder={batch.target_temp_c || ''} />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginBottom: 4 }}>ACTUAL SOAK (MIN)</label>
-                    <input className="input" type="number" value={actualSoak} onChange={e => setActualSoak(e.target.value)} placeholder={batch.target_soak_minutes || ''} />
-                  </div>
-                </div>
-                <button className="btn-primary" onClick={() => complete.mutate()} disabled={complete.isPending} style={{ width: '100%', justifyContent: 'center' }}>
-                  {complete.isPending ? 'Completing…' : 'Mark Batch Done'}
-                </button>
-              </div>
-            )}
+  const cyclesQ = useQuery<CycleType[]>({
+    queryKey: ['cycles'],
+    queryFn: () => cycleApi.list().then((r) => r.data),
+  })
 
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)', marginBottom: 10, letterSpacing: '0.06em' }}>
-              UIDS IN THIS BATCH ({batch.uids?.length || 0})
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {(batch.uids || []).map((u: any) => (
-                <span key={u.uid_id} style={{
-                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700,
-                  padding: '3px 9px', borderRadius: 6,
-                  background: 'var(--surface-3)', color: 'var(--accent)',
-                  border: '1px solid var(--line)',
-                }}>
-                  {u.uid_code}
-                </span>
-              ))}
-            </div>
-          </>
+  const paramsQ = useQuery<ParamRow[]>({
+    queryKey: ['tempering-params'],
+    queryFn: () => temperingApi.parameters().then((r) => (Array.isArray(r.data) ? r.data : r.data?.items ?? [])),
+    retry: false,
+  })
+
+  const upsert = useMutation({
+    mutationFn: (data: Record<string, unknown>) => temperingApi.upsertParameter(data).then((r) => r.data),
+    onMutate: (data) => setSavingKey(`${data.cycle_type_id}:${data.cycle_step_id}`),
+    onSettled: () => setSavingKey(null),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tempering-params'] }),
+  })
+
+  const cycles = cyclesQ.data ?? []
+  const params = paramsQ.data ?? []
+
+  /* Discover the tempering steps from cycle definitions (union across cycles),
+     ordered by step_order so the four temper columns line up. */
+  const stepColumns = useMemo<TempStep[]>(() => {
+    const m = new Map<string, TempStep & { order: number }>()
+    for (const ct of cycles) {
+      const steps = ct.current_version?.steps ?? []
+      for (const s of steps) {
+        if (!isTemperStep(s)) continue
+        // Key by step_number so the same logical temper step (e.g. "9") collapses
+        // into one column even though each cycle has its own step row id.
+        const key = s.step_number
+        if (!m.has(key)) {
+          m.set(key, {
+            cycle_step_id: s.id,
+            step_number: s.step_number,
+            operation_name: s.operation_name,
+            order: s.step_order,
+          })
+        }
+      }
+    }
+    return [...m.values()].sort((a, b) => a.order - b.order)
+  }, [cycles])
+
+  /* Per-cycle lookup of its own step id for a given step_number (ids differ per cycle). */
+  const cycleStepId = useMemo(() => {
+    const m = new Map<string, number>() // `${cycle_id}:${step_number}` → cycle_step_id
+    for (const ct of cycles) {
+      for (const s of ct.current_version?.steps ?? []) {
+        if (isTemperStep(s)) m.set(`${ct.id}:${s.step_number}`, s.id)
+      }
+    }
+    return m
+  }, [cycles])
+
+  /* Param lookup by cycle_type_id + cycle_step_id. */
+  const paramByKey = useMemo(() => {
+    const m = new Map<string, ParamRow>()
+    for (const p of params) m.set(`${p.cycle_type_id}:${p.cycle_step_id}`, p)
+    return m
+  }, [params])
+
+  const lastUpdated = useMemo(() => {
+    const stamps = params.map((p) => p.updated_at).filter(Boolean) as string[]
+    if (!stamps.length) return null
+    return stamps.sort().slice(-1)[0]
+  }, [params])
+
+  const loading = cyclesQ.isLoading || paramsQ.isLoading
+  const cycleRows = cycles.filter((c) => !c.is_archived)
+
+  return (
+    <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
+      {/* header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 22 }}>
+        <div>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: C.ink, display: 'flex', alignItems: 'center', gap: 10 }}>
+            <Flame size={22} style={{ color: C.orange }} />
+            Tempering Parameters
+          </div>
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, marginTop: 3 }}>
+            Target temperatures, soak times &amp; deviation tolerances per cycle type · HT90 furnace
+          </div>
+        </div>
+        <span style={{ ...pill, background: isAdmin ? 'rgba(34,160,107,.14)' : C.surface3, color: isAdmin ? '#1c7a52' : C.ink2, gap: 5 }}>
+          <Lock size={11} /> {isAdmin ? 'Admin — editable' : 'Read only'}
+        </span>
+      </div>
+
+      {/* error states */}
+      {cyclesQ.isError && (
+        <ErrorBanner>Could not load cycle definitions. The server may be starting up — refresh in a moment.</ErrorBanner>
+      )}
+      {paramsQ.isError && (
+        <ErrorBanner>Tempering parameters are unavailable. This endpoint may not be deployed yet.</ErrorBanner>
+      )}
+
+      {/* matrix card */}
+      <div className="card" style={{ padding: '18px 20px', marginBottom: 18 }}>
+        <SectionLabel
+          icon={<Thermometer size={13} style={{ color: C.ink3 }} />}
+          right={
+            lastUpdated ? (
+              <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <History size={11} /> Updated {format(new Date(lastUpdated), 'dd MMM yyyy HH:mm')}
+              </span>
+            ) : undefined
+          }
+        >
+          Parameter Matrix — Rows: Cycle Type · Columns: Tempering Step
+        </SectionLabel>
+
+        {loading ? (
+          <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '24px 4px' }}>Loading parameters…</div>
+        ) : cycleRows.length === 0 ? (
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink3, padding: '24px 4px' }}>No cycle types configured.</div>
+        ) : stepColumns.length === 0 ? (
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink3, padding: '24px 4px' }}>
+            No tempering steps found in the current cycle definitions.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto', margin: '0 -4px' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 200 + stepColumns.length * 160 }}>
+              <thead>
+                <tr>
+                  <th style={{ ...headTh, minWidth: 130 }}>Cycle</th>
+                  {stepColumns.map((st, i) => (
+                    <th key={st.step_number} style={{ ...headTh, borderLeft: `1px solid var(--surface-2)` }}>
+                      <div style={{ color: C.ink, fontWeight: 700, fontSize: 11, letterSpacing: '0.06em' }}>
+                        Tempering {i + 1}
+                      </div>
+                      <div style={{ color: C.ink3, marginTop: 3 }}>
+                        Step {st.step_number}
+                        {/stress relief/i.test(st.operation_name) ? ' · SR' : ''}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cycleRows.map((ct) => (
+                  <tr key={ct.id}>
+                    <td style={{ ...cellTd, borderLeft: 'none', minWidth: 130 }}>
+                      <CycleBadge name={ct.name} />
+                    </td>
+                    {stepColumns.map((st) => {
+                      const stepId = cycleStepId.get(`${ct.id}:${st.step_number}`)
+                      // This cycle has no such temper step — render a non-editable blank.
+                      if (stepId == null) {
+                        return (
+                          <td key={st.step_number} style={{ ...cellTd }}>
+                            <span style={{ fontFamily: MONO, fontSize: 12, color: C.ink3 }}>n/a</span>
+                          </td>
+                        )
+                      }
+                      const key = `${ct.id}:${stepId}`
+                      return (
+                        <ParamCell
+                          key={st.step_number}
+                          param={paramByKey.get(key)}
+                          editable={isAdmin}
+                          saving={savingKey === key}
+                          onSave={(vals) =>
+                            upsert.mutate({
+                              cycle_type_id: ct.id,
+                              cycle_step_id: stepId,
+                              ...vals,
+                            })
+                          }
+                        />
+                      )
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {upsert.isError && (
+          <div style={{ marginTop: 12, fontFamily: MONO, fontSize: 11, color: C.red, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <AlertTriangle size={13} /> Failed to save parameter. Try again.
+          </div>
         )}
       </div>
+
+      {/* legend / notes */}
+      <div className="card" style={{ padding: '16px 20px' }}>
+        <SectionLabel icon={<Save size={13} style={{ color: C.ink3 }} />}>How parameters work</SectionLabel>
+        <ul style={{ margin: 0, paddingLeft: 18, fontFamily: SANS, fontSize: 13, color: C.ink2, lineHeight: 1.7 }}>
+          <li>
+            Each cell holds the <strong>target temperature</strong> (°C) and <strong>soak time</strong> (minutes) for one tempering step, plus the
+            <strong> ± tolerance</strong> bands that flag a furnace batch as deviating.
+          </li>
+          <li>All four tempering steps (Step 9, 10, 14, and 23 — Stress Relief) should be configured for every cycle type.</li>
+          <li>
+            {isAdmin
+              ? 'Click any cell to edit. Saving creates a new parameter version with a timestamp; historical furnace batches keep the values active when they ran.'
+              : 'Only Admins can edit these values. Changing a parameter creates a new timestamped version.'}
+          </li>
+        </ul>
+      </div>
+    </div>
+  )
+}
+
+function ErrorBanner({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        fontFamily: MONO, fontSize: 12, color: C.red,
+        padding: '12px 16px', background: 'rgba(229,72,77,.10)',
+        borderRadius: 10, border: '1px solid rgba(229,72,77,.25)', marginBottom: 18,
+      }}
+    >
+      <AlertTriangle size={15} /> {children}
     </div>
   )
 }
