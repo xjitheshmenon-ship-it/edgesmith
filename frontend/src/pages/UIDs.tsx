@@ -8,8 +8,8 @@ import { useAuth } from '../hooks/useAuth'
 import { Plus, Search, X, ChevronRight, Clock, CheckCircle2, XCircle } from 'lucide-react'
 import { format } from 'date-fns'
 
-const TH: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: '0.08em', color: '#9bb4d4', fontWeight: 500, background: '#21498a', borderBottom: '1px solid #2c5191' }
-const TD: React.CSSProperties = { padding: '11px 16px', fontSize: 13, color: '#eaf4e4', borderBottom: '1px solid #2c5191' }
+const TH: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.12em', color: 'var(--ink-2)', fontWeight: 600, background: 'var(--surface-2)', borderBottom: '1px solid var(--line)' }
+const TD: React.CSSProperties = { padding: '11px 16px', fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }
 
 // ── UID Detail Drawer ─────────────────────────────────────────────────────────
 
@@ -255,19 +255,14 @@ export default function UIDs() {
   )
 }
 
-const T = {
-  surface: '#173a70', s2: '#21498a', s3: '#2a5aa0', line: '#2c5191',
-  ink: '#eaf4e4', ink2: '#9bb4d4', ink3: '#5a7aaa', accent: '#d4eecb', accentInk: '#143160',
-  red: '#e5484d',
-}
 const inputStyle: React.CSSProperties = {
   width: '100%', padding: '9px 12px', borderRadius: 8,
-  background: T.s3, border: `1px solid ${T.line}`, color: T.ink,
+  background: 'var(--surface-3)', border: '1px solid var(--line)', color: 'var(--ink)',
   fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, outline: 'none', boxSizing: 'border-box',
 }
 const labelStyle: React.CSSProperties = {
   fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em',
-  color: T.ink3, textTransform: 'uppercase', marginBottom: 6, display: 'block',
+  color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 6, display: 'block',
 }
 
 function BulkCreateModal({ onClose }: { onClose: () => void }) {
@@ -293,17 +288,17 @@ function BulkCreateModal({ onClose }: { onClose: () => void }) {
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(10,20,45,.52)', backdropFilter: 'blur(3px)', zIndex: 40 }} />
       <aside style={{
         position: 'fixed', top: 0, right: 0, bottom: 0, width: 440,
-        background: T.surface, borderLeft: `1px solid ${T.line}`,
+        background: 'var(--surface)', borderLeft: '1px solid var(--line)',
         zIndex: 41, display: 'flex', flexDirection: 'column',
         animation: 'es-drawer .28s cubic-bezier(.2,.8,.2,1) both',
       }}>
         {/* Header */}
-        <div style={{ padding: '18px 22px', borderBottom: `1px solid ${T.line}`, background: T.s2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <div>
-            <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: T.ink }}>Bulk Create UIDs</div>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: T.ink3, marginTop: 3 }}>MAX 500 PER BATCH</div>
+            <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)' }}>Bulk Create UIDs</div>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 3 }}>MAX 500 PER BATCH</div>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.ink2, padding: 4 }}>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', padding: 4 }}>
             <X size={18} />
           </button>
         </div>
@@ -339,20 +334,20 @@ function BulkCreateModal({ onClose }: { onClose: () => void }) {
                 </select>
               </div>
               {mutation.error && (
-                <div style={{ padding: '10px 14px', borderRadius: 8, background: `${T.red}20`, border: `1px solid ${T.red}40`, color: T.red, fontSize: 13 }}>
+                <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(229,72,77,.12)', border: '1px solid rgba(229,72,77,.30)', color: 'var(--error)', fontSize: 13 }}>
                   Failed to create UIDs
                 </div>
               )}
 
               {/* Preview */}
-              <div style={{ padding: '12px 16px', borderRadius: 10, background: T.s2, border: `1px solid ${T.line}`, textAlign: 'center' }}>
-                <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 36, color: T.accent, lineHeight: 1 }}>{form.quantity || 0}</div>
-                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: T.ink3, marginTop: 4, letterSpacing: '0.08em' }}>UIDs WILL BE CREATED</div>
+              <div style={{ padding: '12px 16px', borderRadius: 9, background: 'var(--surface-2)', border: '1px solid var(--line)', textAlign: 'center' }}>
+                <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 36, color: 'var(--accent)', lineHeight: 1 }}>{form.quantity || 0}</div>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 4, letterSpacing: '0.08em' }}>UIDs WILL BE CREATED</div>
               </div>
 
               <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-                <button type="button" onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: `1px solid ${T.line}`, background: 'transparent', color: T.ink2, cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
-                <button type="submit" disabled={mutation.isPending} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: T.accent, color: T.accentInk, cursor: 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
+                <button type="button" onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: '1px solid var(--line)', background: 'transparent', color: 'var(--ink-2)', cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
+                <button type="submit" disabled={mutation.isPending} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: 'var(--accent)', color: 'var(--accent-ink)', cursor: 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
                   {mutation.isPending ? 'Creating…' : `Create ${form.quantity} UIDs`}
                 </button>
               </div>
@@ -360,15 +355,15 @@ function BulkCreateModal({ onClose }: { onClose: () => void }) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 56, color: T.accent, lineHeight: 1 }}>{result.created}</div>
-                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: T.ink3, marginTop: 6, letterSpacing: '0.1em' }}>UIDs CREATED</div>
+                <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 56, color: 'var(--accent)', lineHeight: 1 }}>{result.created}</div>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)', marginTop: 6, letterSpacing: '0.1em' }}>UIDs CREATED</div>
               </div>
-              <div style={{ borderRadius: 10, border: `1px solid ${T.line}`, overflow: 'hidden', maxHeight: 320, overflowY: 'auto' }}>
+              <div style={{ borderRadius: 9, border: '1px solid var(--line)', overflow: 'hidden', maxHeight: 320, overflowY: 'auto' }}>
                 {result.uids.map((u) => (
-                  <div key={u.id} style={{ padding: '9px 14px', fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: T.ink, borderBottom: `1px solid ${T.line}` }}>{u.code}</div>
+                  <div key={u.id} style={{ padding: '9px 14px', fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }}>{u.code}</div>
                 ))}
               </div>
-              <button onClick={onClose} style={{ padding: '10px 0', borderRadius: 9, border: `1px solid ${T.line}`, background: 'transparent', color: T.ink2, cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Close</button>
+              <button onClick={onClose} style={{ padding: '10px 0', borderRadius: 9, border: '1px solid var(--line)', background: 'transparent', color: 'var(--ink-2)', cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Close</button>
             </div>
           )}
         </div>

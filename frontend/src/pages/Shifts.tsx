@@ -5,24 +5,6 @@ import { format } from 'date-fns'
 import { Plus, Trash2, CheckCircle, X, User, Zap, ChevronDown, ChevronRight, ArrowRight, Users, Clock } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
-/* ── Design tokens (Lapis theme — matches CSS variables) ─────────────────── */
-const T = {
-  bg:        '#11305f',
-  surface:   '#173a70',
-  s2:        '#21498a',
-  s3:        '#2a5aa0',
-  line:      '#2c5191',
-  ink:       '#eaf4e4',
-  ink2:      '#9bb4d4',
-  ink3:      '#5a7aaa',
-  accent:    '#d4eecb',
-  accentInk: '#143160',
-  green:     '#22a06b',
-  amber:     '#f59e0b',
-  red:       '#e5484d',
-  blue:      '#3b82f6',
-}
-
 /* ── Animation ───────────────────────────────────────────────────────────── */
 const DRAWER_ANIM = `
   @keyframes es-drawer { from { transform: translateX(24px); opacity: 0 } to { transform: none; opacity: 1 } }
@@ -35,7 +17,7 @@ const arch: React.CSSProperties = { fontFamily: "'Archivo', sans-serif" }
 const sans: React.CSSProperties = { fontFamily: "'IBM Plex Sans', sans-serif" }
 
 const label = (txt: string) => (
-  <div style={{ ...mono, fontSize: 10, letterSpacing: '.12em', color: T.ink2, marginBottom: 8, textTransform: 'uppercase' as const }}>{txt}</div>
+  <div style={{ ...mono, fontSize: 10, letterSpacing: '.12em', color: 'var(--ink-2)', marginBottom: 8, textTransform: 'uppercase' as const }}>{txt}</div>
 )
 
 function Badge({ children, color }: { children: React.ReactNode; color: string }) {
@@ -61,7 +43,7 @@ function StoragePill({ code }: { code: string }) {
     <span style={{
       display: 'inline-flex', alignItems: 'center',
       padding: '2px 9px', borderRadius: 7,
-      background: 'rgba(212,238,203,.14)', color: T.accent,
+      background: 'rgba(212,238,203,.14)', color: 'var(--accent)',
       border: `1px solid rgba(212,238,203,.22)`,
       ...mono, fontSize: 11, fontWeight: 700,
     }}>{code}</span>
@@ -75,7 +57,7 @@ const SHIFTS = [
 ]
 
 const STATUS_COLOR: Record<string, string> = {
-  active: T.green, on_hold: T.amber, converting: '#a78bfa', dispatched: T.blue,
+  active: '#22a06b', on_hold: '#f59e0b', converting: '#a78bfa', dispatched: '#3b82f6',
 }
 
 /* ── Drawer backdrop & shell ─────────────────────────────────────────────── */
@@ -94,11 +76,11 @@ function DrawerShell({ open, onClose, width = 480, children }: {
       <style>{DRAWER_ANIM}</style>
       <div
         onClick={onClose}
-        style={{ position: 'fixed', inset: 0, background: 'rgba(10,20,45,.52)', backdropFilter: 'blur(3px)', zIndex: 40, animation: 'es-fade .2s ease both' }}
+        style={{ position: 'fixed', inset: 0, background: 'rgba(10,20,45,.52)', backdropFilter: 'blur(3px)', zIndex: 40, animation: 'es-fade 180ms cubic-bezier(.2,.8,.2,1) both' }}
       />
       <aside style={{
         position: 'fixed', top: 0, right: 0, bottom: 0, width,
-        background: T.surface, borderLeft: `1px solid ${T.line}`,
+        background: 'var(--surface)', borderLeft: '1px solid var(--line)',
         zIndex: 41, display: 'flex', flexDirection: 'column',
         animation: 'es-drawer .28s cubic-bezier(.2,.8,.2,1) both',
         boxShadow: '-24px 0 60px rgba(0,0,0,.28)',
@@ -123,19 +105,19 @@ function AssignDrawer({ open, onClose, shiftDate, shiftPeriod, workstations, ope
   return (
     <DrawerShell open={open} onClose={onClose} width={440}>
       {/* Header */}
-      <div style={{ padding: '22px 24px 18px', borderBottom: `1px solid ${T.line}` }}>
+      <div style={{ padding: '22px 24px 18px', borderBottom: '1px solid var(--line)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <div style={{ ...mono, fontSize: 10, letterSpacing: '.14em', color: T.ink2, marginBottom: 8 }}>SHIFT MANAGEMENT</div>
-            <div style={{ ...arch, fontWeight: 800, fontSize: 20, letterSpacing: '-.02em', color: T.ink }}>Assign Operator</div>
+            <div style={{ ...mono, fontSize: 10, letterSpacing: '.14em', color: 'var(--ink-2)', marginBottom: 8 }}>SHIFT MANAGEMENT</div>
+            <div style={{ ...arch, fontWeight: 800, fontSize: 20, letterSpacing: '-.02em', color: 'var(--ink)' }}>Assign Operator</div>
           </div>
-          <button onClick={onClose} style={{ width: 32, height: 32, border: `1px solid ${T.line}`, background: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.ink2 }}>
+          <button onClick={onClose} style={{ width: 32, height: 32, border: '1px solid var(--line)', background: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-2)' }}>
             <X size={15} />
           </button>
         </div>
         <div style={{ marginTop: 14, display: 'inline-flex', alignItems: 'center', gap: 7, padding: '5px 12px', borderRadius: 20, background: 'rgba(212,238,203,.12)', border: `1px solid rgba(212,238,203,.2)` }}>
           <Clock size={12} style={{ color: shiftInfo.color }} />
-          <span style={{ ...mono, fontSize: 11, fontWeight: 600, color: T.ink2 }}>{shiftInfo.label} · {shiftInfo.time} · {format(new Date(shiftDate + 'T00:00:00'), 'dd MMM yyyy')}</span>
+          <span style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--ink-2)' }}>{shiftInfo.label} · {shiftInfo.time} · {format(new Date(shiftDate + 'T00:00:00'), 'dd MMM yyyy')}</span>
         </div>
       </div>
 
@@ -148,14 +130,14 @@ function AssignDrawer({ open, onClose, shiftDate, shiftPeriod, workstations, ope
               <select
                 value={form.workstation_id}
                 onChange={e => setForm(f => ({ ...f, workstation_id: e.target.value }))}
-                style={{ width: '100%', height: 44, padding: '0 36px 0 14px', border: `1.5px solid ${T.line}`, borderRadius: 11, ...sans, fontSize: 14, color: T.ink, background: T.s2, outline: 'none', appearance: 'none', cursor: 'pointer' }}
+                style={{ width: '100%', height: 44, padding: '0 36px 0 14px', border: '1px solid var(--line)', borderRadius: 11, ...sans, fontSize: 14, color: 'var(--ink)', background: 'var(--surface-2)', outline: 'none', appearance: 'none', cursor: 'pointer' }}
               >
                 <option value="">Select workstation…</option>
                 {workstations.filter((w: any) => !assignedWsIds.has(w.id)).map((w: any) => (
                   <option key={w.id} value={w.id}>{w.code} — {w.name}</option>
                 ))}
               </select>
-              <ChevronDown size={15} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: T.ink2, pointerEvents: 'none' }} />
+              <ChevronDown size={15} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-2)', pointerEvents: 'none' }} />
             </div>
           </div>
 
@@ -165,23 +147,23 @@ function AssignDrawer({ open, onClose, shiftDate, shiftPeriod, workstations, ope
               <select
                 value={form.operator_id}
                 onChange={e => setForm(f => ({ ...f, operator_id: e.target.value }))}
-                style={{ width: '100%', height: 44, padding: '0 36px 0 14px', border: `1.5px solid ${T.line}`, borderRadius: 11, ...sans, fontSize: 14, color: T.ink, background: T.s2, outline: 'none', appearance: 'none', cursor: 'pointer' }}
+                style={{ width: '100%', height: 44, padding: '0 36px 0 14px', border: '1px solid var(--line)', borderRadius: 11, ...sans, fontSize: 14, color: 'var(--ink)', background: 'var(--surface-2)', outline: 'none', appearance: 'none', cursor: 'pointer' }}
               >
                 <option value="">Select operator…</option>
                 {operators.map((o: any) => (
                   <option key={o.id} value={o.id}>{o.full_name || o.username}</option>
                 ))}
               </select>
-              <ChevronDown size={15} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: T.ink2, pointerEvents: 'none' }} />
+              <ChevronDown size={15} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--ink-2)', pointerEvents: 'none' }} />
             </div>
             {form.operator_id && (
-              <div style={{ marginTop: 10, padding: '12px 14px', borderRadius: 11, background: T.s2, display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 36, height: 36, borderRadius: '50%', background: T.s3, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.accent, ...arch, fontWeight: 700, fontSize: 13 }}>
+              <div style={{ marginTop: 10, padding: '12px 14px', borderRadius: 11, background: 'var(--surface-2)', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--surface-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)', ...arch, fontWeight: 700, fontSize: 13 }}>
                   {(operators.find((o: any) => String(o.id) === form.operator_id)?.full_name || '?').split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
                 </div>
                 <div>
-                  <div style={{ ...sans, fontSize: 13, fontWeight: 600, color: T.ink }}>{operators.find((o: any) => String(o.id) === form.operator_id)?.full_name || '—'}</div>
-                  <div style={{ ...mono, fontSize: 10, color: T.ink2 }}>operator</div>
+                  <div style={{ ...sans, fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{operators.find((o: any) => String(o.id) === form.operator_id)?.full_name || '—'}</div>
+                  <div style={{ ...mono, fontSize: 10, color: 'var(--ink-2)' }}>operator</div>
                 </div>
               </div>
             )}
@@ -194,23 +176,23 @@ function AssignDrawer({ open, onClose, shiftDate, shiftPeriod, workstations, ope
               onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
               placeholder="e.g. Covering for K. Osei"
               rows={3}
-              style={{ width: '100%', padding: '12px 14px', border: `1.5px solid ${T.line}`, borderRadius: 11, ...sans, fontSize: 14, color: T.ink, background: T.s2, outline: 'none', resize: 'none' }}
+              style={{ width: '100%', padding: '12px 14px', border: '1px solid var(--line)', borderRadius: 11, ...sans, fontSize: 14, color: 'var(--ink)', background: 'var(--surface-2)', outline: 'none', resize: 'none' }}
             />
           </div>
 
           {error && (
-            <div style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(229,72,77,.14)', border: '1px solid rgba(229,72,77,.3)', color: T.red, ...sans, fontSize: 13 }}>{error}</div>
+            <div style={{ padding: '10px 14px', borderRadius: 10, background: 'rgba(229,72,77,.14)', border: '1px solid rgba(229,72,77,.3)', color: 'var(--error)', ...sans, fontSize: 13 }}>{error}</div>
           )}
         </div>
       </div>
 
       {/* Footer */}
-      <div style={{ padding: '16px 24px', borderTop: `1px solid ${T.line}`, display: 'flex', gap: 10 }}>
-        <button onClick={onClose} style={{ flex: 1, height: 42, border: `1px solid ${T.line}`, background: 'none', borderRadius: 10, cursor: 'pointer', ...sans, fontWeight: 600, fontSize: 13, color: T.ink }}>Cancel</button>
+      <div style={{ padding: '16px 24px', borderTop: '1px solid var(--line)', display: 'flex', gap: 10 }}>
+        <button onClick={onClose} style={{ flex: 1, height: 42, border: '1px solid var(--line)', background: 'none', borderRadius: 10, cursor: 'pointer', ...sans, fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>Cancel</button>
         <button
           disabled={!form.workstation_id || !form.operator_id || saving}
           onClick={() => onSave({ workstation_id: Number(form.workstation_id), operator_id: Number(form.operator_id), notes: form.notes || undefined })}
-          style={{ flex: 1.4, height: 42, border: 'none', background: form.workstation_id && form.operator_id ? T.accent : T.s2, color: form.workstation_id && form.operator_id ? T.accentInk : T.ink3, borderRadius: 10, cursor: form.workstation_id && form.operator_id ? 'pointer' : 'not-allowed', ...sans, fontWeight: 700, fontSize: 13 }}
+          style={{ flex: 1.4, height: 42, border: 'none', background: form.workstation_id && form.operator_id ? 'var(--accent)' : 'var(--surface-2)', color: form.workstation_id && form.operator_id ? 'var(--accent-ink)' : 'var(--ink-3)', borderRadius: 10, cursor: form.workstation_id && form.operator_id ? 'pointer' : 'not-allowed', ...sans, fontWeight: 700, fontSize: 13 }}
         >
           {saving ? 'Saving…' : 'Assign & Confirm'}
         </button>
@@ -230,38 +212,38 @@ function JobDrawer({ ws, open, onClose, canEdit, onAllot, onRemove, allotting }:
   return (
     <DrawerShell open={open} onClose={onClose} width={500}>
       {/* Header */}
-      <div style={{ padding: '22px 24px 18px', borderBottom: `1px solid ${T.line}` }}>
+      <div style={{ padding: '22px 24px 18px', borderBottom: '1px solid var(--line)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
           <div style={{ flex: 1 }}>
-            <div style={{ ...mono, fontSize: 10, letterSpacing: '.14em', color: T.ink2, marginBottom: 6 }}>WORKSTATION</div>
+            <div style={{ ...mono, fontSize: 10, letterSpacing: '.14em', color: 'var(--ink-2)', marginBottom: 6 }}>WORKSTATION</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={{ ...arch, fontWeight: 800, fontSize: 22, letterSpacing: '-.02em', color: T.ink }}>{ws.workstation_code}</span>
-              <span style={{ ...sans, fontSize: 14, color: T.ink2 }}>{ws.workstation_name}</span>
+              <span style={{ ...arch, fontWeight: 800, fontSize: 22, letterSpacing: '-.02em', color: 'var(--ink)' }}>{ws.workstation_code}</span>
+              <span style={{ ...sans, fontSize: 14, color: 'var(--ink-2)' }}>{ws.workstation_name}</span>
             </div>
             {ws.from_storage?.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
                 {ws.from_storage.map((c: string) => <StoragePill key={c} code={c} />)}
-                <ArrowRight size={13} style={{ color: T.ink3 }} />
+                <ArrowRight size={13} style={{ color: 'var(--ink-3)' }} />
                 {ws.to_storage.map((c: string) => <StoragePill key={c} code={c} />)}
               </div>
             )}
           </div>
-          <button onClick={onClose} style={{ width: 32, height: 32, border: `1px solid ${T.line}`, background: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.ink2 }}>
+          <button onClick={onClose} style={{ width: 32, height: 32, border: '1px solid var(--line)', background: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-2)' }}>
             <X size={15} />
           </button>
         </div>
         <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', background: T.s3, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.accent, ...arch, fontWeight: 700, fontSize: 12 }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--surface-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)', ...arch, fontWeight: 700, fontSize: 12 }}>
             {(ws.operator_name || '?').split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
           </div>
           <div>
-            <div style={{ ...sans, fontWeight: 600, fontSize: 13, color: T.ink }}>{ws.operator_name}</div>
-            <div style={{ ...mono, fontSize: 10, color: T.ink2 }}>assigned operator</div>
+            <div style={{ ...sans, fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{ws.operator_name}</div>
+            <div style={{ ...mono, fontSize: 10, color: 'var(--ink-2)' }}>assigned operator</div>
           </div>
           <div style={{ marginLeft: 'auto' }}>
             {ws.confirmed
-              ? <Badge color={T.green}>Confirmed</Badge>
-              : <Badge color={T.amber}>Pending</Badge>}
+              ? <Badge color="#22a06b">Confirmed</Badge>
+              : <Badge color="#f59e0b">Pending</Badge>}
           </div>
         </div>
       </div>
@@ -269,30 +251,30 @@ function JobDrawer({ ws, open, onClose, canEdit, onAllot, onRemove, allotting }:
       {/* Body */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
         {/* Queue section */}
-        <div style={{ ...mono, fontSize: 10, letterSpacing: '.14em', color: T.ink2, marginBottom: 12 }}>
+        <div style={{ ...mono, fontSize: 10, letterSpacing: '.14em', color: 'var(--ink-2)', marginBottom: 12 }}>
           CURRENT QUEUE · {ws.queue?.length ?? 0} knives
         </div>
         {ws.queue?.length === 0 ? (
-          <div style={{ padding: '24px', textAlign: 'center', ...mono, fontSize: 12, color: T.ink3, background: T.s2, borderRadius: 12, border: `1px dashed ${T.line}` }}>
+          <div style={{ padding: '24px', textAlign: 'center', ...mono, fontSize: 12, color: 'var(--ink-3)', background: 'var(--surface-2)', borderRadius: 12, border: '1px solid var(--line)' }}>
             Queue empty — add knives from the ready pool below
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, borderRadius: 12, overflow: 'hidden', border: `1px solid ${T.line}` }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 1, borderRadius: 12, overflow: 'hidden', border: '1px solid var(--line)' }}>
             {ws.queue?.map((j: any, i: number) => (
-              <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: i % 2 === 0 ? T.s2 : T.surface }}>
-                <span style={{ ...mono, fontSize: 11, color: T.ink3, width: 22, textAlign: 'right', flexShrink: 0 }}>#{i + 1}</span>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLOR[j.uid_status] || T.ink3, flexShrink: 0 }} />
-                <span style={{ ...mono, fontWeight: 700, fontSize: 13, color: T.accent, flex: 1 }}>{j.uid_code}</span>
-                <span style={{ ...mono, fontSize: 11, color: T.ink2 }}>{j.current_step_name || `Step ${j.current_step}`}</span>
+              <div key={j.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: i % 2 === 0 ? 'var(--surface-2)' : 'var(--surface)' }}>
+                <span style={{ ...mono, fontSize: 11, color: 'var(--ink-3)', width: 22, textAlign: 'right', flexShrink: 0 }}>#{i + 1}</span>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLOR[j.uid_status] || 'var(--ink-3)', flexShrink: 0 }} />
+                <span style={{ ...mono, fontWeight: 700, fontSize: 13, color: 'var(--accent)', flex: 1 }}>{j.uid_code}</span>
+                <span style={{ ...mono, fontSize: 11, color: 'var(--ink-2)' }}>{j.current_step_name || `Step ${j.current_step}`}</span>
                 {j.from_storage_code && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <StoragePill code={j.from_storage_code} />
-                    <ArrowRight size={11} style={{ color: T.ink3 }} />
+                    <ArrowRight size={11} style={{ color: 'var(--ink-3)' }} />
                     <StoragePill code={j.to_storage_code || '?'} />
                   </div>
                 )}
                 {canEdit && (
-                  <button onClick={() => onRemove(j.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.ink3, padding: '2px 4px', borderRadius: 5, display: 'flex', alignItems: 'center' }}>
+                  <button onClick={() => onRemove(j.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)', padding: '2px 4px', borderRadius: 5, display: 'flex', alignItems: 'center' }}>
                     <X size={13} />
                   </button>
                 )}
@@ -308,9 +290,9 @@ function JobDrawer({ ws, open, onClose, canEdit, onAllot, onRemove, allotting }:
               onClick={() => setShowReady(r => !r)}
               style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 12px', width: '100%' }}
             >
-              <span style={{ ...mono, fontSize: 10, letterSpacing: '.14em', color: T.ink2 }}>READY POOL</span>
-              <span style={{ ...mono, fontSize: 10, fontWeight: 700, color: T.green }}>{ws.ready_count} available</span>
-              {showReady ? <ChevronDown size={13} style={{ color: T.ink3, marginLeft: 'auto' }} /> : <ChevronRight size={13} style={{ color: T.ink3, marginLeft: 'auto' }} />}
+              <span style={{ ...mono, fontSize: 10, letterSpacing: '.14em', color: 'var(--ink-2)' }}>READY POOL</span>
+              <span style={{ ...mono, fontSize: 10, fontWeight: 700, color: '#22a06b' }}>{ws.ready_count} available</span>
+              {showReady ? <ChevronDown size={13} style={{ color: 'var(--ink-3)', marginLeft: 'auto' }} /> : <ChevronRight size={13} style={{ color: 'var(--ink-3)', marginLeft: 'auto' }} />}
             </button>
             {showReady && (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
@@ -322,21 +304,21 @@ function JobDrawer({ ws, open, onClose, canEdit, onAllot, onRemove, allotting }:
                     style={{
                       display: 'flex', alignItems: 'center', gap: 8,
                       padding: '10px 12px', borderRadius: 10,
-                      background: T.s2, border: `1.5px dashed ${T.line}`,
+                      background: 'var(--surface-2)', border: '1px solid var(--line)',
                       cursor: canEdit ? 'pointer' : 'default',
                       textAlign: 'left',
-                      transition: 'border-color .12s, background .12s',
+                      transition: 'border-color 180ms cubic-bezier(.2,.8,.2,1), background 180ms cubic-bezier(.2,.8,.2,1)',
                     }}
-                    onMouseEnter={e => { if (canEdit) { (e.currentTarget as HTMLButtonElement).style.borderColor = T.accent; (e.currentTarget as HTMLButtonElement).style.background = T.s3 } }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = T.line; (e.currentTarget as HTMLButtonElement).style.background = T.s2 }}
+                    onMouseEnter={e => { if (canEdit) { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLButtonElement).style.background = 'var(--surface-3)' } }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--line)'; (e.currentTarget as HTMLButtonElement).style.background = 'var(--surface-2)' }}
                   >
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[u.status] || T.ink3, flexShrink: 0 }} />
-                    <span style={{ ...mono, fontSize: 12, fontWeight: 600, color: T.ink }}>{u.code}</span>
-                    {canEdit && <Plus size={11} style={{ marginLeft: 'auto', color: T.ink3, flexShrink: 0 }} />}
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[u.status] || 'var(--ink-3)', flexShrink: 0 }} />
+                    <span style={{ ...mono, fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>{u.code}</span>
+                    {canEdit && <Plus size={11} style={{ marginLeft: 'auto', color: 'var(--ink-3)', flexShrink: 0 }} />}
                   </button>
                 ))}
                 {ws.ready_count > (ws.ready_uids?.length ?? 0) && (
-                  <div style={{ padding: '10px 12px', borderRadius: 10, background: T.s2, border: `1px solid ${T.line}`, ...mono, fontSize: 11, color: T.ink3, display: 'flex', alignItems: 'center' }}>
+                  <div style={{ padding: '10px 12px', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--line)', ...mono, fontSize: 11, color: 'var(--ink-3)', display: 'flex', alignItems: 'center' }}>
                     +{ws.ready_count - (ws.ready_uids?.length ?? 0)} more…
                   </div>
                 )}
@@ -348,13 +330,13 @@ function JobDrawer({ ws, open, onClose, canEdit, onAllot, onRemove, allotting }:
 
       {/* Footer */}
       {canEdit && (
-        <div style={{ padding: '16px 24px', borderTop: `1px solid ${T.line}` }}>
-          <div style={{ ...mono, fontSize: 10, letterSpacing: '.1em', color: T.ink2, marginBottom: 8 }}>
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--line)' }}>
+          <div style={{ ...mono, fontSize: 10, letterSpacing: '.1em', color: 'var(--ink-2)', marginBottom: 8 }}>
             {ws.ready_count} knife{ws.ready_count !== 1 ? 's' : ''} ready at this workstation
           </div>
           <button
             onClick={onClose}
-            style={{ width: '100%', height: 42, border: `1px solid ${T.line}`, background: 'none', borderRadius: 10, cursor: 'pointer', ...sans, fontWeight: 600, fontSize: 13, color: T.ink }}
+            style={{ width: '100%', height: 42, border: '1px solid var(--line)', background: 'none', borderRadius: 10, cursor: 'pointer', ...sans, fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}
           >
             Done
           </button>
@@ -375,69 +357,69 @@ function WorkstationCard({ ws, canEdit, onClick }: {
     <div
       onClick={onClick}
       style={{
-        background: T.surface, border: `1px solid ${T.line}`, borderRadius: 14,
-        cursor: 'pointer', transition: 'transform .12s, box-shadow .12s',
+        background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 14,
+        cursor: 'pointer', transition: 'transform 180ms cubic-bezier(.2,.8,.2,1), box-shadow 180ms cubic-bezier(.2,.8,.2,1)',
         overflow: 'hidden',
       }}
       onMouseEnter={e => { const el = e.currentTarget as HTMLDivElement; el.style.transform = 'translateY(-2px)'; el.style.boxShadow = `0 8px 24px rgba(0,0,0,.22)` }}
       onMouseLeave={e => { const el = e.currentTarget as HTMLDivElement; el.style.transform = 'none'; el.style.boxShadow = 'none' }}
     >
       {/* Card header */}
-      <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.line}` }}>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--line)' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-              <span style={{ ...arch, fontWeight: 800, fontSize: 15, letterSpacing: '-.01em', color: T.ink }}>{ws.workstation_code}</span>
-              <span style={{ ...sans, fontSize: 12, color: T.ink2 }}>{ws.workstation_name}</span>
+              <span style={{ ...arch, fontWeight: 800, fontSize: 15, letterSpacing: '-.01em', color: 'var(--ink)' }}>{ws.workstation_code}</span>
+              <span style={{ ...sans, fontSize: 12, color: 'var(--ink-2)' }}>{ws.workstation_name}</span>
             </div>
             {ws.from_storage?.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
                 {ws.from_storage.map((c: string) => <StoragePill key={c} code={c} />)}
-                <ArrowRight size={11} style={{ color: T.ink3 }} />
+                <ArrowRight size={11} style={{ color: 'var(--ink-3)' }} />
                 {ws.to_storage.map((c: string) => <StoragePill key={c} code={c} />)}
               </div>
             )}
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
-            <div style={{ ...arch, fontWeight: 800, fontSize: 24, letterSpacing: '-.03em', color: T.accent, lineHeight: 1 }}>{qCount}</div>
-            <div style={{ ...mono, fontSize: 10, color: T.ink2, marginTop: 2 }}>queued</div>
+            <div style={{ ...arch, fontWeight: 800, fontSize: 24, letterSpacing: '-.03em', color: 'var(--accent)', lineHeight: 1 }}>{qCount}</div>
+            <div style={{ ...mono, fontSize: 10, color: 'var(--ink-2)', marginTop: 2 }}>queued</div>
           </div>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-          <div style={{ width: 28, height: 28, borderRadius: '50%', background: T.s3, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.accent, ...arch, fontWeight: 700, fontSize: 11, flexShrink: 0 }}>
+          <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--surface-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)', ...arch, fontWeight: 700, fontSize: 11, flexShrink: 0 }}>
             {(ws.operator_name || '?').split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
           </div>
-          <span style={{ ...sans, fontWeight: 600, fontSize: 12, color: T.ink, flex: 1 }}>{ws.operator_name}</span>
+          <span style={{ ...sans, fontWeight: 600, fontSize: 12, color: 'var(--ink)', flex: 1 }}>{ws.operator_name}</span>
           {confirmed
-            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: T.green }}><CheckCircle size={11} />Confirmed</span>
-            : <span style={{ ...mono, fontSize: 10, color: T.amber }}>Pending</span>}
+            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: '#22a06b' }}><CheckCircle size={11} />Confirmed</span>
+            : <span style={{ ...mono, fontSize: 10, color: '#f59e0b' }}>Pending</span>}
         </div>
       </div>
 
       {/* Queue preview */}
       <div style={{ padding: '10px 14px', minHeight: 44, display: 'flex', flexWrap: 'wrap', gap: 5 }}>
         {qCount === 0 && (
-          <span style={{ ...mono, fontSize: 11, color: T.ink3, alignSelf: 'center' }}>Queue empty</span>
+          <span style={{ ...mono, fontSize: 11, color: 'var(--ink-3)', alignSelf: 'center' }}>Queue empty</span>
         )}
         {ws.queue?.slice(0, 6).map((j: any) => (
           <span key={j.id} style={{
             display: 'inline-flex', alignItems: 'center', gap: 5,
             padding: '3px 8px', borderRadius: 7,
-            background: T.s2, border: `1px solid ${T.line}`,
+            background: 'var(--surface-2)', border: '1px solid var(--line)',
             ...mono, fontSize: 11,
           }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: STATUS_COLOR[j.uid_status] || T.ink3, flexShrink: 0 }} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: STATUS_COLOR[j.uid_status] || 'var(--ink-3)', flexShrink: 0 }} />
             {j.uid_code}
           </span>
         ))}
         {qCount > 6 && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 8px', borderRadius: 7, background: T.s2, ...mono, fontSize: 11, color: T.ink3 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 8px', borderRadius: 7, background: 'var(--surface-2)', ...mono, fontSize: 11, color: 'var(--ink-3)' }}>
             +{qCount - 6} more
           </span>
         )}
         {ws.ready_count > 0 && (
-          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: T.green }}>
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, ...mono, fontSize: 10, color: '#22a06b' }}>
             <Plus size={10} />{ws.ready_count} ready
           </span>
         )}
@@ -451,26 +433,26 @@ function AssignmentCard({ a, isSupervisor, canEdit, onConfirm, onDelete }: {
   a: any; isSupervisor: boolean; canEdit: boolean; onConfirm: () => void; onDelete: () => void
 }) {
   return (
-    <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 14, padding: 16 }}>
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 14, padding: 16 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
         <div>
-          <div style={{ ...arch, fontWeight: 700, fontSize: 14, color: T.ink }}>{a.workstation_code} — {a.workstation_name}</div>
-          <div style={{ ...sans, fontSize: 13, color: T.accent, fontWeight: 600, marginTop: 3 }}>{a.operator_full_name || a.operator_username}</div>
+          <div style={{ ...arch, fontWeight: 700, fontSize: 14, color: 'var(--ink)' }}>{a.workstation_code} — {a.workstation_name}</div>
+          <div style={{ ...sans, fontSize: 13, color: 'var(--accent)', fontWeight: 600, marginTop: 3 }}>{a.operator_full_name || a.operator_username}</div>
         </div>
         {a.confirmed_by
-          ? <Badge color={T.green}>Confirmed</Badge>
-          : <Badge color={T.amber}>Pending</Badge>}
+          ? <Badge color="#22a06b">Confirmed</Badge>
+          : <Badge color="#f59e0b">Pending</Badge>}
       </div>
-      {a.notes && <p style={{ ...sans, fontSize: 12, color: T.ink2, fontStyle: 'italic', marginBottom: 8 }}>{a.notes}</p>}
-      <div style={{ ...mono, fontSize: 10, color: T.ink3, marginBottom: 10 }}>Assigned by {a.assigned_by}</div>
+      {a.notes && <p style={{ ...sans, fontSize: 12, color: 'var(--ink-2)', fontStyle: 'italic', marginBottom: 8 }}>{a.notes}</p>}
+      <div style={{ ...mono, fontSize: 10, color: 'var(--ink-3)', marginBottom: 10 }}>Assigned by {a.assigned_by}</div>
       <div style={{ display: 'flex', gap: 8 }}>
         {!a.confirmed_by && isSupervisor && (
-          <button onClick={onConfirm} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 12px', border: 'none', borderRadius: 9, background: T.accent, color: T.accentInk, ...sans, fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+          <button onClick={onConfirm} style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 12px', border: 'none', borderRadius: 9, background: 'var(--accent)', color: 'var(--accent-ink)', ...sans, fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
             <CheckCircle size={12} /> Confirm
           </button>
         )}
         {canEdit && (
-          <button onClick={onDelete} style={{ width: 34, height: 34, border: `1px solid ${T.line}`, borderRadius: 9, background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.red }}>
+          <button onClick={onDelete} style={{ width: 34, height: 34, border: '1px solid var(--line)', borderRadius: 9, background: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--error)' }}>
             <Trash2 size={13} />
           </button>
         )}
@@ -556,28 +538,28 @@ export default function Shifts() {
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ ...mono, fontSize: 10, letterSpacing: '.16em', color: T.ink2, marginBottom: 8 }}>MANUFACTURING · SHIFTS</div>
-          <h1 style={{ ...arch, fontWeight: 800, fontSize: 28, letterSpacing: '-.03em', color: T.ink, lineHeight: 1 }}>Shift Management</h1>
-          <p style={{ ...sans, fontSize: 13, color: T.ink2, marginTop: 5 }}>Operator assignments &amp; job queue</p>
+          <div style={{ ...mono, fontSize: 10, letterSpacing: '.16em', color: 'var(--ink-2)', marginBottom: 8 }}>MANUFACTURING · SHIFTS</div>
+          <h1 style={{ ...arch, fontWeight: 800, fontSize: 28, letterSpacing: '-.03em', color: 'var(--ink)', lineHeight: 1 }}>Shift Management</h1>
+          <p style={{ ...sans, fontSize: 13, color: 'var(--ink-2)', marginTop: 5 }}>Operator assignments &amp; job queue</p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <input
             type="date"
             value={selectedDate}
             onChange={e => setSelectedDate(e.target.value)}
-            style={{ height: 42, padding: '0 14px', border: `1.5px solid ${T.line}`, borderRadius: 11, ...sans, fontSize: 14, color: T.ink, background: T.s2, outline: 'none' }}
+            style={{ height: 42, padding: '0 14px', border: '1px solid var(--line)', borderRadius: 11, ...sans, fontSize: 14, color: 'var(--ink)', background: 'var(--surface-2)', outline: 'none' }}
           />
-          <div style={{ display: 'flex', border: `1px solid ${T.line}`, borderRadius: 11, overflow: 'hidden' }}>
+          <div style={{ display: 'flex', border: '1px solid var(--line)', borderRadius: 11, overflow: 'hidden' }}>
             {SHIFTS.map(s => (
               <button
                 key={s.value}
                 onClick={() => setSelectedShift(s.value)}
                 style={{
                   padding: '0 16px', height: 42, ...sans, fontSize: 13, fontWeight: 600,
-                  border: 'none', borderRight: `1px solid ${T.line}`, cursor: 'pointer',
-                  background: selectedShift === s.value ? T.accent : T.s2,
-                  color: selectedShift === s.value ? T.accentInk : T.ink2,
-                  transition: 'background .12s, color .12s',
+                  border: 'none', borderRight: '1px solid var(--line)', cursor: 'pointer',
+                  background: selectedShift === s.value ? 'var(--accent)' : 'var(--surface-2)',
+                  color: selectedShift === s.value ? 'var(--accent-ink)' : 'var(--ink-2)',
+                  transition: 'background 180ms cubic-bezier(.2,.8,.2,1), color 180ms cubic-bezier(.2,.8,.2,1)',
                 }}
               >
                 {s.label}
@@ -590,12 +572,12 @@ export default function Shifts() {
       {/* ── Shift info pill ───────────────────────────────────────────────── */}
       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderRadius: 20, background: 'rgba(212,238,203,.1)', border: `1px solid rgba(212,238,203,.18)`, marginBottom: 20 }}>
         <span style={{ width: 8, height: 8, borderRadius: '50%', background: shiftInfo.color }} />
-        <span style={{ ...mono, fontSize: 11, fontWeight: 600, color: T.ink2 }}>{shiftInfo.label} Shift · {shiftInfo.time} · {format(new Date(selectedDate + 'T00:00:00'), 'dd MMM yyyy')}</span>
-        <span style={{ ...mono, fontSize: 11, color: T.accent, fontWeight: 700 }}>{(assignments as any[]).length} workstations</span>
+        <span style={{ ...mono, fontSize: 11, fontWeight: 600, color: 'var(--ink-2)' }}>{shiftInfo.label} Shift · {shiftInfo.time} · {format(new Date(selectedDate + 'T00:00:00'), 'dd MMM yyyy')}</span>
+        <span style={{ ...mono, fontSize: 11, color: 'var(--accent)', fontWeight: 700 }}>{(assignments as any[]).length} workstations</span>
       </div>
 
       {/* ── Tabs ─────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 2, borderBottom: `1px solid ${T.line}`, marginBottom: 22 }}>
+      <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--line)', marginBottom: 22 }}>
         {[
           { key: 'assignments', label: 'Operator Assignments', icon: <Users size={14} /> },
           { key: 'queue',       label: 'Job Queue',            icon: <Zap size={14} /> },
@@ -607,9 +589,9 @@ export default function Shifts() {
               display: 'flex', alignItems: 'center', gap: 6,
               padding: '10px 18px', ...sans, fontSize: 13, fontWeight: 600,
               background: 'none', border: 'none', cursor: 'pointer',
-              borderBottom: activeTab === t.key ? `2px solid ${T.accent}` : '2px solid transparent',
-              color: activeTab === t.key ? T.accent : T.ink2,
-              marginBottom: -1, transition: 'color .12s',
+              borderBottom: activeTab === t.key ? '2px solid var(--accent)' : '2px solid transparent',
+              color: activeTab === t.key ? 'var(--accent)' : 'var(--ink-2)',
+              marginBottom: -1, transition: 'color 180ms cubic-bezier(.2,.8,.2,1)',
             }}
           >
             {t.icon} {t.label}
@@ -640,12 +622,12 @@ export default function Shifts() {
                 onClick={() => setShowAssignDrawer(true)}
                 style={{
                   display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10,
-                  background: 'none', border: `1.5px dashed ${T.line}`, borderRadius: 14,
-                  minHeight: 120, cursor: 'pointer', color: T.ink3,
-                  transition: 'border-color .14s, color .14s',
+                  background: 'none', border: '1px solid var(--line)', borderRadius: 14,
+                  minHeight: 120, cursor: 'pointer', color: 'var(--ink-3)',
+                  transition: 'border-color 180ms cubic-bezier(.2,.8,.2,1), color 180ms cubic-bezier(.2,.8,.2,1)',
                 }}
-                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = T.accent; (e.currentTarget as HTMLButtonElement).style.color = T.accent }}
-                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = T.line; (e.currentTarget as HTMLButtonElement).style.color = T.ink3 }}
+                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--line)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--ink-3)' }}
               >
                 <Plus size={20} />
                 <span style={{ ...sans, fontSize: 13, fontWeight: 600 }}>Assign Operator</span>
@@ -654,7 +636,7 @@ export default function Shifts() {
           </div>
 
           {assignments.length === 0 && !canEdit && (
-            <div style={{ textAlign: 'center', padding: '48px 0', ...mono, fontSize: 12, color: T.ink3 }}>No assignments for this shift yet.</div>
+            <div style={{ textAlign: 'center', padding: '48px 0', ...mono, fontSize: 12, color: 'var(--ink-3)' }}>No assignments for this shift yet.</div>
           )}
         </div>
       )}
@@ -670,27 +652,27 @@ export default function Shifts() {
               <button
                 onClick={() => { setAutoAssignResult(null); autoAssign.mutate() }}
                 disabled={autoAssign.isPending}
-                style={{ display: 'flex', alignItems: 'center', gap: 7, height: 38, padding: '0 16px', border: 'none', borderRadius: 10, background: T.accent, color: T.accentInk, ...sans, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 7, height: 38, padding: '0 16px', border: 'none', borderRadius: 10, background: 'var(--accent)', color: 'var(--accent-ink)', ...sans, fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
               >
                 <Zap size={14} /> {autoAssign.isPending ? 'Filling…' : 'Auto-Fill All Queues'}
               </button>
             )}
             {autoAssignResult && (
-              <span style={{ ...mono, fontSize: 12, color: autoAssignResult.allotted > 0 ? T.green : T.ink3 }}>
+              <span style={{ ...mono, fontSize: 12, color: autoAssignResult.allotted > 0 ? '#22a06b' : 'var(--ink-3)' }}>
                 {autoAssignResult.allotted > 0 ? `✓ ${autoAssignResult.allotted} knives queued` : 'No matching knives found'}
               </span>
             )}
-            <span style={{ marginLeft: 'auto', ...mono, fontSize: 10, color: T.ink3 }}>Auto-refreshes every 30s</span>
+            <span style={{ marginLeft: 'auto', ...mono, fontSize: 10, color: 'var(--ink-3)' }}>Auto-refreshes every 30s</span>
           </div>
 
           {queueLoading && (
-            <div style={{ textAlign: 'center', padding: 48, ...mono, fontSize: 12, color: T.ink3 }}>Loading queue…</div>
+            <div style={{ textAlign: 'center', padding: 48, ...mono, fontSize: 12, color: 'var(--ink-3)' }}>Loading queue…</div>
           )}
           {!queueLoading && queueError && (
-            <div style={{ textAlign: 'center', padding: 48, ...mono, fontSize: 12, color: T.red }}>Failed to load queue — please refresh.</div>
+            <div style={{ textAlign: 'center', padding: 48, ...mono, fontSize: 12, color: 'var(--error)' }}>Failed to load queue — please refresh.</div>
           )}
           {!queueLoading && !queueError && (queueData as any[]).length === 0 && (
-            <div style={{ textAlign: 'center', padding: 48, ...mono, fontSize: 12, color: T.ink3 }}>
+            <div style={{ textAlign: 'center', padding: 48, ...mono, fontSize: 12, color: 'var(--ink-3)' }}>
               No operator assignments for this shift. Set up assignments first.
             </div>
           )}
