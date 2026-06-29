@@ -10,7 +10,7 @@ import {
   Plus, X, Zap, ChevronRight, ChevronDown, Sun, Moon,
   Inbox, Link2, Truck, Download, Tag, Factory, Layers, CheckCircle2,
   FileText, Calendar, UserPlus, BarChart3, GitBranch, List, Thermometer, BadgeCheck, Lock,
-  Bell, Clock, KeyRound, UserCircle, Hammer, ArrowLeftRight,
+  Bell, Clock, KeyRound, UserCircle, Hammer,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toggleTheme, getCurrentTheme, type Theme } from '../store/theme'
@@ -315,14 +315,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100%', overflow: 'hidden', background: 'var(--bg)', color: 'var(--ink)' }}>
 
       {/* ══ TOPBAR (full-width navy chrome, 58px) ═══════════════════════════ */}
-      <header style={{ height: 58, flex: '0 0 58px', display: 'flex', alignItems: 'center', background: 'var(--chrome)', borderBottom: '1px solid var(--chrome-line)', paddingRight: 16, zIndex: 20 }}>
+      <header style={{ height: 58, flex: '0 0 58px', display: 'flex', alignItems: 'center', gap: 18, padding: '0 20px', background: 'var(--chrome)', borderBottom: '1px solid var(--chrome-line)', zIndex: 20 }}>
 
-        {/* Brand block */}
-        <div style={{ width: 248, flex: '0 0 248px', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 20px', height: '100%' }}>
-          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 20, letterSpacing: '-0.035em', lineHeight: 1, color: 'var(--chrome-ink)' }}>
+        {/* Brand block (natural width — per mock, not aligned to sidebar) */}
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', lineHeight: 1.05, flexShrink: 0 }}>
+          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 20, letterSpacing: '-0.035em', color: 'var(--chrome-ink)' }}>
             edgesmith<span style={{ color: 'var(--brand-dot)' }}>.</span>
           </div>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.16em', color: '#7d96bb', marginTop: 4 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.16em', color: '#7d96bb', marginTop: 3 }}>
             INNOVATE · ENGINEER · EXCEL
           </div>
         </div>
@@ -331,43 +331,45 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <div style={{ width: 1, height: 30, background: 'var(--chrome-line)', flexShrink: 0 }} />
 
         {/* Page context */}
-        <div style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', lineHeight: 1.1, minWidth: 0, flexShrink: 0 }}>
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, letterSpacing: '0.16em', color: '#5d7fae', whiteSpace: 'nowrap' }}>
             CPCMS · EDGESMITH TOOLING INDIA
           </div>
-          <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 14, fontWeight: 600, color: 'var(--chrome-ink-2)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 14, fontWeight: 600, color: 'var(--chrome-ink-2)', marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {currentPage?.label || 'Dashboard'}
           </div>
         </div>
 
-        <div style={{ flex: 1 }} />
+        {/* Centre — location toggle (single flex:1 centring wrapper, per mock) */}
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
+          {(() => {
+            const PILLS: { key: 'F1' | 'F2' | 'both'; label: string; color: string }[] = [
+              { key: 'F1', label: 'Dharmapuri', color: '#3b82f6' },
+              { key: 'F2', label: 'Faridabad', color: '#d97a2b' },
+              { key: 'both', label: 'Both', color: '#5d7fae' },
+            ]
+            return (
+              <div style={{ display: 'flex', gap: 2, background: 'var(--chrome-2)', borderRadius: 9, padding: 3 }}>
+                {PILLS.map(p => {
+                  const on = loc === p.key
+                  return (
+                    <button key={p.key} disabled={!canSwitchLocation}
+                      onClick={() => canSwitchLocation && setLoc(p.key)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, border: 'none', borderRadius: 7, padding: '6px 13px', cursor: canSwitchLocation ? 'pointer' : 'default',
+                        background: on ? p.color : 'transparent', color: on ? '#fff' : 'var(--chrome-muted)',
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em' }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: on ? '#fff' : p.color, flexShrink: 0 }} />
+                      {p.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })()}
+        </div>
 
-        {/* Centre — location toggle */}
-        {(() => {
-          const PILLS: { key: 'F1' | 'F2' | 'both'; label: string; color: string }[] = [
-            { key: 'F1', label: 'Dharmapuri', color: '#3b82f6' },
-            { key: 'F2', label: 'Faridabad', color: '#d97a2b' },
-            { key: 'both', label: 'Both', color: '#5d7fae' },
-          ]
-          return (
-            <div style={{ display: 'flex', gap: 3, background: 'var(--chrome-2)', borderRadius: 9, padding: 3, flexShrink: 0 }}>
-              {PILLS.map(p => {
-                const on = loc === p.key
-                return (
-                  <button key={p.key} disabled={!canSwitchLocation}
-                    onClick={() => canSwitchLocation && setLoc(p.key)}
-                    style={{ border: 'none', borderRadius: 7, padding: '6px 13px', cursor: canSwitchLocation ? 'pointer' : 'default',
-                      background: on ? p.color : 'transparent', color: on ? '#fff' : 'var(--chrome-muted)',
-                      fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em' }}>
-                    {p.label}
-                  </button>
-                )
-              })}
-            </div>
-          )
-        })()}
-
-        <div style={{ flex: 1 }} />
+        {/* Right cluster (single gap:14 flex, per mock) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
 
         {/* Right — shift button */}
         <button
@@ -381,23 +383,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </span>
         </button>
 
-        {/* Right — handover button (supervisor on duty, red + pulsing within 30 min of shift end) */}
-        {handoverDue && (
-          <button
-            onClick={() => navigate('/shifts')}
-            title="Shift handover due"
-            className="animate-pulse-red"
-            style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#e5484d', border: 'none', borderRadius: 9, padding: '0 12px', height: 36, cursor: 'pointer', flexShrink: 0, marginLeft: 10 }}
-          >
-            <ArrowLeftRight size={14} style={{ color: '#fff' }} />
-            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', letterSpacing: '0.04em' }}>
-              HANDOVER
-            </span>
-          </button>
-        )}
-
         {/* Right — alert bell */}
-        <div style={{ position: 'relative', marginLeft: 10, flexShrink: 0 }}>
+        <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
             onClick={() => { setShowAlerts(s => !s); setShowUserMenu(false) }}
             title="Alerts"
@@ -405,7 +392,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             <Bell size={16} style={{ color: 'var(--chrome-ink-2)' }} />
             {alertCount > 0 && (
-              <span style={{ position: 'absolute', top: -4, right: -4, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, background: '#e5484d', color: '#fff', border: '2px solid var(--chrome)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ position: 'absolute', top: -3, right: -3, minWidth: 17, height: 17, padding: '0 4px', borderRadius: 9, background: '#e5484d', color: '#fff', border: '2px solid #11305f', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {alertCount}
               </span>
             )}
@@ -440,7 +427,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Right — user block */}
-        <div style={{ position: 'relative', marginLeft: 14, flexShrink: 0 }}>
+        <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
             onClick={() => { setShowUserMenu(s => !s); setShowAlerts(false) }}
             style={{ display: 'flex', alignItems: 'center', gap: 9, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
@@ -483,9 +470,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         </div>
 
         {/* Right — live clock */}
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 500, color: 'var(--chrome-muted)', width: 74, textAlign: 'right', flexShrink: 0, marginLeft: 14 }}>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 500, color: 'var(--chrome-muted)', width: 74, textAlign: 'right', flexShrink: 0 }}>
           {format(now, 'HH:mm:ss')}
         </div>
+        </div>{/* end right cluster */}
       </header>
 
       {/* ══ MIDDLE ROW (sidebar + content) ══════════════════════════════════ */}
