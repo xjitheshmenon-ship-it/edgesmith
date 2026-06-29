@@ -6,14 +6,14 @@
 
 -- ── Reference / master data ────────────────────────────────────────────────
 
-CREATE TABLE factory_locations (
+CREATE TABLE IF NOT EXISTS factory_locations (
   id            SERIAL PRIMARY KEY,
   code          VARCHAR(16) UNIQUE NOT NULL,
   name          VARCHAR(128) NOT NULL,
   is_active     BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-CREATE TABLE workstations (
+CREATE TABLE IF NOT EXISTS workstations (
   id                   SERIAL PRIMARY KEY,
   code                 VARCHAR(32) UNIQUE NOT NULL,
   name                 VARCHAR(128) NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE workstations (
   created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE storage_locations (
+CREATE TABLE IF NOT EXISTS storage_locations (
   id                   SERIAL PRIMARY KEY,
   code                 VARCHAR(32) UNIQUE NOT NULL,
   name                 VARCHAR(128),
@@ -32,7 +32,7 @@ CREATE TABLE storage_locations (
   is_active            BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id                   SERIAL PRIMARY KEY,
   username             VARCHAR(64) UNIQUE NOT NULL,
   full_name            VARCHAR(128) NOT NULL,
@@ -48,20 +48,20 @@ CREATE TABLE users (
 
 -- ── Products / sizes / designs ──────────────────────────────────────────────
 
-CREATE TABLE sizes (
+CREATE TABLE IF NOT EXISTS sizes (
   id         SERIAL PRIMARY KEY,
   value_mm   INTEGER UNIQUE NOT NULL,
   is_active  BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-CREATE TABLE designs (
+CREATE TABLE IF NOT EXISTS designs (
   id           SERIAL PRIMARY KEY,
   code         VARCHAR(64) UNIQUE NOT NULL,
   description  TEXT,
   is_active    BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-CREATE TABLE design_size_validity (
+CREATE TABLE IF NOT EXISTS design_size_validity (
   id         SERIAL PRIMARY KEY,
   design_id  INTEGER NOT NULL REFERENCES designs(id),
   size_id    INTEGER NOT NULL REFERENCES sizes(id)
@@ -69,7 +69,7 @@ CREATE TABLE design_size_validity (
 
 -- ── Cycle configuration (versioned) ─────────────────────────────────────────
 
-CREATE TABLE cycle_types (
+CREATE TABLE IF NOT EXISTS cycle_types (
   id             SERIAL PRIMARY KEY,
   name           VARCHAR(32) UNIQUE NOT NULL,
   letter_prefix  VARCHAR(1) UNIQUE NOT NULL,
@@ -79,7 +79,7 @@ CREATE TABLE cycle_types (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE product_types (
+CREATE TABLE IF NOT EXISTS product_types (
   id                     SERIAL PRIMARY KEY,
   code                   VARCHAR(32) UNIQUE NOT NULL,
   name                   VARCHAR(128) NOT NULL,
@@ -88,12 +88,12 @@ CREATE TABLE product_types (
   default_cycle_type_id  INTEGER REFERENCES cycle_types(id)
 );
 
-CREATE TABLE product_cycle_types (
+CREATE TABLE IF NOT EXISTS product_cycle_types (
   product_type_id  INTEGER NOT NULL REFERENCES product_types(id),
   cycle_type_id    INTEGER NOT NULL REFERENCES cycle_types(id)
 );
 
-CREATE TABLE cycle_versions (
+CREATE TABLE IF NOT EXISTS cycle_versions (
   id             SERIAL PRIMARY KEY,
   cycle_type_id  INTEGER NOT NULL REFERENCES cycle_types(id),
   version_number INTEGER NOT NULL,
@@ -103,7 +103,7 @@ CREATE TABLE cycle_versions (
   change_notes   TEXT
 );
 
-CREATE TABLE cycle_steps (
+CREATE TABLE IF NOT EXISTS cycle_steps (
   id                     SERIAL PRIMARY KEY,
   cycle_version_id       INTEGER NOT NULL REFERENCES cycle_versions(id),
   step_number            VARCHAR(8) NOT NULL,
@@ -120,7 +120,7 @@ CREATE TABLE cycle_steps (
 
 -- ── Orders + conversion patterns + batch rules ──────────────────────────────
 
-CREATE TABLE manufacturing_orders (
+CREATE TABLE IF NOT EXISTS manufacturing_orders (
   id             SERIAL PRIMARY KEY,
   mo_number      VARCHAR(64) UNIQUE NOT NULL,
   customer       VARCHAR(256) NOT NULL,
@@ -134,7 +134,7 @@ CREATE TABLE manufacturing_orders (
   created_by_id  INTEGER REFERENCES users(id)
 );
 
-CREATE TABLE conversion_patterns (
+CREATE TABLE IF NOT EXISTS conversion_patterns (
   id                SERIAL PRIMARY KEY,
   name              VARCHAR(64) NOT NULL,
   input_length_mm   INTEGER NOT NULL,
@@ -143,7 +143,7 @@ CREATE TABLE conversion_patterns (
   is_active         BOOLEAN NOT NULL DEFAULT TRUE
 );
 
-CREATE TABLE batch_rules (
+CREATE TABLE IF NOT EXISTS batch_rules (
   id                 SERIAL PRIMARY KEY,
   cycle_version_id   INTEGER NOT NULL REFERENCES cycle_versions(id),
   cycle_step_id      INTEGER NOT NULL REFERENCES cycle_steps(id),
@@ -161,7 +161,7 @@ CREATE TABLE batch_rules (
 
 -- ── Faridabad operations ────────────────────────────────────────────────────
 
-CREATE TABLE rolling_contractors (
+CREATE TABLE IF NOT EXISTS rolling_contractors (
   id            SERIAL PRIMARY KEY,
   name          VARCHAR(256) UNIQUE NOT NULL,
   contact_info  VARCHAR(256),
@@ -169,7 +169,7 @@ CREATE TABLE rolling_contractors (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE raw_material_intakes (
+CREATE TABLE IF NOT EXISTS raw_material_intakes (
   id                 SERIAL PRIMARY KEY,
   material_type      TEXT NOT NULL CHECK (material_type IN ('Alloy Steel','MS')),
   supplier_name      VARCHAR(256) NOT NULL,
@@ -184,7 +184,7 @@ CREATE TABLE raw_material_intakes (
   created_by_id      INTEGER REFERENCES users(id)
 );
 
-CREATE TABLE joining_operations (
+CREATE TABLE IF NOT EXISTS joining_operations (
   id                          SERIAL PRIMARY KEY,
   alloy_intake_id             INTEGER NOT NULL REFERENCES raw_material_intakes(id),
   ms_intake_id                INTEGER NOT NULL REFERENCES raw_material_intakes(id),
@@ -197,7 +197,7 @@ CREATE TABLE joining_operations (
   created_by_id               INTEGER REFERENCES users(id)
 );
 
-CREATE TABLE faridabad_dispatches (
+CREATE TABLE IF NOT EXISTS faridabad_dispatches (
   id                      SERIAL PRIMARY KEY,
   batch_reference         VARCHAR(64) UNIQUE NOT NULL,
   joining_operation_id    INTEGER NOT NULL REFERENCES joining_operations(id),
@@ -210,7 +210,7 @@ CREATE TABLE faridabad_dispatches (
   created_by_id           INTEGER REFERENCES users(id)
 );
 
-CREATE TABLE receiving_events (
+CREATE TABLE IF NOT EXISTS receiving_events (
   id                    SERIAL PRIMARY KEY,
   faridabad_dispatch_id INTEGER NOT NULL REFERENCES faridabad_dispatches(id),
   date_received         DATE NOT NULL,
@@ -224,7 +224,7 @@ CREATE TABLE receiving_events (
 
 -- ── Dharmapuri operations: UIDs ─────────────────────────────────────────────
 
-CREATE TABLE uids (
+CREATE TABLE IF NOT EXISTS uids (
   id                    SERIAL PRIMARY KEY,
   code                  VARCHAR(8) UNIQUE NOT NULL,
   factory_location_id   INTEGER NOT NULL REFERENCES factory_locations(id),
@@ -259,7 +259,7 @@ CREATE TABLE uids (
   flags                 JSONB
 );
 
-CREATE TABLE uid_step_history (
+CREATE TABLE IF NOT EXISTS uid_step_history (
   id                    SERIAL PRIMARY KEY,
   uid_id                INTEGER NOT NULL REFERENCES uids(id),
   cycle_step_id         INTEGER NOT NULL REFERENCES cycle_steps(id),
@@ -274,7 +274,7 @@ CREATE TABLE uid_step_history (
   child_uids_created    JSONB
 );
 
-CREATE TABLE uid_transfers (
+CREATE TABLE IF NOT EXISTS uid_transfers (
   id               SERIAL PRIMARY KEY,
   uid_id           INTEGER NOT NULL REFERENCES uids(id),
   from_location_id INTEGER NOT NULL REFERENCES factory_locations(id),
@@ -286,7 +286,7 @@ CREATE TABLE uid_transfers (
 
 -- ── Tempering / furnace batches ─────────────────────────────────────────────
 
-CREATE TABLE tempering_parameters (
+CREATE TABLE IF NOT EXISTS tempering_parameters (
   id                     SERIAL PRIMARY KEY,
   cycle_type_id          INTEGER NOT NULL REFERENCES cycle_types(id),
   cycle_step_id          INTEGER NOT NULL REFERENCES cycle_steps(id),
@@ -298,7 +298,7 @@ CREATE TABLE tempering_parameters (
   updated_by_id          INTEGER REFERENCES users(id)
 );
 
-CREATE TABLE furnace_batches (
+CREATE TABLE IF NOT EXISTS furnace_batches (
   id                     SERIAL PRIMARY KEY,
   batch_number           VARCHAR(32) UNIQUE NOT NULL,
   cycle_type_id          INTEGER NOT NULL REFERENCES cycle_types(id),
@@ -318,7 +318,7 @@ CREATE TABLE furnace_batches (
   created_by_id          INTEGER REFERENCES users(id)
 );
 
-CREATE TABLE furnace_batch_uids (
+CREATE TABLE IF NOT EXISTS furnace_batch_uids (
   id               SERIAL PRIMARY KEY,
   furnace_batch_id INTEGER NOT NULL REFERENCES furnace_batches(id),
   uid_id           INTEGER NOT NULL REFERENCES uids(id),
@@ -328,7 +328,7 @@ CREATE TABLE furnace_batch_uids (
 
 -- ── Work management: shifts + job allotments ────────────────────────────────
 
-CREATE TABLE shift_assignments (
+CREATE TABLE IF NOT EXISTS shift_assignments (
   id              SERIAL PRIMARY KEY,
   shift_date      DATE NOT NULL,
   shift_period    TEXT NOT NULL CHECK (shift_period IN ('morning','afternoon','night')),
@@ -341,7 +341,7 @@ CREATE TABLE shift_assignments (
   updated_at      TIMESTAMPTZ
 );
 
-CREATE TABLE job_allotments (
+CREATE TABLE IF NOT EXISTS job_allotments (
   id             SERIAL PRIMARY KEY,
   uid_id         INTEGER NOT NULL REFERENCES uids(id),
   operator_id    INTEGER NOT NULL REFERENCES users(id),
@@ -354,7 +354,7 @@ CREATE TABLE job_allotments (
 
 -- ── Audit log (append-only) ─────────────────────────────────────────────────
 
-CREATE TABLE audit_log (
+CREATE TABLE IF NOT EXISTS audit_log (
   id          SERIAL PRIMARY KEY,
   user_id     INTEGER REFERENCES users(id),
   action      TEXT NOT NULL,
@@ -367,26 +367,26 @@ CREATE TABLE audit_log (
 
 -- ── Indexes ─────────────────────────────────────────────────────────────────
 
-CREATE INDEX idx_uids_status       ON uids(status);
-CREATE INDEX idx_uids_current_step ON uids(current_step_id);
-CREATE INDEX idx_uids_storage      ON uids(current_storage_id);
-CREATE INDEX idx_uids_priority     ON uids(priority);
-CREATE INDEX idx_uids_cycle        ON uids(cycle_version_id);
-CREATE INDEX idx_uids_mo           ON uids(mo_id);
-CREATE INDEX idx_uids_location     ON uids(factory_location_id);
-CREATE INDEX idx_uids_parent       ON uids(parent_uid_id);
+CREATE INDEX IF NOT EXISTS idx_uids_status       ON uids(status);
+CREATE INDEX IF NOT EXISTS idx_uids_current_step ON uids(current_step_id);
+CREATE INDEX IF NOT EXISTS idx_uids_storage      ON uids(current_storage_id);
+CREATE INDEX IF NOT EXISTS idx_uids_priority     ON uids(priority);
+CREATE INDEX IF NOT EXISTS idx_uids_cycle        ON uids(cycle_version_id);
+CREATE INDEX IF NOT EXISTS idx_uids_mo           ON uids(mo_id);
+CREATE INDEX IF NOT EXISTS idx_uids_location     ON uids(factory_location_id);
+CREATE INDEX IF NOT EXISTS idx_uids_parent       ON uids(parent_uid_id);
 
-CREATE INDEX idx_step_hist_uid     ON uid_step_history(uid_id);
-CREATE INDEX idx_step_hist_step    ON uid_step_history(cycle_step_id);
+CREATE INDEX IF NOT EXISTS idx_step_hist_uid     ON uid_step_history(uid_id);
+CREATE INDEX IF NOT EXISTS idx_step_hist_step    ON uid_step_history(cycle_step_id);
 
-CREATE INDEX idx_cycle_steps_ver   ON cycle_steps(cycle_version_id);
-CREATE INDEX idx_cycle_vers_type   ON cycle_versions(cycle_type_id);
+CREATE INDEX IF NOT EXISTS idx_cycle_steps_ver   ON cycle_steps(cycle_version_id);
+CREATE INDEX IF NOT EXISTS idx_cycle_vers_type   ON cycle_versions(cycle_type_id);
 
-CREATE INDEX idx_jobs_operator     ON job_allotments(operator_id);
-CREATE INDEX idx_jobs_ws           ON job_allotments(workstation_id);
-CREATE INDEX idx_jobs_active       ON job_allotments(is_active);
+CREATE INDEX IF NOT EXISTS idx_jobs_operator     ON job_allotments(operator_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_ws           ON job_allotments(workstation_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_active       ON job_allotments(is_active);
 
-CREATE INDEX idx_fbu_batch         ON furnace_batch_uids(furnace_batch_id);
-CREATE INDEX idx_fbu_uid           ON furnace_batch_uids(uid_id);
+CREATE INDEX IF NOT EXISTS idx_fbu_batch         ON furnace_batch_uids(furnace_batch_id);
+CREATE INDEX IF NOT EXISTS idx_fbu_uid           ON furnace_batch_uids(uid_id);
 
-CREATE INDEX idx_shift_assign_date ON shift_assignments(shift_date, shift_period);
+CREATE INDEX IF NOT EXISTS idx_shift_assign_date ON shift_assignments(shift_date, shift_period);
