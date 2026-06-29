@@ -1,311 +1,484 @@
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { shopfloorApi, shiftApi } from '../api/client'
+import { shopfloorApi, uidApi } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
-import type { DashboardSummary, ShopfloorStatus } from '../types'
-import { Package, AlertTriangle, CheckCircle, ClipboardList, TrendingUp, Box, Zap, ChevronRight, FileClock, Flame, Truck } from 'lucide-react'
-import { format } from 'date-fns'
+import type { DashboardSummary, ShopfloorStatus, UID } from '../types'
+import {
+  Package, AlertTriangle, CheckCircle, FileClock, Flame, Truck,
+  ChevronRight, Box, Cpu, Bell, Clock, ArrowUpRight,
+} from 'lucide-react'
+import { formatDistanceToNowStrict } from 'date-fns'
 import { Link } from 'react-router-dom'
 
-function StatCard({ label, value, icon, color }: {
-  label: string; value: number | string; icon: React.ReactNode; color: string
+/* ─── design tokens (local mirrors of palette where no CSS var exists) ─────── */
+const C = {
+  ink: 'var(--ink)',
+  ink2: 'var(--ink-2)',
+  ink3: 'var(--ink-3)',
+  accent: 'var(--accent)',
+  line: 'var(--line)',
+  surface: 'var(--surface)',
+  surface2: 'var(--surface-2)',
+  surface3: 'var(--surface-3)',
+  red: '#e5484d',
+  redText: '#c0392b',
+  orange: '#d97a2b',
+  amber: '#f0c674',
+  green: '#22a06b',
+  greenText: '#1c7a52',
+}
+const MONO = "'IBM Plex Mono', monospace"
+const SANS = "'IBM Plex Sans', sans-serif"
+const ARCHIVO = "'Archivo', sans-serif"
+
+/* canonical storage-location flow order (Dharmapuri) */
+const STORAGE_ORDER = ['RM', 'RM-Q', 'RM-D', 'HT-Q', 'HT-D', 'MC-Q', 'MC-D', 'QC-Q', 'QC-D', 'FG']
+const STORAGE_CAP = 50 // typical capacity reference for relative bar
+
+/* ─── small primitives ─────────────────────────────────────────────────────── */
+function SectionLabel({ icon, children, right }: { icon?: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+      {icon}
+      <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase' }}>{children}</span>
+      <div style={{ flex: 1 }} />
+      {right}
+    </div>
+  )
+}
+
+function CycleBadge({ name }: { name: string | null }) {
+  if (!name) return null
+  const key = name.toUpperCase()
+  const map: Record<string, { bg: string; fg: string }> = {
+    EAT:  { bg: 'rgba(45,111,181,.14)', fg: C.accent },
+    SWAN: { bg: 'rgba(34,160,107,.14)', fg: C.greenText },
+    OVEN: { bg: 'rgba(217,122,43,.14)', fg: C.orange },
+  }
+  const s = map[key] ?? { bg: C.surface3, fg: C.ink2 }
+  return <span style={{ ...pill, background: s.bg, color: s.fg }}>{key}</span>
+}
+
+const pill: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center',
+  fontFamily: MONO, fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+  letterSpacing: '0.04em', padding: '3px 9px', borderRadius: 20, whiteSpace: 'nowrap',
+}
+
+/* ─── metric card ──────────────────────────────────────────────────────────── */
+function StatCard({ label, value, icon, color, to }: {
+  label: string; value: number | string; icon: React.ReactNode; color: string; to?: string
 }) {
-  return (
+  const inner = (
     <div style={{
-      background: 'var(--surface)',
-      border: '1px solid var(--line)',
-      borderRadius: 11,
-      padding: '18px 20px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      boxShadow: 'var(--shadow-e1)',
-    }}>
-      <div>
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>{label}</div>
-        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 32, letterSpacing: '-0.04em', color: 'var(--ink)', lineHeight: 1 }}>{value}</div>
-      </div>
-      <div style={{
-        width: 44, height: 44, borderRadius: 11,
-        background: `${color}22`, color,
-        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-      }}>
-        {icon}
-      </div>
-    </div>
-  )
-}
-
-const STATUS_DOT: Record<string, string> = {
-  active: '#22a06b', on_hold: '#f59e0b', converting: '#f59e0b', dispatched: '#3b82f6',
-}
-
-function LiveShiftSection() {
-  const today = format(new Date(), 'yyyy-MM-dd')
-  const hour = new Date().getHours()
-  const period = hour >= 6 && hour < 14 ? 'morning' : hour >= 14 && hour < 22 ? 'afternoon' : 'night'
-  const PERIOD_LABEL: Record<string, string> = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' }
-
-  const { data: queueData = [] } = useQuery({
-    queryKey: ['dash-queue', today, period],
-    queryFn: () => shiftApi.queueView(today, period).then(r => r.data),
-    refetchInterval: 60_000,
-    retry: false,
-  })
-  const { data: assignments = [] } = useQuery({
-    queryKey: ['dash-assignments', today, period],
-    queryFn: () => shiftApi.listAssignments({ shift_date: today, shift_period: period }).then(r => r.data),
-    refetchInterval: 120_000,
-    retry: false,
-  })
-
-  const ws = queueData as any[]
-  const ops = assignments as any[]
-  const totalQueued = ws.reduce((s: number, w: any) => s + (w.queue?.length ?? 0), 0)
-  const totalReady  = ws.reduce((s: number, w: any) => s + (w.ready_count ?? 0), 0)
-
-  if (ws.length === 0 && ops.length === 0) return null
-
-  return (
-    <div style={{ marginBottom: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <Zap size={14} style={{ color: 'var(--accent)' }} />
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
-          Live Shift — {PERIOD_LABEL[period]}
-        </span>
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--accent)', fontWeight: 700 }}>{totalQueued} queued</span>
-        {totalReady > 0 && <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: '#22a06b' }}>+{totalReady} ready</span>}
-        <div style={{ flex: 1 }} />
-        <Link to="/shifts" style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--accent)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 3 }}>
-          Manage <ChevronRight size={11} />
-        </Link>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-        {ws.map((w: any) => (
-          <div key={w.assignment_id} style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 9, padding: '12px 14px' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>{w.workstation_code}</span>
-              <span style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 11, color: 'var(--ink-2)' }}>{w.operator_name?.split(' ')[0]}</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-              {w.queue?.slice(0, 6).map((j: any) => (
-                <span key={j.id} style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_DOT[j.uid_status] || 'var(--ink-3)', flexShrink: 0, display: 'inline-block' }} />
-              ))}
-              {(w.queue?.length ?? 0) > 6 && <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: 'var(--ink-3)' }}>+{w.queue.length - 6}</span>}
-              {(w.queue?.length ?? 0) === 0 && <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)' }}>Empty queue</span>}
-              {w.ready_count > 0 && <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: '#22a06b', marginLeft: 4 }}>({w.ready_count}↑ ready)</span>}
-            </div>
-          </div>
-        ))}
-        {ops.length > 0 && (
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 9, padding: '12px 14px' }}>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 8 }}>Operators</div>
-            {ops.slice(0, 4).map((a: any) => (
-              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <div style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 8, color: 'var(--accent)', flexShrink: 0 }}>
-                  {(a.operator_full_name || a.operator_username || '?').split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 11, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.operator_full_name || a.operator_username}</div>
-                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: 'var(--ink-3)' }}>{a.workstation_code}</div>
-                </div>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: a.confirmed_by ? '#22a06b' : '#f59e0b', flexShrink: 0 }} />
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function StorageCell({ code, count, max = 50 }: { code: string; count: number; max?: number }) {
-  const pct = Math.min(100, max > 0 ? (count / max) * 100 : 0)
-  const fill = count === 0 ? 'var(--line)' : count > max * 0.8 ? '#e5484d' : count > max * 0.5 ? '#f59e0b' : '#22a06b'
-  return (
-    <div style={{
-      background: 'var(--surface-2)',
-      border: '1px solid var(--line)',
-      borderRadius: 9,
-      padding: '10px 12px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 8,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', letterSpacing: '0.08em' }}>{code}</span>
-        <span style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 18, color: count === 0 ? 'var(--ink-3)' : 'var(--ink)', lineHeight: 1 }}>{count}</span>
-      </div>
-      <div style={{ height: 3, borderRadius: 2, background: 'var(--line)', overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: fill, borderRadius: 2, transition: 'width 300ms cubic-bezier(.2,.8,.2,1)' }} />
-      </div>
-    </div>
-  )
-}
-
-function WorkstationCard({ code, name, count }: { code: string; name: string; count: number }) {
-  const active = count > 0
-  const dotColor = count > 10 ? '#f59e0b' : count > 0 ? '#22a06b' : 'var(--ink-3)'
-  return (
-    <div style={{
-      background: active ? 'var(--surface-2)' : 'transparent',
-      border: `1px solid ${active ? 'var(--surface-3)' : 'var(--line)'}`,
-      borderRadius: 9,
-      padding: '12px 14px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: 10,
-      transition: 'background 180ms cubic-bezier(.2,.8,.2,1)',
+      background: C.surface, border: `1px solid ${C.line}`, borderRadius: 14,
+      padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      boxShadow: 'var(--shadow-e1)', height: '100%', transition: 'box-shadow 180ms', position: 'relative',
     }}>
       <div style={{ minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 2 }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor, flexShrink: 0, display: 'inline-block' }} />
-          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: 'var(--ink)', letterSpacing: '0.06em' }}>{code}</span>
-        </div>
-        <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 11, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name || code}</div>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase', marginBottom: 8, lineHeight: 1.3 }}>{label}</div>
+        <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 32, letterSpacing: '-0.04em', color: C.ink, lineHeight: 1 }}>{value}</div>
       </div>
-      <div style={{
-        fontFamily: "'Archivo', sans-serif",
-        fontWeight: 800,
-        fontSize: 22,
-        letterSpacing: '-0.04em',
-        color: active ? 'var(--accent)' : 'var(--ink-3)',
-        lineHeight: 1,
-        flexShrink: 0,
-      }}>{count}</div>
+      <div style={{ width: 44, height: 44, borderRadius: 12, background: `${color}22`, color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {icon}
+      </div>
+      {to && <ArrowUpRight size={13} style={{ position: 'absolute', top: 12, right: 12, color: C.ink3 }} />}
+    </div>
+  )
+  return to ? <Link to={to} style={{ textDecoration: 'none', display: 'block' }}>{inner}</Link> : inner
+}
+
+/* ─── alerts panel ─────────────────────────────────────────────────────────── */
+type Severity = 'critical' | 'warning' | 'info'
+interface AlertItem { severity: Severity; text: string; sub: string; to: string }
+const SEV_COLOR: Record<Severity, string> = { critical: C.red, warning: C.orange, info: C.amber }
+const SEV_RANK: Record<Severity, number> = { critical: 0, warning: 1, info: 2 }
+
+function AlertsPanel({ summary, holdUids }: { summary?: DashboardSummary; holdUids: UID[] }) {
+  const alerts = useMemo<AlertItem[]>(() => {
+    const out: AlertItem[] = []
+    holdUids.slice(0, 6).forEach((u) => {
+      out.push({
+        severity: 'critical',
+        text: `${u.code} on hold${u.current_step_name ? ` at ${u.current_step_name}` : ''}`,
+        sub: u.notes ? u.notes.slice(0, 48) : 'Reason not recorded · Production Floor',
+        to: '/uids',
+      })
+    })
+    if (summary && summary.awaiting_design_confirmation > 0) {
+      out.push({
+        severity: 'warning',
+        text: `${summary.awaiting_design_confirmation} UID${summary.awaiting_design_confirmation === 1 ? '' : 's'} awaiting design confirmation`,
+        sub: 'Approaching design lock (Step 15/16) · UIDs',
+        to: '/uids',
+      })
+    }
+    if (summary && summary.faridabad_batches_in_transit > 0) {
+      out.push({
+        severity: 'info',
+        text: `${summary.faridabad_batches_in_transit} Faridabad batch${summary.faridabad_batches_in_transit === 1 ? '' : 'es'} in transit`,
+        sub: 'Billets expected — not yet received · Receiving',
+        to: '/receiving',
+      })
+    }
+    return out.sort((a, b) => SEV_RANK[a.severity] - SEV_RANK[b.severity])
+  }, [summary, holdUids])
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <SectionLabel
+        icon={<Bell size={13} style={{ color: C.ink3 }} />}
+        right={alerts.length > 0
+          ? <span style={{ ...pill, background: 'rgba(229,72,77,.13)', color: C.redText }}>{alerts.length} active</span>
+          : undefined}
+      >Alerts</SectionLabel>
+
+      {alerts.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '24px 0', color: C.ink3, fontFamily: SANS, fontSize: 13 }}>
+          <CheckCircle size={16} style={{ color: C.green }} />
+          No active alerts. Everything is on track.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {alerts.map((a, i) => (
+            <Link key={i} to={a.to} className="row-hover" style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10, padding: '11px 8px',
+              borderBottom: i < alerts.length - 1 ? `1px solid var(--surface-2)` : 'none',
+              textDecoration: 'none', borderRadius: 8,
+            }}>
+              <span style={{ width: 8, height: 8, borderRadius: '50%', background: SEV_COLOR[a.severity], marginTop: 5, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink, fontWeight: 500 }}>{a.text}</div>
+                <div style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.sub}</div>
+              </div>
+              <ChevronRight size={14} style={{ color: C.ink3, marginTop: 2, flexShrink: 0 }} />
+            </Link>
+          ))}
+        </div>
+      )}
+      <div style={{ flex: 1 }} />
+      <div style={{ marginTop: 12, paddingTop: 10, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.06em' }}>
+        Furnace deviation & QC sign-off alerts require dedicated endpoints (not yet available).
+      </div>
     </div>
   )
 }
 
+/* ─── priority queue ───────────────────────────────────────────────────────── */
+const TH: React.CSSProperties = {
+  textAlign: 'left', padding: '8px 12px', fontFamily: MONO, fontSize: 9.5, fontWeight: 700,
+  letterSpacing: '0.1em', textTransform: 'uppercase', color: C.ink3,
+  borderBottom: `1px solid ${C.line}`, whiteSpace: 'nowrap',
+}
+const TD: React.CSSProperties = {
+  padding: '11px 12px', borderBottom: `1px solid var(--surface-2)`, fontSize: 12.5, color: C.ink, verticalAlign: 'middle',
+}
+
+function waitingLabel(iso: string) {
+  try { return formatDistanceToNowStrict(new Date(iso)) } catch { return '—' }
+}
+
+function PriorityQueue({ uids, loading }: { uids: UID[]; loading: boolean }) {
+  // High priority (and urgent) UIDs still in production, longest-waiting first.
+  const rows = useMemo(() => {
+    return uids
+      .filter((u) => (u.priority === 'high' || u.priority === 'urgent') && u.status !== 'dispatched' && u.status !== 'archived')
+      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      .slice(0, 12)
+  }, [uids])
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <SectionLabel
+        icon={<AlertTriangle size={13} style={{ color: C.red }} />}
+        right={<Link to="/uids" style={{ fontFamily: MONO, fontSize: 10, color: C.accent, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 3 }}>All UIDs <ChevronRight size={11} /></Link>}
+      >Priority Queue — High Priority</SectionLabel>
+
+      {loading ? (
+        <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '20px 0' }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink3, padding: '20px 0' }}>No high-priority UIDs in production.</div>
+      ) : (
+        <div style={{ overflowX: 'auto', margin: '0 -8px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+            <thead>
+              <tr>
+                <th style={TH}>UID</th>
+                <th style={TH}>Cycle</th>
+                <th style={TH}>Step</th>
+                <th style={TH}>Storage</th>
+                <th style={TH}>Design</th>
+                <th style={TH}>MO</th>
+                <th style={{ ...TH, textAlign: 'right' }}>Waiting</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((u) => (
+                <tr key={u.id} className="row-hover" style={{ cursor: 'pointer' }}>
+                  <td style={TD}>
+                    <Link to="/uids" style={{ fontFamily: MONO, fontWeight: 600, fontSize: 12.5, color: C.accent, textDecoration: 'none' }}>{u.code}</Link>
+                    {u.priority === 'urgent' && <span style={{ ...pill, background: 'rgba(229,72,77,.13)', color: C.red, marginLeft: 6, fontSize: 9 }}>URGENT</span>}
+                  </td>
+                  <td style={TD}><CycleBadge name={u.cycle_type_name} /></td>
+                  <td style={{ ...TD, fontFamily: SANS }}>
+                    <span style={{ fontFamily: MONO, color: C.ink2, marginRight: 5 }}>{u.current_step_number ?? '—'}</span>
+                    {u.current_step_name ?? '—'}
+                  </td>
+                  <td style={{ ...TD, fontFamily: MONO, color: C.ink2 }}>{u.current_storage_code ?? '—'}</td>
+                  <td style={{ ...TD, fontFamily: MONO, color: u.design_code ? C.ink : C.orange }}>
+                    {u.design_code ?? 'PENDING'}
+                  </td>
+                  <td style={{ ...TD, fontFamily: MONO, color: C.ink2 }}>{u.mo_number ?? '—'}</td>
+                  <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: C.ink2 }}>{waitingLabel(u.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ─── WIP by storage location ──────────────────────────────────────────────── */
+function StorageTile({ code, count }: { code: string; count: number }) {
+  const pct = Math.min(100, (count / STORAGE_CAP) * 100)
+  const fill = count === 0 ? C.line : count > STORAGE_CAP * 0.8 ? C.red : count > STORAGE_CAP * 0.5 ? C.amber : C.green
+  return (
+    <Link to="/shopfloor" style={{
+      textDecoration: 'none', background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10,
+      padding: '11px 12px', display: 'flex', flexDirection: 'column', gap: 8,
+    }} className="row-hover">
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+        <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, letterSpacing: '0.08em' }}>{code}</span>
+        <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 20, color: count === 0 ? C.ink3 : C.ink, lineHeight: 1 }}>{count}</span>
+      </div>
+      <div style={{ height: 4, borderRadius: 2, background: C.line, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: fill, borderRadius: 2, transition: 'width 300ms cubic-bezier(.2,.8,.2,1)' }} />
+      </div>
+    </Link>
+  )
+}
+
+function WIPByStorage({ shopfloor }: { shopfloor: ShopfloorStatus[] }) {
+  // Merge counts per storage code across visible locations, in canonical flow order.
+  const counts = useMemo(() => {
+    const m = new Map<string, number>()
+    shopfloor.forEach((loc) => loc.storage_locations.forEach((s) => m.set(s.code, (m.get(s.code) ?? 0) + s.uid_count)))
+    const ordered = STORAGE_ORDER.map((code) => ({ code, count: m.get(code) ?? 0 }))
+    // append any extra storage codes not in canonical order
+    const extra = [...m.keys()].filter((k) => !STORAGE_ORDER.includes(k)).map((code) => ({ code, count: m.get(code) ?? 0 }))
+    return [...ordered, ...extra]
+  }, [shopfloor])
+
+  return (
+    <div className="card" style={{ padding: '18px 20px' }}>
+      <SectionLabel icon={<Box size={13} style={{ color: C.ink3 }} />}>WIP by Storage Location · Flow RM → FG</SectionLabel>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(92px, 1fr))', gap: 8 }}>
+        {counts.map((s) => <StorageTile key={s.code} code={s.code} count={s.count} />)}
+      </div>
+    </div>
+  )
+}
+
+/* ─── active workstation summary ───────────────────────────────────────────── */
+function wsStatus(count: number): { label: string; color: string } {
+  if (count === 0) return { label: 'IDLE', color: C.ink3 }
+  if (count > 10) return { label: 'BUSY', color: C.amber }
+  return { label: 'RUNNING', color: C.green }
+}
+
+function WorkstationSummary({ shopfloor }: { shopfloor: ShopfloorStatus[] }) {
+  const rows = useMemo(() => {
+    const all = shopfloor.flatMap((loc) =>
+      loc.workstations.map((w) => ({ ...w, location_code: loc.location_code }))
+    )
+    return all.sort((a, b) => b.uid_count - a.uid_count)
+  }, [shopfloor])
+
+  const running = rows.filter((r) => r.uid_count > 0).length
+
+  return (
+    <div className="card" style={{ padding: '18px 20px' }}>
+      <SectionLabel
+        icon={<Cpu size={13} style={{ color: C.ink3 }} />}
+        right={<Link to="/shopfloor" style={{ fontFamily: MONO, fontSize: 10, color: C.accent, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 3 }}>Production Floor <ChevronRight size={11} /></Link>}
+      >Active Workstations · {running} running</SectionLabel>
+
+      {rows.length === 0 ? (
+        <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink3, padding: '12px 0' }}>No workstations configured.</div>
+      ) : (
+        <div style={{ overflowX: 'auto', margin: '0 -8px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 460 }}>
+            <thead>
+              <tr>
+                <th style={TH}>WS</th>
+                <th style={TH}>Name</th>
+                <th style={{ ...TH, textAlign: 'right' }}>Running</th>
+                <th style={{ ...TH, textAlign: 'right' }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((w) => {
+                const st = wsStatus(w.uid_count)
+                return (
+                  <tr key={w.workstation_id} className="row-hover" style={{ cursor: 'pointer' }}>
+                    <td style={{ ...TD }}>
+                      <Link to="/shopfloor" style={{ fontFamily: MONO, fontWeight: 600, fontSize: 12.5, color: C.accent, textDecoration: 'none', letterSpacing: '0.04em' }}>{w.code}</Link>
+                    </td>
+                    <td style={{ ...TD, fontFamily: SANS, color: C.ink2 }}>{w.name || w.code}</td>
+                    <td style={{ ...TD, textAlign: 'right', fontFamily: ARCHIVO, fontWeight: 700, fontSize: 15, color: w.uid_count > 0 ? C.ink : C.ink3 }}>{w.uid_count}</td>
+                    <td style={{ ...TD, textAlign: 'right' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', color: st.color }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: st.color, display: 'inline-block' }} />
+                        {st.label}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ─── location filter toggle ───────────────────────────────────────────────── */
+type LocFilter = 'all' | 'dharmapuri' | 'faridabad'
+function LocationToggle({ value, onChange }: { value: LocFilter; onChange: (v: LocFilter) => void }) {
+  const opts: { key: LocFilter; label: string; color: string }[] = [
+    { key: 'dharmapuri', label: 'Dharmapuri', color: '#3b82f6' },
+    { key: 'faridabad', label: 'Faridabad', color: C.orange },
+    { key: 'all', label: 'Both', color: C.ink2 },
+  ]
+  return (
+    <div style={{ display: 'inline-flex', background: C.surface3, borderRadius: 9, padding: 3, gap: 2 }}>
+      {opts.map((o) => {
+        const active = value === o.key
+        return (
+          <button key={o.key} onClick={() => onChange(o.key)} style={{
+            border: 'none', cursor: 'pointer', borderRadius: 7, padding: '5px 13px',
+            fontFamily: MONO, fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
+            background: active ? (o.key === 'all' ? C.ink : o.color) : 'transparent',
+            color: active ? '#fff' : C.ink2,
+            transition: 'background 160ms',
+          }}>{o.label}</button>
+        )
+      })}
+    </div>
+  )
+}
+
+/* ─── page ─────────────────────────────────────────────────────────────────── */
 export default function Dashboard() {
   const { user } = useAuth()
+  const [loc, setLoc] = useState<LocFilter>('all')
+
   const { data: summary, isError: summaryError } = useQuery<DashboardSummary>({
     queryKey: ['dashboard'],
     queryFn: () => shopfloorApi.dashboard().then((r) => r.data),
-    refetchInterval: 15_000,
+    refetchInterval: 20_000,
   })
-  const { data: shopfloor, isLoading: shopfloorLoading, isError: shopfloorError } = useQuery<ShopfloorStatus[]>({
+
+  const { data: shopfloor = [], isLoading: shopfloorLoading, isError: shopfloorError } = useQuery<ShopfloorStatus[]>({
     queryKey: ['shopfloor'],
     queryFn: () => shopfloorApi.status().then((r) => r.data),
-    refetchInterval: 15_000,
+    refetchInterval: 20_000,
   })
 
-  return (
-    <div style={{ padding: '24px 28px 60px', maxWidth: 1280 }}>
+  // High-priority UIDs for the priority queue (server-side priority filter when supported).
+  const { data: highResult, isLoading: highLoading } = useQuery({
+    queryKey: ['dash-high-uids'],
+    queryFn: () => uidApi.list({ priority: 'high', limit: 50 }).then((r) => r.data),
+    refetchInterval: 30_000,
+    retry: false,
+  })
+  // On-hold UIDs to source the alerts panel.
+  const { data: holdResult } = useQuery({
+    queryKey: ['dash-hold-uids'],
+    queryFn: () => uidApi.list({ status: 'on_hold', limit: 20 }).then((r) => r.data),
+    refetchInterval: 30_000,
+    retry: false,
+  })
 
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: 'var(--ink)' }}>Dashboard</div>
-        <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>Welcome back, {user?.full_name}</div>
+  const highUids: UID[] = highResult?.items ?? []
+  const holdUids: UID[] = holdResult?.items ?? []
+
+  // Filter shopfloor locations by the toggle.
+  const visibleShopfloor = useMemo(() => {
+    if (loc === 'all') return shopfloor
+    return shopfloor.filter((l) => l.location_code?.toLowerCase().includes(loc.slice(0, 4)) || l.location_name?.toLowerCase().includes(loc))
+  }, [shopfloor, loc])
+
+  return (
+    <div style={{ padding: '24px 28px 60px', maxWidth: 1320 }}>
+
+      {/* header */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 22 }}>
+        <div>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: C.ink }}>Dashboard</div>
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, marginTop: 3 }}>
+            Welcome back{user?.full_name ? `, ${user.full_name}` : ''} · single view across both locations
+          </div>
+        </div>
+        {(user?.role === 'admin' || user?.role === 'manager') && (
+          <LocationToggle value={loc} onChange={setLoc} />
+        )}
       </div>
 
-      {summary && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 20 }}>
-          <StatCard label="Active UIDs"                  value={summary.uid_active.toLocaleString()}        icon={<Package size={20} />}        color="#3b82f6" />
-          <StatCard label="On Hold"                      value={summary.uid_on_hold}                         icon={<AlertTriangle size={20} />}  color="#f59e0b" />
-          <StatCard label="Awaiting Design Confirmation" value={summary.awaiting_design_confirmation}        icon={<FileClock size={20} />}      color="#a78bfa" />
-          <StatCard label="Furnace Batches Running"      value={summary.furnace_batches_running}             icon={<Flame size={20} />}          color="#ef4444" />
-          <StatCard label="UIDs Dispatched Today"        value={summary.uids_dispatched_today.toLocaleString()} icon={<CheckCircle size={20} />} color="#22a06b" />
-          <StatCard label="Faridabad Batches in Transit" value={summary.faridabad_batches_in_transit}        icon={<Truck size={20} />}          color="#0ea5e9" />
-        </div>
-      )}
-
-      {summary && (summary.priority_urgent > 0 || summary.priority_high > 0) && (
-        <div style={{
-          padding: '11px 16px', borderRadius: 9,
-          background: 'rgba(229,72,77,.12)', border: '1px solid rgba(229,72,77,.30)',
-          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20,
-        }}>
-          <TrendingUp size={15} style={{ color: '#e5484d', flexShrink: 0 }} />
-          <span style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: '#e5484d', fontWeight: 500 }}>
-            {summary.priority_urgent} urgent · {summary.priority_high} high-priority UIDs in production
-          </span>
-        </div>
-      )}
-
-      <LiveShiftSection />
-
-      {shopfloorLoading && (
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-3)', padding: '20px 0' }}>Loading shopfloor data…</div>
-      )}
-      {shopfloorError && (
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--error)', padding: '12px 16px', background: 'rgba(229,72,77,.10)', borderRadius: 9, border: '1px solid rgba(229,72,77,.25)' }}>
-          Could not load shopfloor data. The server may be starting up — refresh in a moment.
-        </div>
-      )}
       {summaryError && !summary && (
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--error)', padding: '12px 16px', background: 'rgba(229,72,77,.10)', borderRadius: 9, border: '1px solid rgba(229,72,77,.25)', marginBottom: 20 }}>
-          Could not load dashboard summary.
+        <div style={{ fontFamily: MONO, fontSize: 12, color: C.red, padding: '12px 16px', background: 'rgba(229,72,77,.10)', borderRadius: 10, border: '1px solid rgba(229,72,77,.25)', marginBottom: 18 }}>
+          Could not load dashboard summary. The server may be starting up — refresh in a moment.
         </div>
       )}
-      {shopfloor && shopfloor.length === 0 && !shopfloorLoading && (
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-3)', padding: '20px 0' }}>No factory locations configured.</div>
+
+      {/* metric cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(196px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <StatCard label="Active UIDs"                  value={(summary?.uid_active ?? 0).toLocaleString()}             icon={<Package size={20} />}       color="#3b82f6" />
+        <StatCard label="On Hold"                      value={summary?.uid_on_hold ?? 0}                                icon={<AlertTriangle size={20} />} color={C.red}    to="/uids" />
+        <StatCard label="Awaiting Design Confirmation" value={summary?.awaiting_design_confirmation ?? 0}               icon={<FileClock size={20} />}     color="#a78bfa"  to="/uids" />
+        <StatCard label="Furnace Batches Running"      value={summary?.furnace_batches_running ?? 0}                    icon={<Flame size={20} />}         color={C.orange} to="/tempering" />
+        <StatCard label="UIDs Dispatched Today"        value={(summary?.uids_dispatched_today ?? 0).toLocaleString()}   icon={<CheckCircle size={20} />}   color={C.green} />
+        <StatCard label="Faridabad Batches in Transit" value={summary?.faridabad_batches_in_transit ?? 0}               icon={<Truck size={20} />}         color="#0ea5e9"  to="/receiving" />
+      </div>
+
+      {/* alerts + priority queue */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 0.9fr) minmax(420px, 1.6fr)', gap: 16, marginBottom: 20 }}>
+        <AlertsPanel summary={summary} holdUids={holdUids} />
+        <PriorityQueue uids={highUids} loading={highLoading} />
+      </div>
+
+      {/* shopfloor errors */}
+      {shopfloorError && (
+        <div style={{ fontFamily: MONO, fontSize: 12, color: C.red, padding: '12px 16px', background: 'rgba(229,72,77,.10)', borderRadius: 10, border: '1px solid rgba(229,72,77,.25)', marginBottom: 18 }}>
+          Could not load shopfloor data. Refresh in a moment.
+        </div>
+      )}
+      {shopfloorLoading && !shopfloor.length && (
+        <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '20px 0' }}>Loading shopfloor data…</div>
       )}
 
-      {shopfloor && shopfloor.map((loc) => (
-        <div key={loc.location_id} style={{
-          background: 'var(--surface)',
-          border: '1px solid var(--line)',
-          borderRadius: 11,
-          marginBottom: 20,
-          overflow: 'hidden',
-          boxShadow: 'var(--shadow-e2)',
-        }}>
-          <div style={{
-            padding: '14px 20px',
-            borderBottom: '1px solid var(--line)',
-            background: 'var(--surface-2)',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          }}>
-            <div>
-              <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 15, color: 'var(--ink)' }}>{loc.location_name}</div>
-              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 3, letterSpacing: '0.06em' }}>
-                {loc.total_active_uids} active · {loc.on_hold} on hold
-              </div>
-            </div>
-            <span style={{
-              fontFamily: "'IBM Plex Mono', monospace",
-              fontSize: 11, fontWeight: 600, letterSpacing: '0.08em',
-              background: 'var(--surface-3)', color: 'var(--accent)',
-              padding: '3px 10px', borderRadius: 6,
-            }}>{loc.location_code}</span>
-          </div>
-
-          <div style={{ padding: '18px 20px' }}>
-            <div style={{ marginBottom: 22 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <Box size={13} style={{ color: 'var(--ink-3)' }} />
-                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>Storage Locations</span>
-              </div>
-              {loc.storage_locations.length > 0 ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))', gap: 8 }}>
-                  {loc.storage_locations.map((s) => (
-                    <StorageCell key={s.storage_id} code={s.code} count={s.uid_count} />
-                  ))}
-                </div>
-              ) : (
-                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>No storage locations</div>
-              )}
-            </div>
-
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>Workstations</span>
-                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, color: 'var(--ink-3)' }}>— UIDs in queue</span>
-              </div>
-              {loc.workstations.length > 0 ? (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 8 }}>
-                  {loc.workstations.map((w) => (
-                    <WorkstationCard key={w.workstation_id} code={w.code} name={w.name} count={w.uid_count} />
-                  ))}
-                </div>
-              ) : (
-                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>No workstations</div>
-              )}
-            </div>
-          </div>
+      {/* WIP by storage + workstation summary */}
+      {visibleShopfloor.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1.1fr) minmax(360px, 1fr)', gap: 16 }}>
+          <WIPByStorage shopfloor={visibleShopfloor} />
+          <WorkstationSummary shopfloor={visibleShopfloor} />
         </div>
-      ))}
+      )}
+
+      {!shopfloorLoading && visibleShopfloor.length === 0 && !shopfloorError && (
+        <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '20px 0' }}>
+          {shopfloor.length === 0 ? 'No factory locations configured.' : 'No locations match the current filter.'}
+        </div>
+      )}
+
+      {/* live footer */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 22, fontFamily: MONO, fontSize: 10, color: C.ink3, letterSpacing: '0.06em' }}>
+        <Clock size={11} />
+        Live data refreshes every 20–30s.
+      </div>
     </div>
   )
 }
