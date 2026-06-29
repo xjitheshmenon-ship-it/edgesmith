@@ -10,7 +10,9 @@ import {
   Plus, X, Zap, ChevronRight, ChevronDown, Sun, Moon,
   Inbox, Link2, Truck, Download, Tag, Factory, Layers, CheckCircle2,
   FileText, Calendar, UserPlus, BarChart3, GitBranch, List, Thermometer, BadgeCheck, Lock,
+  Bell, Clock, KeyRound, UserCircle,
 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { toggleTheme, getCurrentTheme, type Theme } from '../store/theme'
 
 interface NavItem {
@@ -213,7 +215,10 @@ function ShiftPanel() {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
   const location = useLocation()
+  const navigate = useNavigate()
   const [showAssign, setShowAssign] = useState(false)
+  const [showAlerts, setShowAlerts] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
   const [theme, setTheme] = useState<Theme>(getCurrentTheme)
   const [now, setNow] = useState(new Date())
 
@@ -259,8 +264,199 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const currentPage = allVisibleItems.find(n => n.to !== '/' && location.pathname.startsWith(n.to))
     || (location.pathname === '/' ? allVisibleItems.find(n => n.to === '/') : null)
 
+  // Current shift + time remaining (morning 06–14, afternoon 14–22, night 22–06)
+  const shiftInfo = (() => {
+    const h = now.getHours()
+    let n: number, endH: number
+    if (h >= 6 && h < 14) { n = 1; endH = 14 }
+    else if (h >= 14 && h < 22) { n = 2; endH = 22 }
+    else { n = 3; endH = 6 }
+    const end = new Date(now)
+    if (n === 3 && h >= 22) end.setDate(end.getDate() + 1)
+    end.setHours(endH, 0, 0, 0)
+    const remMin = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 60000))
+    const hh = Math.floor(remMin / 60), mm = remMin % 60
+    const color = remMin > 120 ? '#3fbf86' : remMin > 30 ? '#f0c674' : '#ff9b9b'
+    return { n, remLabel: `${hh}:${String(mm).padStart(2, '0')}`, color }
+  })()
+
+  // Derive topbar alerts from the live cross-location summary.
+  const alerts = (() => {
+    const out: { sev: 'critical' | 'warning' | 'info'; text: string; sub: string; to: string }[] = []
+    const onHold = summary?.uid_on_hold ?? 0
+    if (onHold > 0) out.push({ sev: 'critical', text: `${onHold} UID${onHold > 1 ? 's' : ''} on hold`, sub: 'Production Floor', to: '/production' })
+    const running = summary?.furnace_batches_running ?? 0
+    if (running > 0) out.push({ sev: 'info', text: `${running} furnace batch${running > 1 ? 'es' : ''} running`, sub: 'Batch Management', to: '/tempering' })
+    return out
+  })()
+  const alertCount = alerts.length
+
+  const SEV_COLOR: Record<string, string> = { critical: '#e5484d', warning: '#d97a2b', info: '#f0c674' }
+
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: 'var(--bg)', color: 'var(--ink)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100%', overflow: 'hidden', background: 'var(--bg)', color: 'var(--ink)' }}>
+
+      {/* ══ TOPBAR (full-width navy chrome, 58px) ═══════════════════════════ */}
+      <header style={{ height: 58, flex: '0 0 58px', display: 'flex', alignItems: 'center', background: 'var(--chrome)', borderBottom: '1px solid var(--chrome-line)', paddingRight: 16, zIndex: 20 }}>
+
+        {/* Brand block */}
+        <div style={{ width: 248, flex: '0 0 248px', display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 20px', height: '100%' }}>
+          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 20, letterSpacing: '-0.035em', lineHeight: 1, color: 'var(--chrome-ink)' }}>
+            edgesmith<span style={{ color: 'var(--brand-dot)' }}>.</span>
+          </div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8, letterSpacing: '0.16em', color: '#7d96bb', marginTop: 4 }}>
+            INNOVATE · ENGINEER · EXCEL
+          </div>
+        </div>
+
+        {/* Vertical divider */}
+        <div style={{ width: 1, height: 30, background: 'var(--chrome-line)', flexShrink: 0 }} />
+
+        {/* Page context */}
+        <div style={{ padding: '0 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 8.5, letterSpacing: '0.16em', color: '#5d7fae', whiteSpace: 'nowrap' }}>
+            CPCMS · EDGESMITH TOOLING INDIA
+          </div>
+          <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 14, fontWeight: 600, color: 'var(--chrome-ink-2)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {currentPage?.label || 'Dashboard'}
+          </div>
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Centre — location toggle */}
+        {(() => {
+          const PILLS: { key: 'F1' | 'F2' | 'both'; label: string; color: string }[] = [
+            { key: 'F1', label: 'Dharmapuri', color: '#3b82f6' },
+            { key: 'F2', label: 'Faridabad', color: '#d97a2b' },
+            { key: 'both', label: 'Both', color: '#5d7fae' },
+          ]
+          return (
+            <div style={{ display: 'flex', gap: 3, background: 'var(--chrome-2)', borderRadius: 9, padding: 3, flexShrink: 0 }}>
+              {PILLS.map(p => {
+                const on = loc === p.key
+                return (
+                  <button key={p.key} disabled={!canSwitchLocation}
+                    onClick={() => canSwitchLocation && setLoc(p.key)}
+                    style={{ border: 'none', borderRadius: 7, padding: '6px 13px', cursor: canSwitchLocation ? 'pointer' : 'default',
+                      background: on ? p.color : 'transparent', color: on ? '#fff' : 'var(--chrome-muted)',
+                      fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em' }}>
+                    {p.label}
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })()}
+
+        <div style={{ flex: 1 }} />
+
+        {/* Right — shift button */}
+        <button
+          onClick={() => navigate('/shifts')}
+          title="Shift Management"
+          style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'var(--chrome-2)', border: 'none', borderRadius: 9, padding: '0 12px', height: 36, cursor: 'pointer', flexShrink: 0 }}
+        >
+          <Clock size={14} style={{ color: shiftInfo.color }} />
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: 'var(--chrome-ink-2)', whiteSpace: 'nowrap' }}>
+            Shift {shiftInfo.n} · <span style={{ color: shiftInfo.color }}>{shiftInfo.remLabel}</span>
+          </span>
+        </button>
+
+        {/* Right — alert bell */}
+        <div style={{ position: 'relative', marginLeft: 10, flexShrink: 0 }}>
+          <button
+            onClick={() => { setShowAlerts(s => !s); setShowUserMenu(false) }}
+            title="Alerts"
+            style={{ width: 36, height: 36, background: 'var(--chrome-2)', border: 'none', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}
+          >
+            <Bell size={16} style={{ color: 'var(--chrome-ink-2)' }} />
+            {alertCount > 0 && (
+              <span style={{ position: 'absolute', top: -4, right: -4, minWidth: 16, height: 16, padding: '0 4px', borderRadius: 8, background: '#e5484d', color: '#fff', border: '2px solid var(--chrome)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {alertCount}
+              </span>
+            )}
+          </button>
+          {showAlerts && (
+            <>
+              <div onClick={() => setShowAlerts(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+              <div style={{ position: 'absolute', top: 44, right: 0, width: 340, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 13, boxShadow: '0 18px 40px rgba(21,54,106,.20)', zIndex: 50, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px 10px' }}>
+                  <span style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)' }}>Alerts</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)' }}>{alertCount} active</span>
+                </div>
+                {alerts.length === 0 ? (
+                  <div style={{ padding: '8px 16px 18px', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink-2)' }}>No active alerts.</div>
+                ) : alerts.map((a, i) => (
+                  <button key={i} onClick={() => { setShowAlerts(false); navigate(a.to) }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 11, width: '100%', textAlign: 'left', background: 'none', border: 'none', borderTop: '1px solid var(--line)', padding: '11px 16px', cursor: 'pointer' }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'none'}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: SEV_COLOR[a.sev], flexShrink: 0 }} />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink)' }}>{a.text}</span>
+                      <span style={{ display: 'block', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 1 }}>{a.sub}</span>
+                    </span>
+                    <ChevronRight size={14} style={{ color: 'var(--ink-3)', flexShrink: 0 }} />
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Right — user block */}
+        <div style={{ position: 'relative', marginLeft: 14, flexShrink: 0 }}>
+          <button
+            onClick={() => { setShowUserMenu(s => !s); setShowAlerts(false) }}
+            style={{ display: 'flex', alignItems: 'center', gap: 9, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-dot)', color: '#11305f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 12.5, flexShrink: 0 }}>
+              {initials}
+            </div>
+            <div style={{ textAlign: 'left', display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 12.5, fontWeight: 600, color: 'var(--chrome-ink)', lineHeight: 1.2, whiteSpace: 'nowrap' }}>{user?.full_name || user?.username}</span>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: '0.08em', color: 'var(--chrome-muted)', lineHeight: 1.2 }}>{user?.role?.toUpperCase()}</span>
+            </div>
+            <ChevronDown size={14} style={{ color: 'var(--chrome-muted)', flexShrink: 0 }} />
+          </button>
+          {showUserMenu && (
+            <>
+              <div onClick={() => setShowUserMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+              <div style={{ position: 'absolute', top: 46, right: 0, width: 236, background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 13, boxShadow: '0 18px 40px rgba(21,54,106,.20)', zIndex: 50, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '14px 16px', borderBottom: '1px solid var(--line)' }}>
+                  <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--brand-dot)', color: '#11305f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>{initials}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.full_name || user?.username}</div>
+                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 1 }}>{user?.role}</div>
+                  </div>
+                </div>
+                <button onClick={() => { setShowUserMenu(false); navigate('/employees') }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', height: 44, padding: '0 16px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink)' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'} onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'none'}>
+                  <UserCircle size={16} style={{ color: 'var(--ink-2)' }} /> View profile
+                </button>
+                <button onClick={() => { setShowUserMenu(false); navigate('/users') }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', height: 44, padding: '0 16px', background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink)' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-2)'} onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'none'}>
+                  <KeyRound size={16} style={{ color: 'var(--ink-2)' }} /> Change password
+                </button>
+                <button onClick={() => { authStore.clearAuth(); window.location.href = import.meta.env.BASE_URL }} style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', height: 44, padding: '0 16px', background: 'none', border: 'none', borderTop: '1px solid var(--line)', cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: '#e5484d' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(229,72,77,.07)'} onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'none'}>
+                  <LogOut size={16} /> Logout
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Right — live clock */}
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 500, color: 'var(--chrome-muted)', width: 74, textAlign: 'right', flexShrink: 0, marginLeft: 14 }}>
+          {format(now, 'HH:mm:ss')}
+        </div>
+      </header>
+
+      {/* ══ MIDDLE ROW (sidebar + content) ══════════════════════════════════ */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
 
       {/* ── Sidebar (navy chrome) ───────────────────────────────────────── */}
       <aside style={{
@@ -275,21 +471,14 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         overflowX: 'hidden',
       }}>
 
-        {/* Logo */}
-        <div style={{
-          height: 64,
-          flex: '0 0 64px',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          padding: '0 20px',
-          borderBottom: '1px solid var(--chrome-line)',
-        }}>
-          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 21, letterSpacing: '-0.035em', lineHeight: 1, color: 'var(--chrome-ink)' }}>
-            edgesmith<span style={{ color: 'var(--brand-dot)' }}>.</span>
-          </div>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: '0.1em', color: 'var(--chrome-muted)', marginTop: 5 }}>
-            INNOVATE. ENGINEER. EXCEL.
+        {/* Role pill */}
+        <div style={{ padding: '12px 16px 4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--chrome-hover)', border: '1px solid var(--chrome-line)', borderRadius: 9, padding: '7px 11px' }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--brand-dot)', flexShrink: 0 }} />
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', color: 'var(--chrome-ink-2)', fontWeight: 600, flex: 1 }}>{user?.role?.toUpperCase()}</span>
+            {canSwitchLocation && (
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: 'var(--chrome-muted)' }}>{loc === 'both' ? 'ALL SITES' : loc === 'F1' ? 'DHARMAPURI' : 'FARIDABAD'}</span>
+            )}
           </div>
         </div>
 
@@ -382,92 +571,33 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* User footer */}
-        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--chrome-line)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-dot)', color: '#11305f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 11, flexShrink: 0 }}>
-            {initials}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--chrome-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.full_name || user?.username}</div>
-            <div style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--chrome-muted)', marginTop: 1 }}>{user?.role}</div>
-          </div>
-          <button
-            onClick={() => { authStore.clearAuth(); window.location.href = import.meta.env.BASE_URL }}
-            title="Sign out"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chrome-muted)', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center' }}
-          >
-            <LogOut size={15} />
-          </button>
+        {/* Shift summary strip */}
+        <div style={{ padding: '12px 16px 16px', borderTop: '1px solid var(--chrome-line)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Clock size={13} style={{ color: shiftInfo.color, flexShrink: 0 }} />
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--chrome-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            Shift {shiftInfo.n} · <span style={{ color: shiftInfo.color }}>{shiftInfo.remLabel}</span> left
+          </span>
         </div>
       </aside>
 
-      {/* ── Main area ───────────────────────────────────────────────────── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+      {/* ── Main content ─────────────────────────────────────────────────── */}
+      <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minWidth: 0 }}>
+        {children}
+      </main>
 
-        {/* Top header (navy chrome) */}
-        <header style={{ height: 64, flex: '0 0 64px', display: 'flex', alignItems: 'center', gap: 16, padding: '0 28px', background: 'var(--chrome)', borderBottom: '1px solid var(--chrome-line)' }}>
-          <div>
-            <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 19, letterSpacing: '-0.02em', lineHeight: 1, whiteSpace: 'nowrap', color: 'var(--chrome-ink)' }}>
-              {currentPage?.label || ''}
-            </div>
-          </div>
-          <div style={{ flex: 1 }} />
+      </div>{/* end middle row */}
 
-          {/* Location toggle */}
-          {(() => {
-            const PILLS: { key: 'F1' | 'F2' | 'both'; label: string; color: string }[] = [
-              { key: 'F1', label: 'Dharmapuri', color: '#3b82f6' },
-              { key: 'F2', label: 'Faridabad', color: '#d97a2b' },
-              { key: 'both', label: 'Both', color: '#5d7fae' },
-            ]
-            return (
-              <div style={{ display: 'flex', gap: 3, background: 'var(--chrome-2)', borderRadius: 9, padding: 3 }}>
-                {PILLS.map(p => {
-                  const on = loc === p.key
-                  return (
-                    <button key={p.key} disabled={!canSwitchLocation}
-                      onClick={() => canSwitchLocation && setLoc(p.key)}
-                      style={{ border: 'none', borderRadius: 7, padding: '5px 11px', cursor: canSwitchLocation ? 'pointer' : 'default',
-                        background: on ? p.color : 'transparent', color: on ? '#fff' : 'var(--chrome-muted)',
-                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em' }}>
-                      {p.label}
-                    </button>
-                  )
-                })}
-              </div>
-            )
-          })()}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--chrome-2)', border: '1px solid var(--chrome-line)', borderRadius: 9, padding: '0 12px', width: 220, height: 36 }}>
-            <Search size={15} style={{ color: 'var(--chrome-muted)', flexShrink: 0 }} />
-            <input placeholder="Search…" style={{ border: 'none', background: 'none', outline: 'none', flex: 1, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--chrome-ink)' }} />
-          </div>
-
-          {/* Live clock */}
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 500, color: 'var(--chrome-muted)', width: 74, textAlign: 'right', flexShrink: 0 }}>
-            {format(now, 'HH:mm:ss')}
-          </div>
-
-          <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--brand-dot)', color: '#11305f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, userSelect: 'none' }}>
-            {initials}
-          </div>
-        </header>
-
-        {/* Page content */}
-        <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-          {children}
-        </main>
-
-        {/* ── Status bar (navy chrome) ───────────────────────────────────── */}
-        <footer style={{ height: 30, flex: '0 0 30px', display: 'flex', alignItems: 'center', gap: 18, padding: '0 20px', background: 'var(--chrome)', borderTop: '1px solid var(--chrome-line)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--chrome-muted)' }}>
-          <span>Active UIDs <b style={{ color: 'var(--chrome-ink-2)' }}>{summary?.uid_active ?? '—'}</b></span>
-          <span>On hold <b style={{ color: (summary?.uid_on_hold ?? 0) > 0 ? '#ff9b9b' : 'var(--chrome-ink-2)' }}>{summary?.uid_on_hold ?? '—'}</b></span>
-          <span>In furnace <b style={{ color: '#f0c674' }}>{summary?.furnace_batches_running ?? '—'}</b></span>
-          <div style={{ flex: 1 }} />
-          <span>Updated {format(now, 'HH:mm:ss')}</span>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: summary ? '#22a06b' : '#e5484d', display: 'inline-block' }} />
-        </footer>
-      </div>
+      {/* ══ STATUS BAR (full-width navy chrome, 30px) ═══════════════════════ */}
+      <footer style={{ height: 30, flex: '0 0 30px', display: 'flex', alignItems: 'center', gap: 18, padding: '0 20px', background: 'var(--chrome)', borderTop: '1px solid var(--chrome-line)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--chrome-muted)' }}>
+        <span>Active UIDs <b style={{ color: 'var(--chrome-ink-2)' }}>{summary?.uid_active ?? '—'}</b></span>
+        <span>On hold <b style={{ color: (summary?.uid_on_hold ?? 0) > 0 ? '#ff9b9b' : 'var(--chrome-ink-2)' }}>{summary?.uid_on_hold ?? '—'}</b></span>
+        <span>In furnace <b style={{ color: '#f0c674' }}>{summary?.furnace_batches_running ?? '—'}</b></span>
+        <div style={{ flex: 1 }} />
+        <span style={{ color: '#5d7fae' }}>Shift {shiftInfo.n} · {loc === 'both' ? 'All Sites' : loc === 'F1' ? 'Dharmapuri' : 'Faridabad'} · {shiftInfo.remLabel} remaining</span>
+        <div style={{ flex: 1 }} />
+        <span>Updated {format(now, 'HH:mm:ss')}</span>
+        <span style={{ width: 7, height: 7, borderRadius: '50%', background: summary ? '#22a06b' : '#e5484d', display: 'inline-block' }} />
+      </footer>
     </div>
   )
 }
