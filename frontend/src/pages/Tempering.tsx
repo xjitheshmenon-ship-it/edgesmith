@@ -157,7 +157,7 @@ function ParameterForm({ cycles, onDone }: { cycles: any[]; onDone: () => void }
 function BatchForm({ cycles, params, onDone }: { cycles: any[]; params: any[]; onDone: () => void }) {
   const [cycleId, setCycleId] = useState('')
   const [stepId, setStepId] = useState('')
-  const [uidList, setUidList] = useState('')
+  const [intakeCount, setIntakeCount] = useState('')
 
   const selectedCycle = cycles.find((c: any) => c.id === parseInt(cycleId))
   const temperingSteps = (selectedCycle?.current_version?.steps || []).filter((s: any) =>
@@ -165,11 +165,20 @@ function BatchForm({ cycles, params, onDone }: { cycles: any[]; params: any[]; o
   )
   const matchingParam = params.find((p: any) => p.cycle_type_id === parseInt(cycleId) && p.cycle_step_id === parseInt(stepId))
 
+  const { data: available, isLoading: loadingUIDs } = useQuery({
+    queryKey: ['tempering-available', stepId],
+    queryFn: () => temperingApi.availableUIDs(parseInt(stepId)).then(r => r.data),
+    enabled: !!stepId,
+  })
+
+  const availableCount = available?.length ?? 0
+  const intake = intakeCount ? Math.min(parseInt(intakeCount), availableCount) : availableCount
+
   const mut = useMutation({
     mutationFn: () => temperingApi.createBatch({
       cycle_type_id: parseInt(cycleId),
       cycle_step_id: parseInt(stepId),
-      uid_ids: uidList.split(',').map(s => parseInt(s.trim())).filter(Boolean),
+      intake_count: intakeCount ? intake : null,
     }),
     onSuccess: onDone,
   })
@@ -184,33 +193,70 @@ function BatchForm({ cycles, params, onDone }: { cycles: any[]; params: any[]; o
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div>
           <L>CYCLE TYPE</L>
-          <select className="input" value={cycleId} onChange={e => { setCycleId(e.target.value); setStepId('') }}>
+          <select className="input" value={cycleId} onChange={e => { setCycleId(e.target.value); setStepId(''); setIntakeCount('') }}>
             <option value="">Select cycle…</option>
             {cycles.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
         <div>
           <L>TEMPERING STEP</L>
-          <select className="input" value={stepId} onChange={e => setStepId(e.target.value)} disabled={!cycleId}>
+          <select className="input" value={stepId} onChange={e => { setStepId(e.target.value); setIntakeCount('') }} disabled={!cycleId}>
             <option value="">Select step…</option>
             {temperingSteps.map((s: any) => <option key={s.id} value={s.id}>Step {s.step_number} — {s.operation_name}</option>)}
           </select>
         </div>
       </div>
+
       {matchingParam && (
         <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)' }}>
           Target: <span style={{ color: 'var(--accent)' }}>{matchingParam.target_temp_c}°C</span> for <span style={{ color: 'var(--accent)' }}>{matchingParam.target_soak_minutes} min</span>
           <span style={{ color: 'var(--ink-3)', marginLeft: 12 }}>±{matchingParam.tolerance_temp_c}°C / ±{matchingParam.tolerance_soak_minutes}min</span>
         </div>
       )}
-      <div>
-        <L>UID IDs (COMMA SEPARATED)</L>
-        <input className="input" value={uidList} onChange={e => setUidList(e.target.value)} placeholder="e.g. 1, 2, 3, 4" />
-        <div style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 4, fontFamily: "'IBM Plex Mono', monospace" }}>Enter UID database IDs to add to this furnace batch</div>
-      </div>
-      <button className="btn-primary" style={{ marginTop: 16 }} onClick={() => mut.mutate()} disabled={mut.isPending || !cycleId || !stepId}>
-        {mut.isPending ? 'Creating…' : 'Create Furnace Batch'}
+
+      {stepId && (
+        <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
+          {loadingUIDs ? (
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>Checking availability…</div>
+          ) : (
+            <>
+              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)', marginBottom: availableCount > 0 ? 10 : 0 }}>
+                <span style={{ color: availableCount > 0 ? '#6ee7b7' : 'var(--error)', fontWeight: 700, fontSize: 16 }}>{availableCount}</span>
+                <span style={{ marginLeft: 8 }}>knives available at source (FIFO auto-selection)</span>
+              </div>
+              {availableCount > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ flex: 1 }}>
+                    <L>INTAKE COUNT (leave blank for all {availableCount})</L>
+                    <input
+                      className="input"
+                      type="number"
+                      min={1}
+                      max={availableCount}
+                      value={intakeCount}
+                      onChange={e => setIntakeCount(e.target.value)}
+                      placeholder={`Max ${availableCount}`}
+                    />
+                  </div>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)', paddingTop: 20 }}>
+                    → <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{intake}</span> will be loaded
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <button
+        className="btn-primary"
+        style={{ marginTop: 4 }}
+        onClick={() => mut.mutate()}
+        disabled={mut.isPending || !cycleId || !stepId || availableCount === 0}
+      >
+        {mut.isPending ? 'Creating…' : `Load ${intake} Knives into Furnace`}
       </button>
+      {mut.isError && <div style={{ color: 'var(--error)', fontSize: 12, marginTop: 8, fontFamily: "'IBM Plex Mono', monospace" }}>Failed — no UIDs available at this step</div>}
     </div>
   )
 }
