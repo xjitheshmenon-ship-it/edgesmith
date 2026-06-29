@@ -98,9 +98,13 @@ GET `/` · POST `/` · PATCH `/:id` — all Admin only.
 | GET | `/master/settings` | any | app settings (e.g. `bunch_grinding_bars_per_set`) |
 | PATCH | `/master/settings/:key` | Admin | `{ value }` |
 
-Per-step capacity: cycle steps now carry `capacity_per_unit`; the cycle response also
-returns `active_units` and `total_capacity` (= capacity_per_unit × active units of that
-workstation). Set capacity per step when creating a cycle version.
+Per-step capacity (authoritative capacity rules): each cycle step returns
+`capacity_per_unit` (base/fixed count, or null when length/set-based), `capacity_type`
+(`fixed` | `furnace` | `length_based` | `set_based`), `active_units`, `total_capacity`
+(= base × active units), and for furnace steps `capacity_by_size` — the per-length
+capacity from `min(base, floor(base × 1500 / size))`. Furnaces: HT70/HT80 base 6,
+HT90 base 80; grinding/bunch steps are length/set-based. Admin sets the base in the
+Cycle Builder; other sizes are derived.
 
 ## Grinding batches (`/api/grinding`)
 

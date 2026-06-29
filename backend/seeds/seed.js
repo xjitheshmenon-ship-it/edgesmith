@@ -112,8 +112,13 @@ async function seedCapacityGrinding() {
   await query("UPDATE workstations SET max_bar_length_mm = 3000 WHERE code IN ('SG-DLT','AG-GMM') AND max_bar_length_mm IS NULL");
   await query("UPDATE workstations SET max_bar_length_mm = 1500 WHERE code IN ('AG-BTA','AG-ALP') AND max_bar_length_mm IS NULL");
 
-  // Example EAT per-step capacities (Admin can change in the Cycle Builder).
-  const caps = { 4: 10, 5: 1, 6: 40, 12: 6 };
+  // EAT per-step capacities per the authoritative capacity table.
+  // Fixed steps = 1; HT70/HT80 base = 6; HT90 base = 80. Grinding/bunch steps
+  // (4, 12, 20, 22) stay NULL — they are length/set-based, not a fixed count.
+  const caps = {};
+  ['1', '2', '3', '5', '8', '11', '13', '15', '16', '16B', '17', '18', '19', '21', '24', '25', '26', '27'].forEach((s) => { caps[s] = 1; });
+  ['6', '7'].forEach((s) => { caps[s] = 6; });
+  ['9', '10', '14', '23'].forEach((s) => { caps[s] = 80; });
   for (const [stepNum, cap] of Object.entries(caps)) {
     await query(
       `UPDATE cycle_steps cs SET capacity_per_unit = $1
