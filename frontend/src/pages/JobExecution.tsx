@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { uidApi, factoryApi, cycleApi, shiftApi, jobApi } from '../api/client'
-import type { UID, Workstation, CycleType, CycleStep, FactoryLocation } from '../types'
+import type { UID, Workstation, CycleType, CycleStep } from '../types'
 import PriorityBadge from '../components/PriorityBadge'
 import { useAuth } from '../hooks/useAuth'
 import {
@@ -18,6 +19,7 @@ import {
   Bell,
   Users,
   RefreshCw,
+  ArrowRight,
 } from 'lucide-react'
 import { format, formatDistanceToNowStrict } from 'date-fns'
 
@@ -207,19 +209,16 @@ export default function JobExecution() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const role = user?.role ?? 'operator'
-  // Supervisor / Manager / Admin get the floor-wide view; operators get the
-  // single-job active-card view. (Spec: "Who sees this page and what they see".)
+  // Supervisor / Manager / Admin get the read-only floor overview; operators get
+  // the single-job active-card view of their own allotted queue.
   const isFloorView = role === 'supervisor' || role === 'manager' || role === 'admin'
   const isAdmin = role === 'admin'
 
-  // Admin can toggle between locations (Faridabad / Dharmapuri / Both).
-  const [adminLocation, setAdminLocation] = useState<number | 'all'>('all')
-  // Effective location scope for queries. Non-admins are pinned to their own.
-  const locationId = isAdmin
-    ? adminLocation === 'all'
-      ? undefined
-      : adminLocation
-    : user?.primary_location_id ?? undefined
+  // Production, operators, workstations and job execution all happen at ONE
+  // location: Dharmapuri (F1). There is no multi-location floor — the queue and
+  // floor overview are always Dharmapuri. Scope queries to the user's own
+  // (Dharmapuri) location; the server pins this for production roles.
+  const locationId = user?.primary_location_id ?? undefined
 
   const [activeId, setActiveId] = useState<number | null>(null)
   const [showPause, setShowPause] = useState(false)
@@ -298,25 +297,6 @@ export default function JobExecution() {
     refetchInterval: 20_000,
     retry: 1,
   })
-
-  // Locations for the admin toggle.
-  const { data: locations = [] } = useQuery<FactoryLocation[]>({
-    queryKey: ['jobexec-locations'],
-    queryFn: () => factoryApi.locations().then((r) => r.data),
-    enabled: isAdmin,
-  })
-
-  // Scope floor rows to the selected location (admin) or own location.
-  const scopedFloorRows = useMemo(() => {
-    if (isAdmin && adminLocation === 'all') return floorRows
-    const wsById = new Map(workstations.map((w) => [w.id, w]))
-    const scopeLoc = isAdmin ? adminLocation : user?.primary_location_id
-    if (scopeLoc == null) return floorRows
-    return floorRows.filter((r) => {
-      const ws = wsById.get(r.workstation_id)
-      return ws?.factory_location_id == null || ws.factory_location_id === scopeLoc
-    })
-  }, [floorRows, workstations, isAdmin, adminLocation, user])
 
   // ── Timing mutations (each records a job_events row) ──────────────────────
   const invalidateEvents = () =>
@@ -495,18 +475,18 @@ export default function JobExecution() {
 
   // ── Manager / floor summary metrics (derived from queue-view) ────────────
   const floorMetrics = useMemo(() => {
-    const totalQueued = scopedFloorRows.reduce((n, r) => n + r.queue.length, 0)
-    const totalReady = scopedFloorRows.reduce((n, r) => n + r.ready_count, 0)
-    const stationsStaffed = scopedFloorRows.filter((r) => r.operator_id != null).length
-    const idleOperators = scopedFloorRows.filter((r) => r.operator_id != null && r.queue.length === 0).length
+    const totalQueued = floorRows.reduce((n, r) => n + r.queue.length, 0)
+    const totalReady = floorRows.reduce((n, r) => n + r.ready_count, 0)
+    const stationsStaffed = floorRows.filter((r) => r.operator_id != null).length
+    const idleOperators = floorRows.filter((r) => r.operator_id != null && r.queue.length === 0).length
     return {
-      stations: scopedFloorRows.length,
+      stations: floorRows.length,
       stationsStaffed,
       totalQueued,
       totalReady,
       idleOperators,
     }
-  }, [scopedFloorRows])
+  }, [floorRows])
 
   return (
     <div style={{ padding: '28px 28px 60px', maxWidth: isFloorView ? 1480 : 1280 }}>
@@ -526,38 +506,16 @@ export default function JobExecution() {
           </div>
           <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>
             {isFloorView
-              ? `Floor-wide view — all workstations at your location (${role})`
-              : `${ordered.length} job${ordered.length === 1 ? '' : 's'} in your queue — start, pause, and close work on the floor`}
+              ? `Dharmapuri floor — what each operator is working (${role})`
+              : `${ordered.length} job${ordered.length === 1 ? '' : 's'} allotted to you — start, pause, resume, and close your work`}
           </div>
         </div>
-
-        {/* Admin location toggle */}
-        {isAdmin && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-3)' }}>
-              Location
-            </span>
-            {[{ id: 'all' as const, label: 'Both' }, ...locations.map((l) => ({ id: l.id as number | 'all', label: l.code }))].map((opt) => {
-              const on = adminLocation === opt.id
-              return (
-                <button
-                  key={String(opt.id)}
-                  onClick={() => setAdminLocation(opt.id)}
-                  className={on ? 'btn-primary' : 'btn-secondary'}
-                  style={{ height: 34, padding: '0 14px', fontSize: 12.5 }}
-                >
-                  {opt.label}
-                </button>
-              )
-            })}
-          </div>
-        )}
       </div>
 
       {/* ════════════════ FLOOR-WIDE VIEW (supervisor / manager / admin) ═══ */}
       {isFloorView ? (
         <FloorView
-          rows={scopedFloorRows}
+          rows={floorRows}
           loading={floorLoading}
           error={floorError}
           onRetry={() => refetchFloor()}
@@ -1157,8 +1115,10 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// FLOOR-WIDE VIEW — Supervisor / Manager / Admin
-// Shows every workstation at the location with its operator and queue.
+// DHARMAPURI FLOOR OVERVIEW — Supervisor / Manager / Admin (read-only)
+// Production happens at one location (Dharmapuri); there is no location toggle.
+// Shows every Dharmapuri workstation with its operator and allotted queue — the
+// execution-side complement of the Job Assignment board (where work is allotted).
 // The admin pause-alert threshold is persisted via jobApi.get/setPauseThreshold.
 // Acting on ANOTHER operator's job (cross-operator View/Pause/Close) and the
 // aggregate live "running now / paused now" floor metrics still need a
@@ -1259,6 +1219,36 @@ function FloorView({
         <button className="btn-secondary" style={{ height: 32, padding: '0 12px', fontSize: 12 }} onClick={onRetry}>
           <RefreshCw size={13} /> Refresh
         </button>
+      </div>
+
+      {/* Read-only framing — points supervisors to Job Assignment for allotting.
+          Job Assignment = allot work to operators (drag-and-drop);
+          Job Execution = watch / track operators working it. */}
+      <div
+        className="card"
+        style={{
+          padding: '12px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+          background: 'var(--accent-dim)',
+          border: '1px solid var(--accent)',
+        }}
+      >
+        <Eye size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+        <span style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 12.5, color: 'var(--ink-2)', flex: 1, minWidth: 220 }}>
+          This is a <strong style={{ color: 'var(--ink)' }}>read-only overview</strong> of what each operator on the
+          Dharmapuri floor is working. To <strong style={{ color: 'var(--ink)' }}>allot jobs</strong> to operators
+          (drag-and-drop), use the Job Assignment board.
+        </span>
+        <Link
+          to="/job-assignment"
+          className="btn-secondary"
+          style={{ height: 32, padding: '0 12px', fontSize: 12, textDecoration: 'none', alignItems: 'center', display: 'inline-flex', gap: 5 }}
+        >
+          Job Assignment <ArrowRight size={13} />
+        </Link>
       </div>
 
       {/* Manager / Admin summary metrics */}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { shiftApi, uidApi, userApi } from '../api/client'
+import { shiftApi, uidApi, userApi, factoryApi } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import { format, formatDistanceToNowStrict } from 'date-fns'
 import {
@@ -30,11 +30,27 @@ const SHIFTS = [
   { value: 'night', label: 'Night', n: 3, time: '22:00 – 06:00', color: '#a78bfa' },
 ]
 
-/* Furnace steps always go to the Supervisor on duty — never auto-assigned. */
+/* CORRECTED MODEL: all production / operators / workstations / job queues / shifts
+   live at ONE location — Dharmapuri (location code F1). Faridabad (F2) only does
+   intake / joining / dispatch and has NO operator job queues. This page is therefore
+   inherently Dharmapuri; we scope all data to that location and never offer a split. */
+const DHARMAPURI_CODE = 'F1'
+
+/* Furnace steps are supervisor-run BATCHES (workstation codes HT70/HT80/HT90) —
+   they are built in Batch Management and are NEVER allottable to an operator. We
+   detect them primarily by the job's required workstation code, falling back to the
+   step name for older rows that don't carry a workstation. */
+const FURNACE_WS_CODES = new Set(['HT70', 'HT80', 'HT90'])
+const isFurnaceWorkstation = (code?: string | null) =>
+  !!code && FURNACE_WS_CODES.has(code.toUpperCase())
 const isFurnaceStep = (name?: string | null) => {
   const n = (name ?? '').toLowerCase()
   return n.includes('temper') || n.includes('harden') || n.includes('quench')
 }
+/* A job (= UID at its current step) is furnace work if its required workstation is a
+   furnace, or — for legacy rows lacking a workstation — its step name reads furnace. */
+const isFurnaceJob = (u: any) =>
+  isFurnaceWorkstation(u?.current_step_workstation_code) || isFurnaceStep(u?.current_step_name)
 
 const PRIORITY_RANK: Record<string, number> = { urgent: 0, high: 1, normal: 2 }
 
@@ -45,7 +61,7 @@ const fmtInt = (n: number) => n.toLocaleString('en-US')
 const JOB_CHIPS: { key: string; label: string; match: (u: any) => boolean }[] = [
   { key: 'all', label: 'All', match: () => true },
   { key: 'urgent', label: 'Urgent', match: (u) => u.priority === 'urgent' },
-  { key: 'furnace', label: 'Furnace', match: (u) => isFurnaceStep(u.current_step_name) },
+  { key: 'furnace', label: 'Furnace', match: (u) => isFurnaceJob(u) },
   { key: 'grinding', label: 'Grinding', match: (u) => (u.current_step_name ?? '').toLowerCase().includes('grind') },
   { key: 'qc', label: 'QC', match: (u) => (u.current_step_name ?? '').toLowerCase().includes('qc') },
 ]
@@ -170,29 +186,43 @@ function SupervisorBoard() {
   const [autoResult, setAutoResult] = useState<{ allotted: number } | null>(null)
 
   const shiftInfo = SHIFTS.find((s) => s.value === shiftPeriod)!
-  const scopedLocation =
-    user?.role === 'operator' || user?.role === 'supervisor' ? user?.primary_location_id ?? undefined : undefined
+
+  /* ── Dharmapuri scoping (CORRECTED MODEL) ─────────────────────────────────
+     This page is inherently Dharmapuri (F1) — there is no location split. We
+     resolve its id once so the unassigned list is scoped to F1 production only;
+     the operator board / queues are already Dharmapuri by nature. */
+  const { data: locations = [] } = useQuery<any[]>({
+    queryKey: ['ja-locations'],
+    queryFn: () => factoryApi.locations().then((r) => r.data),
+    staleTime: 5 * 60_000,
+  })
+  const dharmapuriId: number | undefined = useMemo(
+    () => (locations as any[]).find((l) => l.code === DHARMAPURI_CODE)?.id,
+    [locations],
+  )
 
   /* ── Data: unassigned jobs — SERVER-side search + cap + total ─────────────
      NEVER fetches all 12,000 jobs. Drives the list from a capped, priority-
-     ordered, server-searched page. The badge/caption use the server `total`. */
+     ordered, server-searched page, scoped to Dharmapuri (F1). The badge/caption
+     use the server `total`. */
   const {
     data: uidResult,
     isLoading: uidLoading,
     isFetching: uidFetching,
     isError: uidError,
   } = useQuery({
-    queryKey: ['ja-uids', scopedLocation, debouncedSearch],
+    queryKey: ['ja-uids', dharmapuriId, debouncedSearch],
     queryFn: () =>
       uidApi
         .list({
           status: 'active',
           order: 'priority',
           search: debouncedSearch.trim() || undefined,
-          location_id: scopedLocation,
+          location_id: dharmapuriId,
           limit: 60,
         })
         .then((r) => r.data),
+    enabled: dharmapuriId != null,
     refetchInterval: 30_000,
     retry: false,
   })
@@ -238,6 +268,8 @@ function SupervisorBoard() {
     mutationFn: (d: any) => shiftApi.createAllotment(d),
     onSuccess: () => {
       setSelectedJob(null)
+      setMismatch(null)
+      setFurnaceBlock(null)
       invalidate()
     },
   })
@@ -295,23 +327,58 @@ function SupervisorBoard() {
     [queueData],
   )
 
-  /* Furnace jobs must never be delegated to an operator (spec: always the
-     Supervisor on duty). Block the manual click-to-assign for those. */
+  /* Furnace jobs must never be delegated to an operator (corrected model:
+     furnace = supervisor-run batches built in Batch Management). Block them. */
   const [furnaceBlock, setFurnaceBlock] = useState<string | null>(null)
+  /* Soft rejection note when a job is dropped on a non-matching workstation. */
+  const [mismatch, setMismatch] = useState<{ code: string; needs: string } | null>(null)
 
-  /* ── Manual assign: drop selected job onto a workstation/operator card ─── */
-  function assignTo(ws: any) {
-    if (!selectedJob || !canEdit) return
-    if (isFurnaceStep(selectedJob.current_step_name) && ws.operator_id != null) {
-      setFurnaceBlock(selectedJob.code)
+  /* The job currently being dragged (HTML5 DnD). Held in state so operator cards
+     can compute whether they are a valid target during the drag. */
+  const [dragJob, setDragJob] = useState<any>(null)
+
+  /* ── Core validation: can `job` be allotted to operator card `ws`? ─────────
+     A job can ONLY land on an operator whose workstation === the job's required
+     workstation (current_step_workstation_id), and furnace steps are never
+     operator-allottable. Returns a discriminated result for UI + the action. */
+  function validateDrop(
+    job: any,
+    ws: any,
+  ): { ok: true } | { ok: false; reason: 'furnace' | 'mismatch' | 'no-operator' } {
+    if (isFurnaceJob(job)) return { ok: false, reason: 'furnace' }
+    if (ws.operator_id == null) return { ok: false, reason: 'no-operator' }
+    if (job.current_step_workstation_id == null || ws.workstation_id == null)
+      return { ok: false, reason: 'mismatch' }
+    if (job.current_step_workstation_id !== ws.workstation_id) return { ok: false, reason: 'mismatch' }
+    return { ok: true }
+  }
+
+  /* ── Assign: shared by click-to-assign (fallback) and drag-drop ──────────── */
+  function assignJobTo(job: any, ws: any) {
+    if (!job || !canEdit) return
+    const v = validateDrop(job, ws)
+    if (!v.ok) {
+      if (v.reason === 'furnace') {
+        setMismatch(null)
+        setFurnaceBlock(job.code)
+      } else if (v.reason === 'mismatch') {
+        setFurnaceBlock(null)
+        setMismatch({ code: job.code, needs: job.current_step_workstation_code ?? job.current_step_name ?? '—' })
+      }
       return
     }
     setFurnaceBlock(null)
+    setMismatch(null)
     createAllotment.mutate({
-      uid_id: selectedJob.id,
+      uid_id: job.id,
       operator_id: ws.operator_id,
       workstation_id: ws.workstation_id,
     })
+  }
+
+  /* Click-to-assign fallback (touch / non-drag) uses the current selection. */
+  function assignTo(ws: any) {
+    assignJobTo(selectedJob, ws)
   }
 
   return (
@@ -326,7 +393,7 @@ function SupervisorBoard() {
             Job Assignment
           </h1>
           <p style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-2)', marginTop: 5 }}>
-            Allot ready jobs to operators for the shift — search-first at scale
+            Dharmapuri (F1) · drag a ready job onto the operator holding its workstation
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -393,7 +460,7 @@ function SupervisorBoard() {
         }}
       >
         <Flame size={14} />
-        Furnace steps (tempering / hardening / quenching) are reserved for the Supervisor on duty and are excluded from operator auto-assignment.
+        Furnace steps (workstations HT70 / HT80 / HT90) are supervisor-run batches built in Batch Management — they are not operator-allottable and cannot be dropped on an operator here.
       </div>
 
       {/* ── Two-panel body: 380px left · fluid right ───────────────────────── */}
@@ -487,14 +554,42 @@ function SupervisorBoard() {
               </div>
             ) : (
               unassigned.map((u) => {
-                const furnace = isFurnaceStep(u.current_step_name)
+                const furnace = isFurnaceJob(u)
                 const selected = selectedJob?.id === u.id
+                const dragging = dragJob?.id === u.id
+                /* Furnace jobs are not operator-allottable, so they are not draggable
+                   onto operators (no valid target exists). Everything else drags. */
+                const canDrag = canEdit && !furnace
                 return (
                   <button
                     key={u.id}
+                    draggable={canDrag}
+                    onDragStart={(e) => {
+                      if (!canDrag) return
+                      setSelectedJob(u)
+                      setDragJob(u)
+                      setFurnaceBlock(null)
+                      setMismatch(null)
+                      e.dataTransfer.effectAllowed = 'move'
+                      /* Payload: the UID id + its required workstation, per spec. */
+                      try {
+                        e.dataTransfer.setData(
+                          'application/json',
+                          JSON.stringify({
+                            uid_id: u.id,
+                            current_step_workstation_id: u.current_step_workstation_id ?? null,
+                          }),
+                        )
+                      } catch {
+                        /* setData can throw in some browsers during dragstart — the
+                           authoritative payload is dragJob in state; this is a hint. */
+                      }
+                    }}
+                    onDragEnd={() => setDragJob(null)}
                     onClick={() => {
                       if (!canEdit) return
                       setFurnaceBlock(null)
+                      setMismatch(null)
                       setSelectedJob(selected ? null : u)
                     }}
                     style={{
@@ -505,7 +600,8 @@ function SupervisorBoard() {
                       borderBottom: '1px solid var(--line)',
                       background: selected ? 'var(--accent-dim)' : 'transparent',
                       boxShadow: selected ? 'inset 3px 0 0 var(--accent)' : 'none',
-                      cursor: canEdit ? 'grab' : 'default',
+                      opacity: dragging ? 0.5 : 1,
+                      cursor: canDrag ? 'grab' : canEdit ? 'pointer' : 'default',
                       display: 'flex',
                       flexDirection: 'column',
                     }}
@@ -522,9 +618,11 @@ function SupervisorBoard() {
                       <span style={{ fontFamily: MONO, color: 'var(--ink-3)', marginRight: 6 }}>{u.current_step_number ?? '—'}</span>
                       {u.current_step_name ?? '—'}
                     </div>
-                    {/* row 3: workstation/storage · badges · spacer · wait */}
+                    {/* row 3: required workstation · furnace/cycle · spacer · wait */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>
-                      <span style={{ color: 'var(--ink-2)', fontWeight: 600 }}>{u.current_storage_code ?? '—'}</span>
+                      <span style={{ color: 'var(--ink-2)', fontWeight: 600 }}>
+                        {u.current_step_workstation_code ?? u.current_storage_code ?? '—'}
+                      </span>
                       {furnace ? (
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--warning)', fontWeight: 600 }}>
                           <Flame size={10} /> FURNACE
@@ -618,18 +716,33 @@ function SupervisorBoard() {
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 14 }}>
-              {boardCards.map((ws: any) => (
-                <OperatorCard
-                  key={ws.assignment_id ?? `${ws.operator_id}-${ws.workstation_id}`}
-                  ws={ws}
-                  canEdit={canEdit}
-                  jobSelected={!!selectedJob}
-                  assigning={createAllotment.isPending}
-                  onAssign={() => assignTo(ws)}
-                  onRemove={(id) => removeAllotment.mutate(id)}
-                  removing={removeAllotment.isPending}
-                />
-              ))}
+              {boardCards.map((ws: any) => {
+                /* The job being considered for this card: the live drag, else the
+                   click-selected job (fallback). Drives valid/invalid styling. */
+                const candidate = dragJob ?? selectedJob
+                const validity = candidate ? validateDrop(candidate, ws) : null
+                return (
+                  <OperatorCard
+                    key={ws.assignment_id ?? `${ws.operator_id}-${ws.workstation_id}`}
+                    ws={ws}
+                    canEdit={canEdit}
+                    jobSelected={!!selectedJob}
+                    dragActive={!!dragJob}
+                    /* during drag, only matching cards are valid targets */
+                    validTarget={validity?.ok === true}
+                    rejectReason={validity && !validity.ok ? validity.reason : null}
+                    assigning={createAllotment.isPending}
+                    onAssign={() => assignTo(ws)}
+                    onDropJob={() => {
+                      const job = dragJob
+                      setDragJob(null)
+                      if (job) assignJobTo(job, ws)
+                    }}
+                    onRemove={(id) => removeAllotment.mutate(id)}
+                    removing={removeAllotment.isPending}
+                  />
+                )
+              })}
             </div>
           )}
 
@@ -637,9 +750,22 @@ function SupervisorBoard() {
             <div style={{ marginTop: 14, padding: '10px 14px', borderRadius: 10, background: 'rgba(217,122,43,.1)', border: '1px solid rgba(217,122,43,.28)', color: 'var(--warning)', fontFamily: SANS, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
               <Flame size={14} />
               <span style={{ flex: 1 }}>
-                <strong style={{ fontFamily: MONO }}>{furnaceBlock}</strong> is a furnace step — it is reserved for the Supervisor on duty and cannot be delegated to an operator.
+                <strong style={{ fontFamily: MONO }}>{furnaceBlock}</strong> is a furnace step (HT70 / HT80 / HT90) — it is a supervisor-run batch built in Batch Management and cannot be allotted to an operator.
               </span>
               <button onClick={() => setFurnaceBlock(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--warning)', display: 'flex' }}>
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
+          {mismatch && (
+            <div style={{ marginTop: 14, padding: '10px 14px', borderRadius: 10, background: 'rgba(229,72,77,.1)', border: '1px solid rgba(229,72,77,.25)', color: 'var(--error)', fontFamily: SANS, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AlertTriangle size={14} />
+              <span style={{ flex: 1 }}>
+                <strong style={{ fontFamily: MONO }}>{mismatch.code}</strong> needs workstation{' '}
+                <strong style={{ fontFamily: MONO }}>{mismatch.needs}</strong> — drop it on an operator assigned to that workstation.
+              </span>
+              <button onClick={() => setMismatch(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)', display: 'flex' }}>
                 <X size={14} />
               </button>
             </div>
@@ -673,16 +799,24 @@ function OperatorCard({
   ws,
   canEdit,
   jobSelected,
+  dragActive,
+  validTarget,
+  rejectReason,
   assigning,
   onAssign,
+  onDropJob,
   onRemove,
   removing,
 }: {
   ws: any
   canEdit: boolean
   jobSelected: boolean
+  dragActive: boolean
+  validTarget: boolean
+  rejectReason: 'furnace' | 'mismatch' | 'no-operator' | null
   assigning: boolean
   onAssign: () => void
+  onDropJob: () => void
   onRemove: (id: number) => void
   removing: boolean
 }) {
@@ -691,19 +825,97 @@ function OperatorCard({
   const ready = ws.ready_count ?? 0
   const status = qCount > 0 ? 'working' : 'idle'
   const statusColor = qCount > 0 ? '#22a06b' : 'var(--ink-3)'
-  const canDrop = canEdit && jobSelected
+  /* click-to-assign fallback affordance: a job is selected (but not dragging) */
+  const canDrop = canEdit && jobSelected && !dragActive
+
+  /* Is the pointer currently over THIS card mid-drag? Used for the strongest
+     highlight (dashed accent ring on a valid target / red on an invalid one). */
+  const [over, setOver] = useState(false)
+
+  /* During a drag, valid targets get a dashed accent ring; invalid ones (wrong
+     workstation / furnace) are dimmed and show what they "need". */
+  const dragValid = canEdit && dragActive && validTarget
+  const dragInvalid = canEdit && dragActive && !validTarget
+
+  const borderColor = dragValid
+    ? 'var(--accent)'
+    : dragInvalid
+      ? 'rgba(229,72,77,.4)'
+      : canDrop
+        ? 'var(--accent)'
+        : 'var(--line)'
+  const boxShadow = over && dragValid
+    ? '0 0 0 3px var(--accent-dim)'
+    : canDrop
+      ? '0 0 0 3px var(--accent-dim)'
+      : 'var(--shadow-e1)'
 
   return (
     <div
       className="card"
+      onDragOver={(e) => {
+        if (!canEdit || !dragActive) return
+        /* Only valid (matching-workstation, non-furnace) cards accept the drop. */
+        if (!validTarget) {
+          e.dataTransfer.dropEffect = 'none'
+          return
+        }
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        if (!over) setOver(true)
+      }}
+      onDragLeave={() => over && setOver(false)}
+      onDrop={(e) => {
+        if (!canEdit || !dragActive) return
+        e.preventDefault()
+        setOver(false)
+        if (validTarget) onDropJob()
+      }}
       style={{
         padding: 0,
         overflow: 'hidden',
-        borderColor: canDrop ? 'var(--accent)' : 'var(--line)',
-        boxShadow: canDrop ? '0 0 0 3px var(--accent-dim)' : 'var(--shadow-e1)',
-        transition: 'box-shadow 180ms cubic-bezier(.2,.8,.2,1)',
+        position: 'relative',
+        borderColor,
+        borderStyle: dragValid ? 'dashed' : 'solid',
+        opacity: dragInvalid ? 0.6 : 1,
+        boxShadow,
+        transition: 'box-shadow 180ms cubic-bezier(.2,.8,.2,1), opacity 140ms',
       }}
     >
+      {/* Invalid-target hint shown over a card during a drag (wrong WS / furnace). */}
+      {dragInvalid && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 8,
+            right: 8,
+            zIndex: 2,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            fontFamily: MONO,
+            fontSize: 9,
+            fontWeight: 700,
+            letterSpacing: '.04em',
+            textTransform: 'uppercase',
+            padding: '3px 8px',
+            borderRadius: 20,
+            background: 'rgba(229,72,77,.12)',
+            color: 'var(--error)',
+            pointerEvents: 'none',
+          }}
+        >
+          {rejectReason === 'furnace' ? (
+            <>
+              <Flame size={9} /> batch only
+            </>
+          ) : rejectReason === 'no-operator' ? (
+            'no operator'
+          ) : (
+            <>wrong workstation</>
+          )}
+        </div>
+      )}
       {/* Operator header */}
       <div style={{ padding: '17px', borderBottom: '1px solid var(--line)' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
@@ -732,7 +944,7 @@ function OperatorCard({
             <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--ink-3)' }}>WORKSTATION</span>
             <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: 'var(--ink)' }}>{ws.workstation_code ?? '—'}</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 7 }}>
             <span style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--ink-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {ws.workstation_name ?? '—'}
             </span>
@@ -741,6 +953,12 @@ function OperatorCard({
                 <Plus size={10} /> {ready} ready
               </span>
             )}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--line)', paddingTop: 7 }}>
+            <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--ink-3)' }}>JOB QUEUE</span>
+            <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: qCount > 0 ? 'var(--accent)' : 'var(--ink-3)' }}>
+              {qCount} job{qCount === 1 ? '' : 's'}
+            </span>
           </div>
         </div>
       </div>
@@ -772,7 +990,29 @@ function OperatorCard({
         )}
       </div>
 
-      {/* Assign drop zone (manual assignment of the selected job) */}
+      {/* Drag drop-zone affordance: shown on a valid target while dragging. */}
+      {dragValid && (
+        <div
+          style={{
+            width: '100%',
+            padding: '11px 14px',
+            borderTop: '1px dashed var(--accent)',
+            background: 'var(--accent-dim)',
+            color: 'var(--accent)',
+            fontFamily: SANS,
+            fontWeight: 700,
+            fontSize: 12.5,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+          }}
+        >
+          <ChevronRight size={13} /> Drop to allot here
+        </div>
+      )}
+
+      {/* Assign drop zone (click-to-assign fallback for the selected job) */}
       {canDrop && (
         <button
           onClick={onAssign}

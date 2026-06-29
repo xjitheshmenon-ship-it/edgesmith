@@ -85,10 +85,12 @@ function minutesRemaining(dateStr: string, def: PeriodDef): number | null {
   return mins > 0 ? mins : null
 }
 
-function hhmm(mins: number): string {
+/* Human "3h 12m" style remaining label used on the navy Current Shift card. */
+function remainingLabel(mins: number): string {
   const h = Math.floor(mins / 60)
   const m = mins % 60
-  return `${h}:${String(m).padStart(2, '0')}`
+  if (h <= 0) return `${m}m`
+  return `${h}h ${String(m).padStart(2, '0')}m`
 }
 
 /* ── small primitives ──────────────────────────────────────────────────────── */
@@ -245,7 +247,9 @@ export default function Shifts() {
     const total = rows.length
     const confirmed = rows.filter((r) => r.confirmed).length
     const wsSet = new Set(rows.map((r) => r.w?.code).filter(Boolean))
-    return { total, confirmed, pending: total - confirmed, stations: wsSet.size }
+    // Distinct operators clocked in for this shift (by name; roster is per-shift).
+    const opSet = new Set(rows.map((r) => r.u?.name).filter(Boolean))
+    return { total, confirmed, pending: total - confirmed, stations: wsSet.size, operators: opSet.size }
   }, [rows])
 
   const supervisor = useMemo(() => {
@@ -355,31 +359,6 @@ export default function Shifts() {
             )
           })}
         </div>
-      </div>
-      )}
-
-      {/* ── Shift status strip (Active tab) ─────────────────────────────── */}
-      {tab === 'active' && (
-      <div className="card" style={{ padding: '14px 18px', marginBottom: 18, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 18 }}>
-        <span style={{ ...pill, background: isLive ? 'rgba(34,160,107,.14)' : C.surface3, color: isLive ? C.greenText : C.ink2 }}>
-          {isLive && <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.green }} />}
-          {isLive ? 'Live now' : 'Scheduled'}
-        </span>
-        <div style={{ fontFamily: MONO, fontSize: 11, color: C.ink2, letterSpacing: '0.06em' }}>
-          {shiftLabel} · {periodDef.label} · {periodDef.window}
-        </div>
-        <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Users size={14} style={{ color: C.ink3 }} />
-          Supervisor: <strong style={{ color: C.ink, fontWeight: 600 }}>{supervisor?.name ?? '—'}</strong>
-        </div>
-        <div style={{ flex: 1 }} />
-        {isLive && remaining != null && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 12, color: remaining <= 30 ? C.orange : C.ink2, letterSpacing: '0.04em' }}>
-            <Clock size={14} />
-            {hhmm(remaining)} remaining
-            {remaining <= 30 && <span style={{ ...pill, background: 'rgba(217,122,43,.16)', color: C.orange }}>Handover window open</span>}
-          </div>
-        )}
       </div>
       )}
 
@@ -514,7 +493,10 @@ export default function Shifts() {
           remaining={remaining}
           shiftLabel={shiftLabel}
           periodLabel={periodDef.label}
+          periodWindow={periodDef.window}
+          shiftNumber={PERIODS.findIndex((p) => p.key === period) + 1}
           supervisorName={supervisor?.name ?? null}
+          operatorsOnDuty={stats.operators}
           canHandover={canHandover}
           date={date}
           period={period}
@@ -560,7 +542,10 @@ function ActiveShiftTab({
   remaining,
   shiftLabel,
   periodLabel,
+  periodWindow,
+  shiftNumber,
   supervisorName,
+  operatorsOnDuty,
   canHandover,
   date,
   period,
@@ -572,7 +557,10 @@ function ActiveShiftTab({
   remaining: number | null
   shiftLabel: string
   periodLabel: string
+  periodWindow: string
+  shiftNumber: number
   supervisorName: string | null
+  operatorsOnDuty: number
   canHandover: boolean
   date: string
   period: ShiftPeriod
@@ -614,7 +602,7 @@ function ActiveShiftTab({
     <>
       {/* Handover countdown banner */}
       {handoverOpen && (
-        <div className="card" style={{ padding: '14px 18px', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 12, border: `1px solid ${C.orange}`, background: 'rgba(217,122,43,.06)' }}>
+        <div className="card" style={{ padding: '14px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, border: `1px solid ${C.orange}`, background: 'rgba(217,122,43,.06)' }}>
           <Clock size={18} style={{ color: C.orange }} />
           <div>
             <div style={{ fontFamily: ARCHIVO, fontWeight: 700, fontSize: 15, color: C.ink }}>
@@ -627,49 +615,81 @@ function ActiveShiftTab({
         </div>
       )}
 
-      {/* Workstation assignment for current shift */}
-      <div className="card" style={{ overflow: 'hidden', marginBottom: 20 }}>
-        <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Cpu size={14} style={{ color: C.ink3 }} />
-          <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase' }}>
-            Workstation Assignment — Current Shift
-          </span>
+      {/* Active Shift: navy Current Shift card + white Workstation Assignment */}
+      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start', marginBottom: 20 }}>
+        {/* LEFT — navy Current Shift card */}
+        <div style={{ background: '#11305f', color: '#eaf4e4', borderRadius: 14, padding: 20 }}>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', color: '#9bb4d4' }}>CURRENT SHIFT</div>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 30, letterSpacing: '-0.02em', margin: '10px 0 3px' }}>
+            Shift {shiftNumber}
+          </div>
+          <div style={{ fontFamily: MONO, fontSize: 11, color: '#9bb4d4' }}>{periodWindow} · Dharmapuri</div>
+
+          <div style={{ height: 1, background: '#2c5191', margin: '16px 0' }} />
+
+          <div style={{ fontFamily: MONO, fontSize: 9.5, color: '#9bb4d4', marginBottom: 5 }}>SUPERVISOR ON DUTY</div>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}>{supervisorName ?? '—'}</div>
+
+          <div style={{ fontFamily: MONO, fontSize: 9.5, color: '#9bb4d4', marginBottom: 5 }}>TIME REMAINING</div>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 700, fontSize: 22, color: '#d4eecb' }}>
+            {isLive && remaining != null ? remainingLabel(remaining) : '—'}
+          </div>
+
+          <div style={{ marginTop: 16, background: '#0c2750', borderRadius: 10, padding: '12px 13px', display: 'flex', alignItems: 'center', gap: 9 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: operatorsOnDuty > 0 ? '#22a06b' : '#5b7196' }} />
+            <span style={{ fontSize: 11, color: '#cfe0ee' }}>
+              {operatorsOnDuty} operator{operatorsOnDuty === 1 ? '' : 's'} clocked in
+            </span>
+          </div>
         </div>
-        {wsTable.length === 0 ? (
-          <div style={{ padding: '32px 18px', textAlign: 'center', fontFamily: SANS, fontSize: 13, color: C.ink2 }}>
-            No active workstations assigned for this shift.
+
+        {/* RIGHT — white Workstation Assignment card */}
+        <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
+          <div style={{ padding: '15px 18px 13px', borderBottom: `1px solid ${C.line}`, fontFamily: ARCHIVO, fontWeight: 700, fontSize: 16, letterSpacing: '-0.01em', color: C.ink }}>
+            Workstation Assignment
           </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
-              <thead>
-                <tr>
-                  <th style={TH}>Workstation</th>
-                  <th style={TH}>Assigned operator(s)</th>
-                  <th style={TH}>Job status</th>
-                  <th style={{ ...TH, textAlign: 'right' }}>UIDs processing</th>
-                </tr>
-              </thead>
-              <tbody>
-                {wsTable.map((q, i) => (
-                  <tr key={i} className="row-hover">
-                    <td style={TD}>
-                      <span style={{ fontFamily: MONO, fontWeight: 600, color: C.accent }}>{q.code}</span>
-                      {q.name && <span style={{ color: C.ink2, marginLeft: 8 }}>{q.name}</span>}
-                    </td>
-                    <td style={{ ...TD, color: C.ink2 }}>{q.ops.length ? q.ops.join(', ') : '—'}</td>
-                    <td style={TD}><JobStatusPill status={q.status} /></td>
-                    <td style={{ ...TD, textAlign: 'right', fontFamily: ARCHIVO, fontWeight: 700, fontSize: 15, color: q.count > 0 ? C.ink : C.ink3 }}>
-                      {q.count}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+          {/* column header row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 90px 110px', gap: 12, padding: '10px 18px', borderBottom: `1px solid ${C.line}`, fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', color: C.ink3 }}>
+            <div>WORKSTATION</div>
+            <div>OPERATOR</div>
+            <div style={{ textAlign: 'right' }}>UIDS</div>
+            <div style={{ textAlign: 'right' }}>STATUS</div>
           </div>
-        )}
-        <div style={{ padding: '10px 18px', borderTop: `1px solid ${C.line}`, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
-          Reassigning operators within the active shift requires a dedicated endpoint (not yet available).
+
+          {wsTable.length === 0 ? (
+            <div style={{ padding: '32px 18px', textAlign: 'center', fontFamily: SANS, fontSize: 13, color: C.ink2 }}>
+              No active workstations assigned for this shift.
+            </div>
+          ) : (
+            wsTable.map((q, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'grid', gridTemplateColumns: '1fr 1fr 90px 110px', gap: 12,
+                  padding: '13px 18px', borderBottom: `1px solid ${C.surface3}`, alignItems: 'center',
+                }}
+              >
+                <div>
+                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: '#15366a' }}>{q.code}</span>
+                  {q.name && <span style={{ display: 'block', fontSize: 11, color: C.ink3, marginTop: 2 }}>{q.name}</span>}
+                </div>
+                <div style={{ fontSize: 13, color: q.ops.length ? C.ink : C.ink3 }}>
+                  {q.ops.length ? q.ops.join(', ') : '—'}
+                </div>
+                <div style={{ textAlign: 'right', fontFamily: ARCHIVO, fontWeight: 700, fontSize: 14, color: q.count > 0 ? C.ink : C.ink3 }}>
+                  {q.count}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <JobStatusPill status={q.status} />
+                </div>
+              </div>
+            ))
+          )}
+
+          <div style={{ padding: '10px 18px', fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
+            Reassigning operators within the active shift requires a dedicated endpoint (not yet available).
+          </div>
         </div>
       </div>
 
