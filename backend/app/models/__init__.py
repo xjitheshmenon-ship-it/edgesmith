@@ -5,7 +5,7 @@ from app.models.product import ProductType, Size, Design, DesignSizeValidity
 from app.models.uid import UID, UIDStepHistory, UIDTransfer
 from app.models.manufacturing import ManufacturingOrder, ConversionPattern, BatchRule
 from app.models.shifts import ShiftAssignment, JobAllotment
-from app.models.faridabad import RawMaterialIntake, JoiningOperation, FaridabadDispatch, ReceivingEvent
+from app.models.faridabad import RollingContractor, RawMaterialIntake, JoiningOperation, FaridabadDispatch, ReceivingEvent
 from app.models.tempering import TemperingParameter, FurnaceBatch, FurnaceBatchUID
 
 __all__ = [
@@ -15,6 +15,6 @@ __all__ = [
     "UID", "UIDStepHistory", "UIDTransfer",
     "ManufacturingOrder", "ConversionPattern", "BatchRule",
     "ShiftAssignment", "JobAllotment",
-    "RawMaterialIntake", "JoiningOperation", "FaridabadDispatch", "ReceivingEvent",
+    "RollingContractor", "RawMaterialIntake", "JoiningOperation", "FaridabadDispatch", "ReceivingEvent",
     "TemperingParameter", "FurnaceBatch", "FurnaceBatchUID",
 ]

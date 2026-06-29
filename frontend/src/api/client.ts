@@ -71,6 +71,8 @@ export const productApi = {
   sizes: () => api.get('/products/sizes'),
   designs: () => api.get('/products/designs'),
   types: () => api.get('/products/types'),
+  createType: (data: Record<string, unknown>) => api.post('/products/types', data),
+  archiveType: (id: number) => api.patch(`/products/types/${id}/archive`),
   createSize: (data: Record<string, unknown>) => api.post('/products/sizes', data),
   createDesign: (data: Record<string, unknown>) => api.post('/products/designs', data),
   updateDesignSizes: (design_id: number, size_ids: number[]) =>
@@ -103,6 +105,9 @@ export const userApi = {
 
 // ── Faridabad ─────────────────────────────────────────────────────────────────
 export const faridabadApi = {
+  contractors: () => api.get('/faridabad/contractors'),
+  createContractor: (data: Record<string, unknown>) => api.post('/faridabad/contractors', data),
+  archiveContractor: (id: number) => api.patch(`/faridabad/contractors/${id}/archive`),
   intakes: (material_type?: string) => api.get('/faridabad/intakes', { params: material_type ? { material_type } : {} }),
   createIntake: (data: Record<string, unknown>) => api.post('/faridabad/intakes', data),
   joinings: () => api.get('/faridabad/joinings'),
