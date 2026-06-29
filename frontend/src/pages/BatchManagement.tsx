@@ -1080,22 +1080,19 @@ function ProductionBatches({
   error: boolean
   onRetry: () => void
 }) {
-  // Live active UIDs to compute queue counts per step.
-  const { data: uids = [], isLoading: uidsLoading } = useQuery({
-    queryKey: ['batch-mgmt-uids'],
-    queryFn: () => uidApi.list({ status: 'active' }).then((r) => r.data.items ?? []),
+  // Exact active-UID counts per step (server-side aggregate — accurate at 12k scale,
+  // not derived from a capped page).
+  const { data: stepCounts = [], isLoading: uidsLoading } = useQuery({
+    queryKey: ['batch-step-counts'],
+    queryFn: () => uidApi.stepCounts({ status: 'active' }).then((r) => r.data ?? []),
     refetchInterval: 30_000,
   })
 
-  // Count active UIDs sitting at each step.
   const queueByStep = useMemo(() => {
     const m = new Map<number, number>()
-    for (const u of uids as any[]) {
-      if (u.current_step_id == null) continue
-      m.set(u.current_step_id, (m.get(u.current_step_id) ?? 0) + 1)
-    }
+    for (const r of stepCounts as any[]) m.set(r.cycle_step_id, r.count)
     return m
-  }, [uids])
+  }, [stepCounts])
 
   // Collapse duplicates by step; sort by queue depth.
   const rows = useMemo(() => {
@@ -1211,11 +1208,23 @@ function GrindingBatches({
   error: boolean
   onRetry: () => void
 }) {
+  // Rows for set-building come from a capped page (max 500); exact per-step
+  // totals come from the server aggregate so captions are accurate at 12k scale.
   const { data: uids = [], isLoading: uidsLoading } = useQuery({
-    queryKey: ['batch-mgmt-uids'],
-    queryFn: () => uidApi.list({ status: 'active' }).then((r) => r.data.items ?? []),
+    queryKey: ['batch-grinding-uids'],
+    queryFn: () => uidApi.list({ status: 'active', limit: 500 }).then((r) => r.data.items ?? []),
     refetchInterval: 30_000,
   })
+  const { data: stepCounts = [] } = useQuery({
+    queryKey: ['batch-step-counts'],
+    queryFn: () => uidApi.stepCounts({ status: 'active' }).then((r) => r.data ?? []),
+    refetchInterval: 30_000,
+  })
+  const totalByStep = useMemo(() => {
+    const m = new Map<number, number>()
+    for (const r of stepCounts as any[]) m.set(r.cycle_step_id, r.count)
+    return m
+  }, [stepCounts])
 
   // Queued UIDs (with bar length) per grinding step.
   const queuedByStep = useMemo(() => {
@@ -1232,14 +1241,15 @@ function GrindingBatches({
   // Collapse duplicate steps, classify each into a grinding kind.
   const grindSteps = useMemo(() => {
     const seen = new Set<number>()
-    const out: (ProductionStepRef & { kind: GrindKind; queued: any[] })[] = []
+    const out: (ProductionStepRef & { kind: GrindKind; queued: any[]; total: number })[] = []
     for (const s of steps) {
       if (seen.has(s.cycle_step_id)) continue
       seen.add(s.cycle_step_id)
-      out.push({ ...s, kind: grindKindFor(s), queued: queuedByStep.get(s.cycle_step_id) ?? [] })
+      const queued = queuedByStep.get(s.cycle_step_id) ?? []
+      out.push({ ...s, kind: grindKindFor(s), queued, total: totalByStep.get(s.cycle_step_id) ?? queued.length })
     }
     return out
-  }, [steps, queuedByStep])
+  }, [steps, queuedByStep, totalByStep])
 
   if (loading) return <LoadingCard />
   if (error) return <ErrorCard onRetry={onRetry} />
@@ -1362,12 +1372,14 @@ function QueuedBarRow({ u }: { u: any }) {
 // Render cap for grinding queue columns — never map over the whole active-UID
 // set (12k scale). Show the top-N by priority/wait with a "showing N of total".
 const QUEUE_RENDER_CAP = 50
-function QueuedColumn({ queued, loading }: { queued: any[]; loading?: boolean }) {
+function QueuedColumn({ queued, loading, total }: { queued: any[]; loading?: boolean; total?: number }) {
   const sorted = [...queued].sort(sortQueue)
   const rendered = sorted.slice(0, QUEUE_RENDER_CAP)
+  // Exact server-side total when provided; else the (capped) loaded length.
+  const queuedTotal = total ?? sorted.length
   return (
     <div style={{ minWidth: 230 }}>
-      <SectionLabel>Queued Bars ({queued.length})</SectionLabel>
+      <SectionLabel>Queued Bars ({queuedTotal.toLocaleString()})</SectionLabel>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 320, overflowY: 'auto' }}>
         {loading ? (
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>Loading queue…</div>
@@ -1377,9 +1389,9 @@ function QueuedColumn({ queued, loading }: { queued: any[]; loading?: boolean })
           rendered.map((u) => <QueuedBarRow key={u.uid_id ?? u.id} u={u} />)
         )}
       </div>
-      {!loading && sorted.length > rendered.length && (
+      {!loading && queuedTotal > rendered.length && (
         <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 6 }}>
-          Showing top {rendered.length} of {sorted.length} by priority.
+          Showing top {rendered.length} of {queuedTotal.toLocaleString()} by priority.
         </div>
       )}
     </div>
@@ -1469,7 +1481,7 @@ function BunchGrindingPanel({ step, queued }: { step: ProductionStepRef; queued:
       </div>
 
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
-        <QueuedColumn queued={queued} />
+        <QueuedColumn queued={queued} total={(step as any).total} />
         <div style={{ flex: 1, minWidth: 280 }}>
           <SectionLabel>Set Builder</SectionLabel>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1526,7 +1538,7 @@ function SurfaceGrindingPanel({ step, queued, loading }: { step: ProductionStepR
     <div className="card" style={{ padding: 16, marginBottom: 16 }}>
       <GrindHeader code={step.workstation_code} title={`Surface Grinding — Step ${step.step_number}`} cycle={step.cycle_type_name} />
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
-        <QueuedColumn queued={queued} loading={loading} />
+        <QueuedColumn queued={queued} total={(step as any).total} loading={loading} />
         <div style={{ flex: 1, minWidth: 280 }}>
           <SectionLabel>Machine — {SURFACE_MACHINE.code} ({SURFACE_MACHINE.unit}) · max {SURFACE_MACHINE.maxMm}mm</SectionLabel>
           <MachineBatchBox machine={SURFACE_MACHINE} bars={suggestion} />
@@ -1564,7 +1576,7 @@ function BevelGrindingPanel({ step, queued, loading }: { step: ProductionStepRef
     <div className="card" style={{ padding: 16, marginBottom: 16 }}>
       <GrindHeader code="AG-ALP / AG-BTA / AG-GMM" title={`Bevel Grinding — Step ${step.step_number}`} cycle={step.cycle_type_name} />
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
-        <QueuedColumn queued={queued} loading={loading} />
+        <QueuedColumn queued={queued} total={(step as any).total} loading={loading} />
         <div style={{ flex: 1, minWidth: 300 }}>
           <SectionLabel>Machine Assignment Board</SectionLabel>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

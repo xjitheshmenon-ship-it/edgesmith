@@ -122,6 +122,38 @@ router.get(
   })
 );
 
+// ── Per-step counts (exact totals for queue badges at scale) ─────────────────
+// Returns active-UID counts grouped by current cycle step (+ its workstation),
+// so the UI can show accurate per-step / per-workstation totals without
+// fetching every row. Optional ?location_id and ?status (default 'active').
+router.get(
+  '/step-counts',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const status = req.query.status || 'active';
+    const conds = ['u.current_step_id IS NOT NULL'];
+    const params = [status];
+    conds.push(`u.status = $1`);
+    if (req.query.location_id) {
+      params.push(parseInt(req.query.location_id, 10));
+      conds.push(`u.factory_location_id = $${params.length}`);
+    }
+    const rows = await query(
+      `SELECT cs.id AS cycle_step_id, cs.step_number, cs.operation_name,
+              cs.workstation_id, w.code AS workstation_code, w.name AS workstation_name,
+              COUNT(u.id)::int AS count
+         FROM uids u
+         JOIN cycle_steps cs ON cs.id = u.current_step_id
+         LEFT JOIN workstations w ON w.id = cs.workstation_id
+        WHERE ${conds.join(' AND ')}
+        GROUP BY cs.id, cs.step_number, cs.operation_name, cs.workstation_id, w.code, w.name
+        ORDER BY cs.step_order`,
+      params
+    );
+    res.json(rows);
+  })
+);
+
 // ── Bulk create ────────────────────────────────────────────────────────────
 router.post(
   '/bulk-create',

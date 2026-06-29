@@ -49,6 +49,7 @@ export const uidApi = {
   operatorQueue: (location_id?: number) => api.get('/uids/queue/operator', { params: { location_id } }),
   qcPending: (location_id?: number) => api.get('/uids/qc/pending', { params: location_id ? { location_id } : {} }),
   qcSignoff: (uid_id: number, data: Record<string, unknown>) => api.post(`/uids/${uid_id}/qc-signoff`, data),
+  stepCounts: (params?: Record<string, unknown>) => api.get('/uids/step-counts', { params }),
 }
 
 // ── Cycles ────────────────────────────────────────────────────────────────────
