@@ -120,6 +120,7 @@ export const temperingApi = {
   upsertParameter: (data: Record<string, unknown>) => api.post('/tempering/parameters', data),
   batches: (cycle_type_id?: number) => api.get('/tempering/batches', { params: cycle_type_id ? { cycle_type_id } : {} }),
   getBatch: (id: number) => api.get(`/tempering/batches/${id}`),
+  availableUIDs: (cycle_step_id: number) => api.get('/tempering/available-uids', { params: { cycle_step_id } }),
   createBatch: (data: Record<string, unknown>) => api.post('/tempering/batches', data),
   completeBatch: (id: number, data: Record<string, unknown>) => api.post(`/tempering/batches/${id}/complete`, data),
 }

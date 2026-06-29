@@ -96,10 +96,25 @@ def upsert_parameter(body: ParamUpsert, db: Session = Depends(get_db), user=Depe
 
 # ── Furnace Batches ───────────────────────────────────────────────────────────
 
+@router.get("/available-uids")
+def available_uids(cycle_step_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Return UIDs currently waiting at the source storage for this tempering step (FIFO order)."""
+    uids = (
+        db.query(UID)
+        .filter(
+            UID.current_step_id == cycle_step_id,
+            UID.status.in_([UIDStatus.active, UIDStatus.on_hold]),
+        )
+        .order_by(UID.created_at)
+        .all()
+    )
+    return [{"id": u.id, "code": u.code, "status": u.status, "current_storage_code": u.current_storage.code if u.current_storage else None} for u in uids]
+
+
 class BatchCreate(BaseModel):
     cycle_type_id: int
     cycle_step_id: int
-    uid_ids: List[int]
+    intake_count: Optional[int] = None  # None = take all available
 
 
 class BatchComplete(BaseModel):
@@ -125,6 +140,23 @@ def get_batch(batch_id: int, db: Session = Depends(get_db), _=Depends(get_curren
 
 @router.post("/batches", status_code=201)
 def create_batch(body: BatchCreate, db: Session = Depends(get_db), user=Depends(require_supervisor)):
+    # Auto-select UIDs currently at this tempering step, FIFO order
+    uid_query = (
+        db.query(UID)
+        .filter(
+            UID.current_step_id == body.cycle_step_id,
+            UID.status.in_([UIDStatus.active, UIDStatus.on_hold]),
+        )
+        .order_by(UID.created_at)
+    )
+    if body.intake_count is not None:
+        uids = uid_query.limit(body.intake_count).all()
+    else:
+        uids = uid_query.all()
+
+    if not uids:
+        raise HTTPException(400, "No UIDs available at this tempering step")
+
     # Look up configured parameters
     param = db.query(TemperingParameter).filter(
         TemperingParameter.cycle_type_id == body.cycle_type_id,
@@ -132,8 +164,8 @@ def create_batch(body: BatchCreate, db: Session = Depends(get_db), user=Depends(
     ).first()
 
     # Auto-generate batch number: HT90-YYYY-NNN
-    count = db.query(FurnaceBatch).count() + 1
     from datetime import date
+    count = db.query(FurnaceBatch).count() + 1
     batch_number = f"HT90-{date.today().year}-{count:03d}"
 
     batch = FurnaceBatch(
@@ -149,8 +181,8 @@ def create_batch(body: BatchCreate, db: Session = Depends(get_db), user=Depends(
     db.add(batch)
     db.flush()
 
-    for uid_id in body.uid_ids:
-        entry = FurnaceBatchUID(furnace_batch_id=batch.id, uid_id=uid_id)
+    for uid in uids:
+        entry = FurnaceBatchUID(furnace_batch_id=batch.id, uid_id=uid.id)
         db.add(entry)
 
     db.commit()
