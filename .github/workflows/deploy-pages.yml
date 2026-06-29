@@ -32,9 +32,10 @@ jobs:
         working-directory: frontend
         env:
           VITE_BASE_PATH: /edgesmith/
-          # Set VITE_API_URL in repo Settings → Secrets and variables → Actions
-          # e.g. https://your-backend.fly.dev
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          # Backend API base URL. Override anytime via a repo Actions variable
+          # (Settings → Secrets and variables → Actions → Variables: VITE_API_URL);
+          # falls back to the deployed Render backend below.
+          VITE_API_URL: ${{ vars.VITE_API_URL || 'https://edgesmith-backend.onrender.com' }}
         run: npm run build
 
       - name: Upload Pages artifact
