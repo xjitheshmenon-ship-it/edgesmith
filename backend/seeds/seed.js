@@ -136,6 +136,42 @@ async function seedCapacityGrinding() {
   );
 }
 
+// Skill badges for operators — only seeds when the table exists and is empty.
+async function seedBadges() {
+  const hasTable = await one(
+    "SELECT 1 FROM information_schema.tables WHERE table_name = 'employee_badges'"
+  );
+  if (!hasTable) return;
+  const existing = await one('SELECT 1 FROM employee_badges LIMIT 1');
+  if (existing) return;
+
+  const operators = await query("SELECT id FROM users WHERE role = 'operator' ORDER BY id");
+  if (!operators.length) return;
+  const admin = await one("SELECT id FROM users WHERE username = 'admin'");
+  const ws = await query("SELECT id, code, name FROM workstations ORDER BY id LIMIT 4");
+  if (!ws.length) return;
+
+  // Spread badges across operators with varied expiry so the UI shows all
+  // states (valid / expiring within 30 days / expired).
+  const offsets = [180, 20, -10]; // days from today
+  for (let i = 0; i < operators.length; i++) {
+    const op = operators[i];
+    for (let j = 0; j < ws.length; j++) {
+      const w = ws[(i + j) % ws.length];
+      if (j > 1) break; // ~2 badges per operator
+      const days = offsets[(i + j) % offsets.length];
+      await query(
+        `INSERT INTO employee_badges
+           (user_id, badge_code, badge_name, workstation_id, certified_at, expires_at, certified_by_id)
+         VALUES ($1,$2,$3,$4, CURRENT_DATE - INTERVAL '365 days',
+                 CURRENT_DATE + ($5 || ' days')::interval, $6)`,
+        [op.id, w.code, `${w.name} operation`, w.id, String(days), admin ? admin.id : null]
+      );
+    }
+  }
+  console.log('[seed] Seeded employee skill badges.');
+}
+
 export async function seed() {
   const admin = await one("SELECT id FROM users WHERE username = 'admin'");
   if (admin) {
@@ -258,6 +294,7 @@ export async function seed() {
   console.log('[seed] Seeding complete.');
   await seedExtraUsers();
   await seedCapacityGrinding();
+  await seedBadges();
 }
 
 // Allow running directly: `npm run seed`

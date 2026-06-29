@@ -1,649 +1,832 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { manufacturingApi } from '../api/client'
-import type { ManufacturingOrder, UID } from '../types'
-import { Plus, Scissors, List, Columns, X, ChevronRight, Clock, CheckCircle2, XCircle } from 'lucide-react'
-import { format } from 'date-fns'
+import { manufacturingApi, uidApi, productApi } from '../api/client'
+import type { ManufacturingOrder, UID, Size, Design } from '../types'
 import UIDStatusBadge from '../components/UIDStatusBadge'
-import PriorityBadge from '../components/PriorityBadge'
+import {
+  Plus, X, Search, Link2, Link2Off, RefreshCw, AlertTriangle, Package,
+  ChevronRight, CheckCircle, Clock,
+} from 'lucide-react'
+import { formatDistanceToNowStrict } from 'date-fns'
 
-type StatusFilter = 'all' | 'in_progress' | 'completed' | 'open' | 'cancelled'
-type ViewMode = 'list' | 'kanban'
+/* ─── tokens ──────────────────────────────────────────────────────────────── */
+const C = {
+  ink: 'var(--ink)',
+  ink2: 'var(--ink-2)',
+  ink3: 'var(--ink-3)',
+  accent: 'var(--accent)',
+  line: 'var(--line)',
+  surface: 'var(--surface)',
+  surface2: 'var(--surface-2)',
+  surface3: 'var(--surface-3)',
+  red: '#e5484d',
+  redText: '#c0392b',
+  orange: '#d97a2b',
+  amber: '#f0c674',
+  green: '#22a06b',
+  greenText: '#1c7a52',
+}
+const MONO = "'IBM Plex Mono', monospace"
+const SANS = "'IBM Plex Sans', sans-serif"
+const ARCHIVO = "'Archivo', sans-serif"
 
-const STATUS_META: Record<string, { label: string; dot: string; bg: string; color: string }> = {
-  open:        { label: 'Draft',       dot: '#9aa0a6', bg: 'rgba(154,160,166,.14)', color: '#9aa0a6' },
-  in_progress: { label: 'In Progress', dot: '#f59e0b', bg: 'rgba(245,158,11,.14)',  color: '#f59e0b' },
-  completed:   { label: 'Done',        dot: '#22a06b', bg: 'rgba(34,160,107,.14)',  color: '#22a06b' },
-  cancelled:   { label: 'Cancelled',   dot: '#e5484d', bg: 'rgba(229,72,77,.14)',   color: '#e5484d' },
+const PRIORITIES = ['high', 'normal', 'low'] as const
+type Priority = (typeof PRIORITIES)[number]
+
+/* The MO list/detail endpoints may also return priority and a required
+   delivery date that aren't yet in the shared ManufacturingOrder type.
+   The list endpoint now also returns per-row aggregate UID counts. */
+type Mo = ManufacturingOrder & {
+  priority?: string | null
+  required_delivery_date?: string | null
+  uids_linked?: number | null
+  uids_dispatched?: number | null
+  uids_remaining?: number | null
 }
 
-function statusMeta(s: string) {
-  return STATUS_META[s] ?? STATUS_META['open']
+/* ─── derived fulfilment state ─────────────────────────────────────────────── */
+type Fulfil = 'open' | 'in_progress' | 'partial' | 'complete'
+interface MoStats {
+  linked: number
+  dispatched: number
+  remaining: number
+  fulfil: Fulfil
 }
 
-const FILTER_OPTIONS: { key: StatusFilter; label: string }[] = [
-  { key: 'all',         label: 'All' },
-  { key: 'in_progress', label: 'In Progress' },
-  { key: 'completed',   label: 'Done' },
-  { key: 'open',        label: 'Draft' },
-  { key: 'cancelled',   label: 'Cancelled' },
-]
+const FULFIL_META: Record<Fulfil, { label: string; cls: string }> = {
+  open:        { label: 'Open',                 cls: 'badge-gray' },
+  in_progress: { label: 'In progress',          cls: 'badge-blue' },
+  partial:     { label: 'Partially dispatched', cls: 'badge-yellow' },
+  complete:    { label: 'Fully dispatched',     cls: 'badge-green' },
+}
 
-// ── UID Detail Panel ──────────────────────────────────────────────────────────
+/* progress-bar colour: complete / behind / on-track */
+function barColor(f: Fulfil, pct: number) {
+  if (f === 'complete') return C.green
+  if (pct < 25) return C.red       // behind
+  if (pct < 75) return C.amber     // partway
+  return C.accent                  // on track
+}
 
-function UIDDetailPanel({ uid, onClose }: { uid: UID; onClose: () => void }) {
+const pill: React.CSSProperties = {
+  display: 'inline-flex', alignItems: 'center',
+  fontFamily: MONO, fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
+  letterSpacing: '0.04em', padding: '3px 9px', borderRadius: 20, whiteSpace: 'nowrap',
+}
+
+function priorityPill(p?: string | null) {
+  if (!p) return null
+  const k = p.toLowerCase()
+  const map: Record<string, { bg: string; fg: string }> = {
+    high:   { bg: 'rgba(229,72,77,.13)', fg: C.red },
+    urgent: { bg: 'rgba(229,72,77,.13)', fg: C.red },
+    normal: { bg: 'rgba(45,111,181,.12)', fg: C.accent },
+    low:    { bg: 'var(--surface-3)', fg: C.ink2 },
+  }
+  const s = map[k] ?? { bg: 'var(--surface-3)', fg: C.ink2 }
+  return <span style={{ ...pill, background: s.bg, color: s.fg }}>{k}</span>
+}
+
+/* ─── table cell styles ────────────────────────────────────────────────────── */
+const TH: React.CSSProperties = {
+  textAlign: 'left', padding: '9px 12px', fontFamily: MONO, fontSize: 9.5, fontWeight: 700,
+  letterSpacing: '0.1em', textTransform: 'uppercase', color: C.ink3,
+  borderBottom: `1px solid ${C.line}`, whiteSpace: 'nowrap',
+}
+const TD: React.CSSProperties = {
+  padding: '11px 12px', borderBottom: `1px solid var(--surface-2)`, fontSize: 12.5, color: C.ink, verticalAlign: 'middle',
+}
+
+function SectionLabel({ icon, children, right }: { icon?: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', display: 'flex', alignItems: 'center', padding: 4 }}>
-          <ChevronRight size={16} style={{ transform: 'rotate(180deg)' }} />
-        </button>
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 15, color: 'var(--ink)' }}>{uid.code}</span>
-        <UIDStatusBadge status={uid.status} />
-        <PriorityBadge priority={uid.priority} />
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Key fields grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-          {[
-            { label: 'Cycle', value: uid.cycle_type_name ?? '—' },
-            { label: 'Step', value: uid.current_step_number ? `${uid.current_step_number} — ${uid.current_step_name}` : '—' },
-            { label: 'Storage', value: uid.current_storage_code ?? '—' },
-            { label: 'Size / Design', value: `${uid.size_mm ? uid.size_mm + 'mm' : '—'} / ${uid.design_code ?? 'No design'}` },
-            { label: 'Location', value: uid.factory_location_code ?? '—' },
-            { label: 'Created', value: uid.created_at ? format(new Date(uid.created_at), 'dd MMM yyyy') : '—' },
-          ].map(f => (
-            <div key={f.label} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 12px' }}>
-              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 4 }}>{f.label}</div>
-              <div style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink)' }}>{f.value}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Step history */}
-        {uid.step_history && uid.step_history.length > 0 && (
-          <div>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 10 }}>
-              Manufacturing History ({uid.step_history.length})
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {uid.step_history.map((h) => (
-                <div key={h.id} style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 12px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <div style={{ flexShrink: 0, marginTop: 1 }}>
-                    {h.qc_result === 'pass' ? (
-                      <CheckCircle2 size={14} style={{ color: '#22a06b' }} />
-                    ) : h.qc_result === 'fail' ? (
-                      <XCircle size={14} style={{ color: 'var(--error)' }} />
-                    ) : (
-                      <Clock size={14} style={{ color: 'var(--ink-3)' }} />
-                    )}
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)' }}>Step {h.step_number}</span>
-                      <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink)' }}>{h.operation_name}</span>
-                      {h.qc_result && (
-                        <span className={h.qc_result === 'pass' ? 'badge-green' : 'badge-red'} style={{ fontSize: 10 }}>QC: {h.qc_result}</span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--ink-2)', marginTop: 3 }}>
-                      {format(new Date(h.performed_at), 'dd MMM yyyy, HH:mm')}
-                      {h.performed_by && ` · ${h.performed_by}`}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+      {icon}
+      <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase' }}>{children}</span>
+      <div style={{ flex: 1 }} />
+      {right}
     </div>
   )
 }
 
-// ── MO Drawer ─────────────────────────────────────────────────────────────────
+/* Compute fulfilment stats for an MO.
+   The list endpoint returns uids_linked / uids_dispatched / uids_remaining on
+   every row, so prefer those aggregates. When the linked-UID detail (uids) is
+   loaded for the selected row, prefer its live count for `linked` so the table
+   stays in sync with the drawer; the dispatched/remaining aggregates remain the
+   source of truth. */
+function computeStats(mo: Mo, uids?: UID[]): MoStats {
+  const linked = uids ? uids.length : mo.uids_linked ?? mo.uid_count ?? 0
+  const dispatched = mo.uids_dispatched ?? 0
+  const remaining = mo.uids_remaining ?? Math.max((mo.quantity ?? 0) - dispatched, 0)
+  let fulfil: Fulfil = 'open'
+  if (linked === 0) fulfil = 'open'
+  else if (dispatched === 0) fulfil = 'in_progress'
+  else if (remaining === 0 && dispatched >= (mo.quantity ?? 0)) fulfil = 'complete'
+  else fulfil = 'partial'
+  return { linked, dispatched, remaining, fulfil }
+}
 
-function MODrawer({ mo, onClose }: { mo: ManufacturingOrder; onClose: () => void }) {
-  const [selectedUID, setSelectedUID] = useState<UID | null>(null)
-  const meta = statusMeta(mo.status)
-  const progress = mo.uid_count > 0 ? Math.round((mo.uid_count / mo.quantity) * 100) : 0
-
-  const { data: uids = [], isLoading } = useQuery<UID[]>({
-    queryKey: ['mo-uids', mo.id],
-    queryFn: () => manufacturingApi.orderUIDs(mo.id).then((r) => r.data),
-  })
-
-  // Status breakdown
-  const statusCounts = uids.reduce((acc, u) => {
-    acc[u.status] = (acc[u.status] ?? 0) + 1
-    return acc
-  }, {} as Record<string, number>)
-
+/* ─── fulfilment progress bar ──────────────────────────────────────────────── */
+function ProgressBar({ dispatched, quantity, fulfil }: { dispatched: number; quantity: number; fulfil: Fulfil }) {
+  const pct = quantity > 0 ? Math.min(100, (dispatched / quantity) * 100) : 0
+  const color = barColor(fulfil, pct)
   return (
-    <>
-      {/* Overlay */}
-      <div
-        onClick={onClose}
-        style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.4)', zIndex: 40 }}
-      />
-      {/* Drawer */}
-      <div style={{
-        position: 'fixed',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: selectedUID ? 800 : 480,
-        background: 'var(--surface)',
-        borderLeft: '1px solid var(--line)',
-        zIndex: 41,
-        display: 'flex',
-        flexDirection: 'row',
-        boxShadow: '-8px 0 32px rgba(0,0,0,.35)',
-        transition: 'width 0.2s ease',
-        overflow: 'hidden',
-      }}>
-        {/* UID detail panel (left side when open) */}
-        {selectedUID && (
-          <div style={{ width: 320, borderRight: '1px solid var(--line)', flexShrink: 0, overflow: 'hidden' }}>
-            <UIDDetailPanel uid={selectedUID} onClose={() => setSelectedUID(null)} />
-          </div>
-        )}
-
-        {/* Main drawer content */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Header */}
-          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
-              <div>
-                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 17, color: 'var(--accent)' }}>{mo.mo_number}</div>
-                <div style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 600, marginTop: 2 }}>{mo.customer || '—'}</div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 6, background: meta.bg, color: meta.color, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.dot }} />
-                  {meta.label}
-                </span>
-                <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', display: 'flex', padding: 4 }}>
-                  <X size={18} />
-                </button>
-              </div>
-            </div>
-
-            {/* Stats row */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-              {[
-                { label: 'Quantity', value: `${mo.quantity} pc` },
-                { label: 'UIDs Linked', value: `${mo.uid_count}` },
-                { label: 'Created', value: format(new Date(mo.created_at), 'dd MMM yyyy') },
-              ].map(f => (
-                <div key={f.label} style={{ background: 'var(--surface)', borderRadius: 7, padding: '8px 10px' }}>
-                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: '0.12em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 3 }}>{f.label}</div>
-                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{f.value}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Progress bar */}
-            <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{ flex: 1, height: 5, borderRadius: 5, background: 'var(--surface)', overflow: 'hidden' }}>
-                <div style={{ width: `${progress}%`, height: '100%', borderRadius: 5, background: meta.dot, transition: 'width 0.3s' }} />
-              </div>
-              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)', width: 36, textAlign: 'right' }}>{progress}%</span>
-            </div>
-          </div>
-
-          {/* UID list */}
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {/* Status summary chips */}
-            {Object.keys(statusCounts).length > 0 && (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 16px', borderBottom: '1px solid var(--line)' }}>
-                {Object.entries(statusCounts).map(([s, count]) => (
-                  <span key={s} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, padding: '2px 8px', borderRadius: 10, background: 'var(--surface-2)', color: 'var(--ink-2)' }}>
-                    {s}: {count}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {isLoading && (
-              <div style={{ padding: 32, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>Loading UIDs…</div>
-            )}
-            {!isLoading && uids.length === 0 && (
-              <div style={{ padding: 32, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>No UIDs linked to this order</div>
-            )}
-            {uids.map((u) => (
-              <div
-                key={u.id}
-                onClick={() => setSelectedUID(u.id === selectedUID?.id ? null : u)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '11px 16px',
-                  borderBottom: '1px solid var(--line)',
-                  cursor: 'pointer',
-                  background: selectedUID?.id === u.id ? 'var(--surface-2)' : 'transparent',
-                  transition: 'background 0.1s',
-                  borderLeft: selectedUID?.id === u.id ? '3px solid var(--accent)' : '3px solid transparent',
-                }}
-                onMouseEnter={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,.04)' }}
-                onMouseLeave={e => { if (selectedUID?.id !== u.id) (e.currentTarget as HTMLElement).style.background = '' }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>{u.code}</span>
-                    <UIDStatusBadge status={u.status} />
-                    <PriorityBadge priority={u.priority} />
-                  </div>
-                  <div style={{ fontSize: 11.5, color: 'var(--ink-2)' }}>
-                    {u.current_step_number ? `Step ${u.current_step_number} — ${u.current_step_name}` : 'No active step'}
-                    {u.current_storage_code && <span style={{ marginLeft: 8, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>{u.current_storage_code}</span>}
-                  </div>
-                </div>
-                <ChevronRight size={14} style={{ color: 'var(--ink-3)', flexShrink: 0 }} />
-              </div>
-            ))}
-          </div>
-        </div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 120 }}>
+      <div style={{ flex: 1, height: 6, borderRadius: 3, background: C.surface3, overflow: 'hidden', minWidth: 60 }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 3, transition: 'width 300ms cubic-bezier(.2,.8,.2,1)' }} />
       </div>
-    </>
+      <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, whiteSpace: 'nowrap' }}>
+        {dispatched}/{quantity}
+      </span>
+    </div>
   )
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
-
+/* ═══════════════════════════════════════════════════════════════════════════ */
 export default function Manufacturing() {
-  const [activeFilter, setActiveFilter] = useState<StatusFilter>('all')
-  const [view, setView] = useState<ViewMode>('list')
-  const [showCreateMO, setShowCreateMO] = useState(false)
-  const [showCreatePattern, setShowCreatePattern] = useState(false)
-  const [tab, setTab] = useState<'orders' | 'patterns'>('orders')
-  const [selectedMO, setSelectedMO] = useState<ManufacturingOrder | null>(null)
   const qc = useQueryClient()
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<string>('')
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [showLink, setShowLink] = useState(false)
 
-  const { data: orders = [] } = useQuery<ManufacturingOrder[]>({
-    queryKey: ['mo-orders'],
-    queryFn: () => manufacturingApi.orders().then((r) => r.data),
+  const {
+    data: orders = [],
+    isLoading,
+    isError,
+    refetch,
+    isFetching,
+  } = useQuery<Mo[]>({
+    queryKey: ['mo-orders', statusFilter],
+    queryFn: () => manufacturingApi.orders(statusFilter || undefined).then((r) => r.data ?? []),
+    refetchInterval: 30_000,
   })
 
-  const { data: patterns = [] } = useQuery<{ id: number; name: string; input_length_mm: number; output_lengths_mm: number[]; kerf_mm: number; num_cuts: number; scrap_mm: number; is_active: boolean }[]>({
-    queryKey: ['patterns'],
-    queryFn: () => manufacturingApi.patterns().then((r) => r.data),
+  const selected = useMemo(() => orders.find((o) => o.id === selectedId) ?? null, [orders, selectedId])
+
+  // UIDs linked to the selected MO (drives the detail panel + fulfilment).
+  const { data: selectedUids = [], isLoading: uidsLoading } = useQuery<UID[]>({
+    queryKey: ['mo-uids', selectedId],
+    queryFn: () => manufacturingApi.orderUIDs(selectedId as number).then((r) => r.data ?? []),
+    enabled: selectedId != null,
+    refetchInterval: selectedId != null ? 30_000 : false,
   })
 
-  const archivePattern = useMutation({
-    mutationFn: (id: number) => manufacturingApi.archivePattern(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['patterns'] }),
-  })
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    if (!term) return orders
+    return orders.filter(
+      (o) =>
+        o.mo_number?.toLowerCase().includes(term) ||
+        (o.customer ?? '').toLowerCase().includes(term)
+    )
+  }, [orders, search])
 
-  const filtered = activeFilter === 'all' ? orders : orders.filter(o => o.status === activeFilter)
-
-  const countFor = (key: StatusFilter) =>
-    key === 'all' ? orders.length : orders.filter(o => o.status === key).length
+  // Aggregate counts for the header strip.
+  const summary = useMemo(() => {
+    const linkedOf = (o: Mo) => o.uids_linked ?? o.uid_count ?? 0
+    const open = orders.filter((o) => linkedOf(o) === 0).length
+    const totalQty = orders.reduce((a, o) => a + (o.quantity ?? 0), 0)
+    const totalLinked = orders.reduce((a, o) => a + linkedOf(o), 0)
+    return { total: orders.length, open, totalQty, totalLinked }
+  }, [orders])
 
   return (
-    <div style={{ padding: '24px 28px 60px', minHeight: '100%' }}>
-
-      {/* Sub-tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--line)', paddingBottom: 0 }}>
-        {(['orders', 'patterns'] as const).map(t => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            style={{
-              padding: '8px 16px',
-              background: 'none',
-              border: 'none',
-              borderBottom: tab === t ? '2px solid var(--accent)' : '2px solid transparent',
-              color: tab === t ? 'var(--accent)' : 'var(--ink-2)',
-              fontFamily: "'IBM Plex Sans', sans-serif",
-              fontSize: 13,
-              fontWeight: tab === t ? 600 : 400,
-              cursor: 'pointer',
-              marginBottom: -1,
-              transition: 'color 0.12s',
-            }}
-          >
-            {t === 'orders' ? `Manufacturing Orders (${orders.length})` : `Conversion Patterns (${patterns.length})`}
+    <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
+      {/* ── Header ───────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, marginBottom: 22 }}>
+        <div>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: C.ink }}>MO Linking</div>
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, marginTop: 3 }}>
+            Create manufacturing orders and link produced UIDs · {summary.total} MO{summary.total === 1 ? '' : 's'} · {summary.open} open
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button className="btn-secondary" onClick={() => refetch()} disabled={isFetching}>
+            <RefreshCw size={14} style={isFetching ? { animation: 'spin 1s linear infinite' } : undefined} />
+            Refresh
           </button>
-        ))}
-        <div style={{ flex: 1 }} />
-        <button className="btn-primary" style={{ marginBottom: 8 }} onClick={() => tab === 'orders' ? setShowCreateMO(true) : setShowCreatePattern(true)}>
-          <Plus size={15} /> {tab === 'orders' ? 'New Order' : 'New Pattern'}
-        </button>
+          <button className="btn-primary" onClick={() => setShowCreate(true)}>
+            <Plus size={15} /> New MO
+          </button>
+        </div>
       </div>
 
-      {tab === 'orders' && (
-        <>
-          {/* Filters + view toggle */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-              {FILTER_OPTIONS.map(f => {
-                const count = countFor(f.key)
-                const active = activeFilter === f.key
-                return (
-                  <button
-                    key={f.key}
-                    onClick={() => setActiveFilter(f.key)}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 5,
-                      padding: '5px 12px',
-                      borderRadius: 20,
-                      border: '1px solid',
-                      borderColor: active ? 'var(--accent)' : 'var(--line)',
-                      background: active ? 'rgba(212,238,203,.12)' : 'var(--surface)',
-                      color: active ? 'var(--accent)' : 'var(--ink-2)',
-                      fontFamily: "'IBM Plex Sans', sans-serif",
-                      fontSize: 13,
-                      fontWeight: active ? 600 : 400,
-                      cursor: 'pointer',
-                      transition: 'all 0.12s',
-                    }}
-                  >
-                    {f.label}
-                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, opacity: 0.7 }}>{count}</span>
-                  </button>
-                )
-              })}
-            </div>
-            <div style={{ flex: 1 }} />
-            {/* List / Kanban toggle */}
-            <div style={{ display: 'flex', background: 'var(--surface-2)', borderRadius: 9, padding: 3, gap: 2 }}>
-              {([['list', <List size={13} />, 'List'], ['kanban', <Columns size={13} />, 'Kanban']] as const).map(([v, icon, lbl]) => (
-                <button
-                  key={v}
-                  onClick={() => setView(v as ViewMode)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 5,
-                    padding: '5px 10px',
-                    borderRadius: 7,
-                    border: 'none',
-                    background: view === v ? 'var(--surface)' : 'transparent',
-                    color: view === v ? 'var(--ink)' : 'var(--ink-2)',
-                    fontFamily: "'IBM Plex Sans', sans-serif",
-                    fontSize: 12,
-                    fontWeight: view === v ? 600 : 400,
-                    cursor: 'pointer',
-                    boxShadow: view === v ? '0 1px 4px rgba(0,0,0,.15)' : 'none',
-                    transition: 'all 0.12s',
-                  }}
-                >
-                  {icon}{lbl}
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* ── Summary tiles ────────────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <StatTile value={summary.total} label="Manufacturing orders" />
+        <StatTile value={summary.open} label="Open (no UIDs)" color={summary.open > 0 ? C.orange : undefined} />
+        <StatTile value={summary.totalQty} label="Total qty required" />
+        <StatTile value={summary.totalLinked} label="UIDs linked" color={C.green} />
+      </div>
 
-          {view === 'list' ? (
-            <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 14, overflow: 'hidden' }}>
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: '148px 1fr 90px 104px 150px 120px',
-                gap: 16,
-                padding: '12px 22px',
-                borderBottom: '1px solid var(--line)',
-                fontFamily: "'IBM Plex Mono', monospace",
-                fontSize: 10,
-                letterSpacing: '0.12em',
-                color: 'var(--ink-3)',
-              }}>
-                <div>REFERENCE</div><div>PRODUCT / NOTES</div><div>QTY</div><div>CREATED</div><div>PROGRESS</div><div>STATUS</div>
+      {/* ── Filters ──────────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative' }}>
+          <Search size={14} style={{ position: 'absolute', left: 11, top: 11, color: C.ink3 }} />
+          <input
+            className="input"
+            style={{ width: 240, paddingLeft: 32 }}
+            placeholder="Search MO number or customer…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <select className="input" style={{ width: 190 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="">All statuses</option>
+          <option value="open">Open</option>
+          <option value="in_progress">In progress</option>
+          <option value="partial">Partially dispatched</option>
+          <option value="complete">Fully dispatched</option>
+        </select>
+      </div>
+
+      {isError && (
+        <div style={{ fontFamily: MONO, fontSize: 12, color: C.red, padding: '12px 16px', background: 'rgba(229,72,77,.10)', borderRadius: 10, border: '1px solid rgba(229,72,77,.25)', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <AlertTriangle size={14} /> Could not load manufacturing orders. The server may be starting up — try refresh in a moment.
+        </div>
+      )}
+
+      {/* ── Body: MO list (left) + detail (right) ────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: selectedId != null ? 'minmax(440px, 1.4fr) minmax(360px, 1fr)' : '1fr', gap: 16, alignItems: 'start' }}>
+        {/* Left: MO list */}
+        <div className="card" style={{ overflow: 'hidden' }}>
+          {isLoading ? (
+            <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '40px 20px', textAlign: 'center' }}>Loading manufacturing orders…</div>
+          ) : filtered.length === 0 ? (
+            <div style={{ padding: '48px 20px', textAlign: 'center' }}>
+              <Package size={28} style={{ color: C.ink3, marginBottom: 10 }} />
+              <div style={{ fontFamily: SANS, fontSize: 14, color: C.ink2 }}>
+                {orders.length === 0 ? 'No manufacturing orders yet.' : 'No MOs match the current filter.'}
               </div>
-              {filtered.map((m, i) => {
-                const meta = statusMeta(m.status)
-                const progress = m.uid_count > 0 ? Math.round((m.uid_count / m.quantity) * 100) : 0
-                return (
-                  <div
-                    key={m.id}
-                    onClick={() => setSelectedMO(m)}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '148px 1fr 90px 104px 150px 120px',
-                      gap: 16,
-                      padding: '14px 22px',
-                      borderBottom: i < filtered.length - 1 ? '1px solid var(--line)' : 'none',
-                      cursor: 'pointer',
-                      transition: 'background 0.1s',
-                    }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
-                  >
-                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12.5, fontWeight: 600, color: 'var(--accent)' }}>{m.mo_number}</div>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 13.5, letterSpacing: '-0.01em', color: 'var(--ink)' }}>{m.customer || '—'}</div>
-                      {m.notes && <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)', marginTop: 2 }}>{m.notes}</div>}
-                    </div>
-                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{m.quantity} <span style={{ fontWeight: 400, color: 'var(--ink-2)' }}>pc</span></div>
-                    <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-2)' }}>{format(new Date(m.created_at), 'MMM dd')}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                      <div style={{ flex: 1, height: 6, borderRadius: 6, background: 'var(--surface-2)', overflow: 'hidden' }}>
-                        <div style={{ width: `${progress}%`, height: '100%', borderRadius: 6, background: meta.dot, transition: 'width 0.3s' }} />
-                      </div>
-                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: 'var(--ink-2)', width: 32, textAlign: 'right' }}>{progress}%</span>
-                    </div>
-                    <div>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 8px', borderRadius: 6, background: meta.bg, color: meta.color, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.dot, flexShrink: 0 }} />
-                        {meta.label}
-                      </span>
-                    </div>
-                  </div>
-                )
-              })}
-              {filtered.length === 0 && (
-                <div style={{ padding: '40px 22px', textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
-                  No orders
-                </div>
+              {orders.length === 0 && (
+                <button className="btn-primary" style={{ marginTop: 14 }} onClick={() => setShowCreate(true)}>
+                  <Plus size={15} /> Create the first MO
+                </button>
               )}
             </div>
           ) : (
-            /* Kanban view */
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, alignItems: 'start' }}>
-              {(['open', 'in_progress', 'completed', 'cancelled'] as const).map(status => {
-                const col = orders.filter(o => o.status === status)
-                const meta = statusMeta(status)
-                return (
-                  <div key={status} style={{ background: 'var(--surface-2)', borderRadius: 12, padding: 10 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '4px 4px 8px', borderBottom: '1px solid var(--line)' }}>
-                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: meta.dot }} />
-                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, color: 'var(--ink-2)', letterSpacing: '0.08em' }}>{meta.label.toUpperCase()}</span>
-                      <span style={{ marginLeft: 'auto', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-3)' }}>{col.length}</span>
-                    </div>
-                    {col.map(m => {
-                      const progress = m.uid_count > 0 ? Math.round((m.uid_count / m.quantity) * 100) : 0
-                      return (
-                        <div
-                          key={m.id}
-                          className="card"
-                          onClick={() => setSelectedMO(m)}
-                          style={{ padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}
-                          onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'}
-                          onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--line)'}
-                        >
-                          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: 'var(--accent)', marginBottom: 4 }}>{m.mo_number}</div>
-                          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{m.customer || '—'}</div>
-                          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)', marginTop: 2 }}>{m.quantity} pc · {m.uid_count} UIDs</div>
-                          {m.uid_count > 0 && (
-                            <div style={{ marginTop: 8, height: 3, borderRadius: 3, background: 'var(--surface-2)', overflow: 'hidden' }}>
-                              <div style={{ width: `${progress}%`, height: '100%', borderRadius: 3, background: meta.dot }} />
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                    {col.length === 0 && <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--ink-3)', fontSize: 12 }}>Empty</div>}
-                  </div>
-                )
-              })}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
+                <thead>
+                  <tr>
+                    <th style={TH}>MO</th>
+                    <th style={TH}>Customer</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Qty</th>
+                    <th style={TH}>Size</th>
+                    <th style={TH}>Design</th>
+                    <th style={TH}>Priority</th>
+                    <th style={TH}>Status</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>UIDs linked</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Dispatched</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Remaining</th>
+                    <th style={{ ...TH, minWidth: 130 }}>Fulfilment</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((mo) => {
+                    const isSel = mo.id === selectedId
+                    // Dispatched/Remaining come from the row's own aggregate fields
+                    // for every row; the selected row also uses live UID data so
+                    // its linked count tracks the drawer.
+                    const stats = computeStats(mo, isSel ? selectedUids : undefined)
+                    const meta = FULFIL_META[stats.fulfil]
+                    return (
+                      <tr
+                        key={mo.id}
+                        className="row-hover"
+                        onClick={() => setSelectedId(isSel ? null : mo.id)}
+                        style={{ cursor: 'pointer', background: isSel ? 'var(--accent-dim)' : undefined }}
+                      >
+                        <td style={{ ...TD, fontFamily: MONO, fontWeight: 700, color: C.accent }}>{mo.mo_number}</td>
+                        <td style={{ ...TD, fontFamily: SANS }}>{mo.customer || '—'}</td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO }}>{mo.quantity ?? 0}</td>
+                        <td style={{ ...TD, fontFamily: MONO, color: C.ink2 }}>{mo.size_mm != null ? `${mo.size_mm} mm` : '—'}</td>
+                        <td style={{ ...TD, fontFamily: MONO, color: mo.design_code ? C.ink : C.ink3 }}>{mo.design_code ?? '—'}</td>
+                        <td style={TD}>{priorityPill(mo.priority) ?? <span style={{ color: C.ink3 }}>—</span>}</td>
+                        <td style={TD}><span className={meta.cls}>{meta.label}</span></td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO }}>{stats.linked}</td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: stats.dispatched > 0 ? C.greenText : C.ink3 }}>
+                          {stats.dispatched}
+                        </td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: C.ink2 }}>
+                          {stats.remaining}
+                        </td>
+                        <td style={TD}>
+                          <ProgressBar dispatched={stats.dispatched} quantity={mo.quantity ?? 0} fulfil={stats.fulfil} />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
-        </>
-      )}
-
-      {tab === 'patterns' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-          {patterns.map((p) => (
-            <div key={p.id} className="card" style={{ padding: '16px 18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <Scissors size={15} style={{ color: 'var(--ink-3)' }} />
-                <span style={{ fontWeight: 600, color: 'var(--ink)', fontSize: 14 }}>{p.name}</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
-                {[
-                  ['Input', `${p.input_length_mm} mm`],
-                  ['Outputs', `${p.output_lengths_mm.join(' + ')} mm`],
-                  ['Cuts × Kerf', `${p.num_cuts} × ${p.kerf_mm} mm`],
-                  ['Scrap', `${p.scrap_mm} mm`],
-                ].map(([label, value]) => (
-                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ color: 'var(--ink-2)' }}>{label}</span>
-                    <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: Number(p.scrap_mm) < 0 && label === 'Scrap' ? 'var(--error)' : 'var(--ink)' }}>{value}</span>
-                  </div>
-                ))}
-              </div>
-              <button
-                style={{ marginTop: 12, fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                onClick={() => archivePattern.mutate(p.id)}
-              >
-                Archive
-              </button>
-            </div>
-          ))}
-          {patterns.length === 0 && <div style={{ color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>No patterns</div>}
         </div>
+
+        {/* Right: MO detail */}
+        {selected && (
+          <MoDetail
+            mo={selected}
+            uids={selectedUids}
+            loading={uidsLoading}
+            onClose={() => setSelectedId(null)}
+            onLink={() => setShowLink(true)}
+          />
+        )}
+      </div>
+
+      {/* ── Create MO drawer ─────────────────────────────────────────────── */}
+      {showCreate && (
+        <CreateMoDrawer
+          onClose={() => setShowCreate(false)}
+          onCreated={() => {
+            setShowCreate(false)
+            qc.invalidateQueries({ queryKey: ['mo-orders'] })
+          }}
+        />
       )}
 
-      {selectedMO && <MODrawer mo={selectedMO} onClose={() => setSelectedMO(null)} />}
-      {showCreateMO && <CreateMOModal onClose={() => { setShowCreateMO(false); qc.invalidateQueries({ queryKey: ['mo-orders'] }) }} />}
-      {showCreatePattern && <CreatePatternModal onClose={() => { setShowCreatePattern(false); qc.invalidateQueries({ queryKey: ['patterns'] }) }} />}
+      {/* ── Link UIDs drawer ─────────────────────────────────────────────── */}
+      {showLink && selected && (
+        <LinkUidsDrawer
+          mo={selected}
+          linkedUids={selectedUids}
+          onClose={() => setShowLink(false)}
+          onLinked={() => {
+            qc.invalidateQueries({ queryKey: ['mo-uids', selected.id] })
+            qc.invalidateQueries({ queryKey: ['mo-orders'] })
+          }}
+        />
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 22, fontFamily: MONO, fontSize: 10, color: C.ink3, letterSpacing: '0.06em' }}>
+        <Clock size={11} /> Live data refreshes every 30s.
+      </div>
+
+      <style>{`@keyframes spin { from { transform: rotate(0) } to { transform: rotate(360deg) } }`}</style>
     </div>
   )
 }
 
-const dinput: React.CSSProperties = {
-  width: '100%', padding: '9px 12px', borderRadius: 8, boxSizing: 'border-box',
-  background: 'var(--surface-3)', border: '1px solid var(--line)', color: 'var(--ink)',
-  fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, outline: 'none',
-}
-const dlabel: React.CSSProperties = {
-  fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em',
-  color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 6, display: 'block',
-}
-
-function DrawerShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+/* ─── summary stat tile ────────────────────────────────────────────────────── */
+function StatTile({ value, label, color }: { value: number; label: string; color?: string }) {
   return (
-    <>
-      <style>{`@keyframes es-drawer { from { transform: translateX(24px); opacity: 0 } to { transform: none; opacity: 1 } }`}</style>
-      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(10,20,45,.52)', backdropFilter: 'blur(3px)', zIndex: 40 }} />
-      <aside style={{
-        position: 'fixed', top: 0, right: 0, bottom: 0, width: 460,
-        background: 'var(--surface)', borderLeft: '1px solid var(--line)',
-        zIndex: 41, display: 'flex', flexDirection: 'column',
-        animation: 'es-drawer .28s cubic-bezier(.2,.8,.2,1) both',
-      }}>
-        {children}
-      </aside>
-    </>
+    <div className="card" style={{ padding: '14px 18px', minWidth: 0 }}>
+      <div style={{ fontFamily: ARCHIVO, fontWeight: 700, fontSize: 26, letterSpacing: '-0.03em', lineHeight: 1, color: color ?? C.ink }}>
+        {value.toLocaleString()}
+      </div>
+      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.ink3, marginTop: 5 }}>{label}</div>
+    </div>
   )
 }
 
-function CreateMOModal({ onClose }: { onClose: () => void }) {
-  const [form, setForm] = useState({ mo_number: '', customer: '', quantity: 1, notes: '' })
-  const mutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) => manufacturingApi.createOrder(data).then((r) => r.data),
-    onSuccess: onClose,
+/* ─── MO detail panel ──────────────────────────────────────────────────────── */
+function MoDetail({
+  mo, uids, loading, onClose, onLink,
+}: {
+  mo: Mo
+  uids: UID[]
+  loading: boolean
+  onClose: () => void
+  onLink: () => void
+}) {
+  const qc = useQueryClient()
+  const stats = computeStats(mo, uids)
+  const meta = FULFIL_META[stats.fulfil]
+
+  const unlink = useMutation({
+    // Unlinking == clearing the UID's MO reference (mo_id 0 ≈ none).
+    mutationFn: (uid: UID) => uidApi.linkMO(uid.id, 0).then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['mo-uids', mo.id] })
+      qc.invalidateQueries({ queryKey: ['mo-orders'] })
+    },
   })
-  const errMsg = (mutation.error as any)?.response?.data?.detail ?? 'Failed to create order'
 
   return (
-    <DrawerShell onClose={onClose}>
-      <div style={{ padding: '18px 22px', borderBottom: 'var(--line)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+    <div className="card animate-es" style={{ padding: '18px 20px', position: 'sticky', top: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
         <div>
-          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)' }}>New Manufacturing Order</div>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 3 }}>PRODUCTION RECORD</div>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.12em', textTransform: 'uppercase', color: C.ink3 }}>Manufacturing order</div>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 22, letterSpacing: '-0.02em', color: C.ink, marginTop: 2 }}>{mo.mo_number}</div>
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, marginTop: 2 }}>{mo.customer || 'No customer'}</div>
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', padding: 4 }}><X size={18} /></button>
+        <button onClick={onClose} className="btn-secondary" style={{ height: 30, width: 30, padding: 0, justifyContent: 'center' }} aria-label="Close">
+          <X size={15} />
+        </button>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 22, display: 'flex', flexDirection: 'column', gap: 18 }}>
-        <div><label style={dlabel}>MO Number</label><input style={dinput} value={form.mo_number} onChange={e => setForm({ ...form, mo_number: e.target.value })} /></div>
-        <div><label style={dlabel}>Customer</label><input style={dinput} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div>
-        <div><label style={dlabel}>Quantity</label><input style={dinput} type="number" min={1} value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} /></div>
-        <div><label style={dlabel}>Notes</label><textarea style={{ ...dinput, resize: 'vertical' }} rows={3} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
-        {mutation.error && (
-          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--error)', border: 'var(--error)', color: 'var(--error)', fontSize: 13 }}>{errMsg}</div>
+
+      {/* meta grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+        <Field label="Required qty" value={String(mo.quantity ?? 0)} />
+        <Field label="Status" value={<span className={meta.cls}>{meta.label}</span>} />
+        <Field label="Size" value={mo.size_mm != null ? `${mo.size_mm} mm` : '—'} />
+        <Field label="Design" value={mo.design_code ?? '—'} />
+        <Field label="Priority" value={priorityPill(mo.priority) ?? '—'} />
+        <Field
+          label="Required delivery"
+          value={mo.required_delivery_date ? new Date(mo.required_delivery_date).toLocaleDateString() : '—'}
+        />
+      </div>
+
+      {/* fulfilment tracker */}
+      <div style={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, padding: '12px 14px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.ink3 }}>Fulfilment</span>
+          <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2 }}>
+            {stats.dispatched} dispatched · {stats.remaining} remaining
+          </span>
+        </div>
+        <ProgressBar dispatched={stats.dispatched} quantity={mo.quantity ?? 0} fulfil={stats.fulfil} />
+      </div>
+
+      {mo.notes && (
+        <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2, background: C.surface2, borderRadius: 10, padding: '10px 12px' }}>{mo.notes}</div>
+      )}
+
+      {/* linked UIDs */}
+      <div>
+        <SectionLabel
+          icon={<Link2 size={13} style={{ color: C.ink3 }} />}
+          right={<button className="btn-primary" style={{ height: 30, padding: '0 12px', fontSize: 12 }} onClick={onLink}><Plus size={13} /> Link UIDs</button>}
+        >
+          Linked UIDs · {uids.length}
+        </SectionLabel>
+
+        {loading ? (
+          <div style={{ fontFamily: MONO, fontSize: 11.5, color: C.ink3, padding: '14px 0' }}>Loading linked UIDs…</div>
+        ) : uids.length === 0 ? (
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink3, padding: '14px 0' }}>No UIDs linked to this MO yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7, maxHeight: 360, overflowY: 'auto' }}>
+            {uids.map((u) => (
+              <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 9, background: C.surface2, border: `1px solid ${C.line}` }}>
+                <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 12.5, color: C.ink }}>{u.code}</span>
+                <UIDStatusBadge status={u.status} />
+                <div style={{ flex: 1, minWidth: 0, fontFamily: SANS, fontSize: 11.5, color: C.ink2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {u.current_step_name ? `${u.current_step_number ?? ''} ${u.current_step_name}` : '—'}
+                </div>
+                <button
+                  className="btn-secondary"
+                  style={{ height: 26, padding: '0 8px', fontSize: 11 }}
+                  disabled={unlink.isPending}
+                  onClick={() => unlink.mutate(u)}
+                  title="Unlink from this MO"
+                >
+                  <Link2Off size={12} /> Unlink
+                </button>
+              </div>
+            ))}
+          </div>
         )}
-        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: 'var(--line)', background: 'transparent', color: 'var(--ink-2)', cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
-          <button disabled={mutation.isPending} onClick={() => mutation.mutate({ ...form, quantity: Number(form.quantity) })} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: 'var(--accent)', color: 'var(--accent-ink)', cursor: 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
-            {mutation.isPending ? 'Creating…' : 'Create Order'}
+        {unlink.isError && (
+          <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.red, marginTop: 8 }}>
+            Unlink may not be supported by the server. The UID reference was not changed.
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div>
+      <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: C.ink3, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontFamily: typeof value === 'string' ? MONO : undefined, fontSize: 13, color: C.ink }}>{value}</div>
+    </div>
+  )
+}
+
+/* ─── drawer shell ─────────────────────────────────────────────────────────── */
+function Drawer({ title, subtitle, onClose, children, footer, width = 480 }: {
+  title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode; width?: number
+}) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', justifyContent: 'flex-end' }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(21,54,106,.28)' }} />
+      <div
+        className="animate-es"
+        style={{
+          position: 'relative', width, maxWidth: '94vw', height: '100%', background: C.surface,
+          boxShadow: 'var(--shadow-e5)', display: 'flex', flexDirection: 'column',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '18px 22px', borderBottom: `1px solid ${C.line}` }}>
+          <div>
+            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 20, letterSpacing: '-0.02em', color: C.ink }}>{title}</div>
+            {subtitle && <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2, marginTop: 2 }}>{subtitle}</div>}
+          </div>
+          <button onClick={onClose} className="btn-secondary" style={{ height: 30, width: 30, padding: 0, justifyContent: 'center' }} aria-label="Close">
+            <X size={15} />
           </button>
         </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 22px' }}>{children}</div>
+        {footer && <div style={{ padding: '14px 22px', borderTop: `1px solid ${C.line}`, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>{footer}</div>}
       </div>
-    </DrawerShell>
+    </div>
   )
 }
 
-function CreatePatternModal({ onClose }: { onClose: () => void }) {
-  const [name, setName] = useState('')
-  const [inputLen, setInputLen] = useState(4500)
-  const [outputs, setOutputs] = useState('1500,1500,1424')
-  const [kerf, setKerf] = useState(3)
+/* ─── create MO drawer ─────────────────────────────────────────────────────── */
+function CreateMoDrawer({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [moNumber, setMoNumber] = useState('')
+  const [customer, setCustomer] = useState('')
+  const [quantity, setQuantity] = useState('')
+  const [sizeId, setSizeId] = useState('')
+  const [designId, setDesignId] = useState('')
+  const [priority, setPriority] = useState<Priority>('normal')
+  const [deliveryDate, setDeliveryDate] = useState('')
+  const [notes, setNotes] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
-  const mutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) => manufacturingApi.createPattern(data).then((r) => r.data),
-    onSuccess: onClose,
+  const { data: sizes = [] } = useQuery<Size[]>({ queryKey: ['mo-sizes'], queryFn: () => productApi.sizes().then((r) => r.data ?? []) })
+  const { data: designs = [] } = useQuery<Design[]>({ queryKey: ['mo-designs'], queryFn: () => productApi.designs().then((r) => r.data ?? []) })
+
+  // Designs filtered by selected size (spec: design dropdown filtered by size).
+  const sizeIdNum = sizeId ? Number(sizeId) : null
+  const filteredDesigns = useMemo(() => {
+    if (sizeIdNum == null) return designs
+    return designs.filter((d) => !d.valid_size_ids?.length || d.valid_size_ids.includes(sizeIdNum))
+  }, [designs, sizeIdNum])
+
+  const create = useMutation({
+    mutationFn: (body: Record<string, unknown>) => manufacturingApi.createOrder(body).then((r) => r.data),
+    onSuccess: onCreated,
+    onError: (e: any) => setError(e?.response?.data?.detail ?? 'Failed to create MO. Check the fields and try again.'),
   })
 
-  const parsedOutputs = outputs.split(',').map(s => parseInt(s.trim(), 10)).filter(Boolean)
-  const numCuts = parsedOutputs.length - 1
-  const scrap = inputLen - parsedOutputs.reduce((a, b) => a + b, 0) - numCuts * kerf
+  const valid = moNumber.trim() !== '' && Number(quantity) > 0
+
+  const submit = () => {
+    setError(null)
+    const body: Record<string, unknown> = {
+      mo_number: moNumber.trim(),
+      customer: customer.trim() || null,
+      quantity: Number(quantity),
+      priority,
+    }
+    if (sizeId) body.size_id = Number(sizeId)
+    if (designId) body.design_id = Number(designId)
+    if (deliveryDate) body.required_delivery_date = deliveryDate
+    if (notes.trim()) body.notes = notes.trim()
+    create.mutate(body)
+  }
 
   return (
-    <DrawerShell onClose={onClose}>
-      <div style={{ padding: '18px 22px', borderBottom: 'var(--line)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+    <Drawer
+      title="New manufacturing order"
+      subtitle="Create an MO; link UIDs to it any time."
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={!valid || create.isPending} onClick={submit}>
+            {create.isPending ? 'Creating…' : 'Create MO'}
+          </button>
+        </>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div>
-          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)' }}>New Conversion Pattern</div>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 3 }}>CUT LAYOUT</div>
+          <label className="label">MO number *</label>
+          <input className="input" placeholder="e.g. MO-2026-0142 (from Odoo or manual)" value={moNumber} onChange={(e) => setMoNumber(e.target.value)} />
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', padding: 4 }}><X size={18} /></button>
+        <div>
+          <label className="label">Customer name</label>
+          <input className="input" placeholder="Customer" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+        </div>
+        <div>
+          <label className="label">Quantity required *</label>
+          <input className="input" type="number" min={1} placeholder="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">Size (mm)</label>
+            <select className="input" value={sizeId} onChange={(e) => { setSizeId(e.target.value); setDesignId('') }}>
+              <option value="">—</option>
+              {sizes.filter((s) => s.is_active).map((s) => (
+                <option key={s.id} value={s.id}>{s.value_mm} mm</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Design</label>
+            <select className="input" value={designId} onChange={(e) => setDesignId(e.target.value)}>
+              <option value="">—</option>
+              {filteredDesigns.filter((d) => d.is_active).map((d) => (
+                <option key={d.id} value={d.id}>{d.code}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="label">Priority</label>
+            <select className="input" value={priority} onChange={(e) => setPriority(e.target.value as Priority)}>
+              {PRIORITIES.map((p) => <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Required delivery date</label>
+            <input className="input" type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} />
+          </div>
+        </div>
+        <div>
+          <label className="label">Notes</label>
+          <textarea className="input" rows={3} placeholder="Optional notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+        {error && (
+          <div style={{ fontFamily: MONO, fontSize: 11.5, color: C.red, padding: '10px 12px', background: 'rgba(229,72,77,.10)', borderRadius: 9, border: '1px solid rgba(229,72,77,.25)' }}>{error}</div>
+        )}
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: 22, display: 'flex', flexDirection: 'column', gap: 18 }}>
-        <div><label style={dlabel}>Pattern Name</label><input style={dinput} value={name} onChange={e => setName(e.target.value)} /></div>
-        <div><label style={dlabel}>Input Length (mm)</label><input style={dinput} type="number" value={inputLen} onChange={e => setInputLen(Number(e.target.value))} /></div>
-        <div><label style={dlabel}>Output Lengths (comma-separated mm)</label><input style={dinput} value={outputs} onChange={e => setOutputs(e.target.value)} placeholder="1500,1500,1424" /></div>
-        <div><label style={dlabel}>Kerf per cut (mm)</label><input style={dinput} type="number" value={kerf} onChange={e => setKerf(Number(e.target.value))} /></div>
+    </Drawer>
+  )
+}
 
-        {/* Live preview */}
-        <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--surface-2)', border: 'var(--line)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 2 }}>Preview</div>
-          {[
-            { label: 'Cuts', value: String(numCuts), color: 'var(--ink)' },
-            { label: 'Total output', value: `${parsedOutputs.reduce((a, b) => a + b, 0)} mm`, color: 'var(--ink)' },
-            { label: 'Kerf loss', value: `${numCuts * kerf} mm`, color: 'var(--ink-2)' },
-            { label: 'Scrap', value: `${scrap} mm`, color: scrap < 0 ? 'var(--error)' : '#22a06b' },
-          ].map(r => (
-            <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-              <span style={{ color: 'var(--ink-2)' }}>{r.label}</span>
-              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: r.color }}>{r.value}</span>
-            </div>
+/* ─── link UIDs drawer ─────────────────────────────────────────────────────── */
+function LinkUidsDrawer({
+  mo, linkedUids, onClose, onLinked,
+}: {
+  mo: Mo
+  linkedUids: UID[]
+  onClose: () => void
+  onLinked: () => void
+}) {
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('active')
+  const [cycleFilter, setCycleFilter] = useState('')
+  // Whether to restrict candidates to the MO's own size & design (spec filter).
+  const [matchSpec, setMatchSpec] = useState(true)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState(0)
+
+  const linkedIds = useMemo(() => new Set(linkedUids.map((u) => u.id)), [linkedUids])
+
+  // Candidate UIDs to link: filter by status, then by code/size/design client-side.
+  const { data: result, isLoading } = useQuery({
+    queryKey: ['link-candidates', statusFilter],
+    queryFn: () => uidApi.list({ status: statusFilter || undefined, limit: 200 }).then((r) => r.data),
+    retry: false,
+  })
+  const allUids: UID[] = result?.items ?? []
+
+  // Distinct cycle types among the loaded UID pool (spec: filter by cycle).
+  const cycleOptions = useMemo(() => {
+    const seen = new Map<number, string>()
+    for (const u of allUids) {
+      if (u.cycle_type_id != null && !seen.has(u.cycle_type_id)) {
+        seen.set(u.cycle_type_id, u.cycle_type_name ?? `Cycle ${u.cycle_type_id}`)
+      }
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name }))
+  }, [allUids])
+
+  const candidates = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    const cyId = cycleFilter ? Number(cycleFilter) : null
+    return allUids.filter((u) => {
+      if (linkedIds.has(u.id)) return false
+      if (u.mo_id != null && u.mo_id !== mo.id) return false // already on another MO
+      if (term && !u.code.toLowerCase().includes(term)) return false
+      if (cyId != null && u.cycle_type_id !== cyId) return false // filter by cycle
+      // Optionally match the MO's size / design (spec: filter by size/design).
+      if (matchSpec) {
+        if (mo.size_id != null && u.size_id != null && u.size_id !== mo.size_id) return false
+        if (mo.design_id != null && u.design_id != null && u.design_id !== mo.design_id) return false
+      }
+      return true
+    })
+  }, [allUids, search, cycleFilter, matchSpec, linkedIds, mo.size_id, mo.design_id, mo.id])
+
+  const toggle = (id: number) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const link = useMutation({
+    mutationFn: async (ids: number[]) => {
+      let count = 0
+      for (const id of ids) {
+        await uidApi.linkMO(id, mo.id)
+        count++
+        setDone(count)
+      }
+      return count
+    },
+    onSuccess: () => {
+      onLinked()
+      onClose()
+    },
+    onError: (e: any) => setError(e?.response?.data?.detail ?? 'Failed to link one or more UIDs.'),
+  })
+
+  const submit = () => {
+    setError(null)
+    setDone(0)
+    link.mutate([...selected])
+  }
+
+  return (
+    <Drawer
+      title="Link UIDs to MO"
+      subtitle={`${mo.mo_number}${mo.customer ? ` · ${mo.customer}` : ''}`}
+      width={560}
+      onClose={onClose}
+      footer={
+        <>
+          <span style={{ fontFamily: MONO, fontSize: 11, color: C.ink2, marginRight: 'auto', alignSelf: 'center' }}>
+            {selected.size} selected{link.isPending ? ` · linking ${done}/${selected.size}…` : ''}
+          </span>
+          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={selected.size === 0 || link.isPending} onClick={submit}>
+            <Link2 size={14} /> {link.isPending ? 'Linking…' : `Link ${selected.size || ''} UID${selected.size === 1 ? '' : 's'}`}
+          </button>
+        </>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <Search size={14} style={{ position: 'absolute', left: 11, top: 11, color: C.ink3 }} />
+            <input className="input" style={{ paddingLeft: 32 }} placeholder="Search UID code…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <select className="input" style={{ width: 150 }} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="on_hold">On hold</option>
+            <option value="converted">Converted</option>
+            <option value="dispatched">Dispatched</option>
+          </select>
+        </div>
+
+        {/* Cycle filter (spec: filter UIDs by cycle, size, design, status) */}
+        <select className="input" value={cycleFilter} onChange={(e) => setCycleFilter(e.target.value)}>
+          <option value="">All cycles</option>
+          {cycleOptions.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
           ))}
-        </div>
+        </select>
 
-        {mutation.error && (
-          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--error)', border: 'var(--error)', color: 'var(--error)', fontSize: 13 }}>Failed to create pattern</div>
+        {/* Apply MO's size & design — yes/no spec toggle */}
+        {(mo.size_mm != null || mo.design_code) && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', fontFamily: SANS, fontSize: 12.5, color: C.ink2, background: C.surface2, borderRadius: 9, padding: '9px 11px' }}>
+            <input type="checkbox" checked={matchSpec} onChange={(e) => setMatchSpec(e.target.checked)} />
+            Only show UIDs matching this MO's size &amp; design
+            <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginLeft: 'auto' }}>
+              {mo.size_mm != null ? `${mo.size_mm} mm` : 'any size'} · {mo.design_code ?? 'any design'}
+            </span>
+          </label>
         )}
-        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: 'var(--line)', background: 'transparent', color: 'var(--ink-2)', cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
-          <button disabled={mutation.isPending || scrap < 0} onClick={() => mutation.mutate({ name, input_length_mm: inputLen, output_lengths_mm: parsedOutputs, kerf_mm: kerf })} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: scrap < 0 ? 'var(--surface-2)' : 'var(--accent)', color: scrap < 0 ? 'var(--ink-3)' : 'var(--accent-ink)', cursor: scrap < 0 ? 'not-allowed' : 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
-            {mutation.isPending ? 'Creating…' : 'Create Pattern'}
-          </button>
+
+        {isLoading ? (
+          <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '24px 0', textAlign: 'center' }}>Loading UIDs…</div>
+        ) : candidates.length === 0 ? (
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink3, padding: '24px 0', textAlign: 'center' }}>No unlinked UIDs match the filter.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {candidates.map((u) => {
+              const on = selected.has(u.id)
+              return (
+                <button
+                  key={u.id}
+                  onClick={() => toggle(u.id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10, padding: '9px 11px', borderRadius: 9, cursor: 'pointer', width: '100%', textAlign: 'left',
+                    background: on ? 'var(--accent-dim)' : C.surface2,
+                    border: `1px solid ${on ? C.accent : C.line}`,
+                  }}
+                >
+                  <span style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${on ? C.accent : C.ink3}`, background: on ? C.accent : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {on && <CheckCircle size={12} style={{ color: '#fff' }} />}
+                  </span>
+                  <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 12.5, color: C.ink }}>{u.code}</span>
+                  <UIDStatusBadge status={u.status} />
+                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2 }}>{u.size_mm != null ? `${u.size_mm}mm` : ''} {u.design_code ?? ''}</span>
+                  <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 10, color: C.ink3 }}>
+                    {(() => { try { return formatDistanceToNowStrict(new Date(u.created_at)) } catch { return '' } })()}
+                  </span>
+                  <ChevronRight size={14} style={{ color: C.ink3 }} />
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {error && (
+          <div style={{ fontFamily: MONO, fontSize: 11.5, color: C.red, padding: '10px 12px', background: 'rgba(229,72,77,.10)', borderRadius: 9, border: '1px solid rgba(229,72,77,.25)' }}>{error}</div>
+        )}
+
+        <div style={{ fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
+          Linking writes the MO reference onto each selected UID. Overwriting a UID's size/design on link is not exposed by the current API, so UIDs keep their existing attributes — use the size &amp; design filter above to link matching UIDs.
         </div>
       </div>
-    </DrawerShell>
+    </Drawer>
   )
 }

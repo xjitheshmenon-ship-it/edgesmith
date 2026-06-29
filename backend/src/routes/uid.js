@@ -4,7 +4,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { requireAuth, requireManager, requireSupervisor, requireOperator, HttpError } from '../middleware/auth.js';
 import { writeAudit } from '../middleware/audit.js';
 import { UID_SELECT, serializeUid, getUid } from '../utils/serializers.js';
-import { bulkCreateUids, completeStep, doConverting } from '../services/uidService.js';
+import { bulkCreateUids, completeStep, doConverting, qcSignoff } from '../services/uidService.js';
 
 const router = Router();
 
@@ -36,6 +36,50 @@ router.get(
       params
     );
     res.json(rows.map(serializeUid));
+  })
+);
+
+// ── QC pending queue ─────────────────────────────────────────────────────────
+// UIDs whose current step is a QC step and which are still active.
+// Ordered before the /:id routes so /qc/pending is matched as a literal path.
+router.get(
+  '/qc/pending',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const params = [];
+    let where = "u.status = 'active' AND cs.is_qc_step = TRUE";
+    if (req.query.location_id) {
+      params.push(parseInt(req.query.location_id, 10));
+      where += ` AND u.factory_location_id = $${params.length}`;
+    }
+    const rows = await query(
+      `${UID_SELECT} WHERE ${where} ORDER BY u.priority DESC, u.created_at LIMIT 200`,
+      params
+    );
+    res.json(rows.map(serializeUid));
+  })
+);
+
+// ── QC sign-off ──────────────────────────────────────────────────────────────
+router.post(
+  '/:uidId/qc-signoff',
+  requireOperator,
+  asyncHandler(async (req, res) => {
+    const uidId = parseInt(req.params.uidId, 10);
+    const b = req.body || {};
+    if (!['pass', 'fail', 'borderline'].includes(b.result)) {
+      throw new HttpError(400, "result must be 'pass', 'fail', or 'borderline'");
+    }
+    await qcSignoff({
+      uidId,
+      performedById: req.user.id,
+      result: b.result,
+      values: b.values ?? null,
+      notes: b.notes ?? null,
+      workstationId: b.workstation_id ?? null,
+    });
+    await writeAudit(req.user.id, 'qc-signoff', 'uids', uidId, null, { result: b.result });
+    res.json(await getUid({ id: uidId }));
   })
 );
 
@@ -82,6 +126,7 @@ router.post(
       designId: b.design_id ?? null,
       priority: b.priority ?? 'normal',
       moId: b.mo_id ?? null,
+      receivingEventId: b.receiving_event_id ?? null,
     });
     await writeAudit(req.user.id, 'bulk-create', 'uids', null, null, { codes: uids.map((u) => u.code) });
     res.status(201).json({ created: uids.length, uids });

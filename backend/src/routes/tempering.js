@@ -86,30 +86,72 @@ router.post(
   requireAdmin,
   asyncHandler(async (req, res) => {
     const b = req.body || {};
-    const existing = await one(
-      'SELECT id FROM tempering_parameters WHERE cycle_type_id = $1 AND cycle_step_id = $2',
-      [b.cycle_type_id, b.cycle_step_id]
-    );
-    let id;
-    if (existing) {
-      await query(
-        `UPDATE tempering_parameters SET target_temp_c=$1, target_soak_minutes=$2,
-           tolerance_temp_c=$3, tolerance_soak_minutes=$4, updated_at=now(), updated_by_id=$5
-         WHERE id=$6`,
-        [b.target_temp_c, b.target_soak_minutes, b.tolerance_temp_c ?? 5, b.tolerance_soak_minutes ?? 5, req.user.id, existing.id]
+    const id = await tx(async (c) => {
+      const existing = await c.one(
+        'SELECT id FROM tempering_parameters WHERE cycle_type_id = $1 AND cycle_step_id = $2',
+        [b.cycle_type_id, b.cycle_step_id]
       );
-      id = existing.id;
-    } else {
-      const p = await one(
-        `INSERT INTO tempering_parameters
-           (cycle_type_id, cycle_step_id, target_temp_c, target_soak_minutes, tolerance_temp_c, tolerance_soak_minutes, updated_by_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-        [b.cycle_type_id, b.cycle_step_id, b.target_temp_c, b.target_soak_minutes, b.tolerance_temp_c ?? 5, b.tolerance_soak_minutes ?? 5, req.user.id]
+      let paramId;
+      if (existing) {
+        await c.query(
+          `UPDATE tempering_parameters SET target_temp_c=$1, target_soak_minutes=$2,
+             tolerance_temp_c=$3, tolerance_soak_minutes=$4, updated_at=now(), updated_by_id=$5
+           WHERE id=$6`,
+          [b.target_temp_c, b.target_soak_minutes, b.tolerance_temp_c ?? 5, b.tolerance_soak_minutes ?? 5, req.user.id, existing.id]
+        );
+        paramId = existing.id;
+      } else {
+        const p = await c.one(
+          `INSERT INTO tempering_parameters
+             (cycle_type_id, cycle_step_id, target_temp_c, target_soak_minutes, tolerance_temp_c, tolerance_soak_minutes, updated_by_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+          [b.cycle_type_id, b.cycle_step_id, b.target_temp_c, b.target_soak_minutes, b.tolerance_temp_c ?? 5, b.tolerance_soak_minutes ?? 5, req.user.id]
+        );
+        paramId = p.id;
+      }
+      // Snapshot the new values into the version history (timestamp + changed-by).
+      await c.query(
+        `INSERT INTO tempering_parameter_versions
+           (parameter_id, cycle_type_id, cycle_step_id, target_temp_c, target_soak_minutes,
+            tolerance_temp_c, tolerance_soak_minutes, changed_by_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [paramId, b.cycle_type_id, b.cycle_step_id, b.target_temp_c, b.target_soak_minutes, b.tolerance_temp_c ?? 5, b.tolerance_soak_minutes ?? 5, req.user.id]
       );
-      id = p.id;
-    }
+      return paramId;
+    });
     const row = await one(`${PARAM_SELECT} WHERE p.id = $1`, [id]);
     res.status(201).json(paramOut(row));
+  })
+);
+
+router.get(
+  '/parameters/:id/versions',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const paramId = parseInt(req.params.id, 10);
+    const rows = await query(
+      `SELECT v.*, u.full_name AS changed_by_name
+         FROM tempering_parameter_versions v
+         LEFT JOIN users u ON u.id = v.changed_by_id
+        WHERE v.parameter_id = $1
+        ORDER BY v.changed_at DESC, v.id DESC`,
+      [paramId]
+    );
+    res.json(
+      rows.map((v) => ({
+        id: v.id,
+        parameter_id: v.parameter_id,
+        cycle_type_id: v.cycle_type_id,
+        cycle_step_id: v.cycle_step_id,
+        target_temp_c: v.target_temp_c,
+        target_soak_minutes: v.target_soak_minutes,
+        tolerance_temp_c: v.tolerance_temp_c,
+        tolerance_soak_minutes: v.tolerance_soak_minutes,
+        changed_by_id: v.changed_by_id,
+        changed_by_name: v.changed_by_name,
+        changed_at: v.changed_at,
+      }))
+    );
   })
 );
 
