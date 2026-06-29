@@ -2651,3 +2651,431 @@ Report 9 (Workstation Capacity and Utilisation) now shows furnace capacity by ba
 
 This helps Manager decide whether furnace capacity is the bottleneck and whether changing the base capacity (after physical furnace expansion) would be worthwhile.
 
+
+---
+
+## PAGE 22 — JOB EXECUTION (Operator / Supervisor / Manager)
+
+### Purpose
+
+The primary operational interface for anyone performing work on the floor. This is the page where every job is started, paused, resumed, and closed. Every action is timestamped. Every minute of active work and every pause is recorded against the UID and the operator.
+
+This page is the single source of truth for job timing across the entire system.
+
+---
+
+### Who sees this page and what they see
+
+| Role | What they see |
+|---|---|
+| Operator | Only jobs assigned to them at their location |
+| Supervisor | All jobs at their assigned location — can act on any job |
+| Manager | All jobs at their assigned location — can act on any job |
+| Admin | All jobs across both locations |
+
+Location scoping is enforced by the backend. A Manager at Dharmapuri cannot see or act on Faridabad jobs. A Supervisor at Faridabad cannot see Dharmapuri jobs.
+
+---
+
+### Layout
+
+**Mobile / tablet (primary operator view):**
+Single column. One active job card fills the top of the screen. Queue of upcoming jobs below. Large tap targets throughout — minimum 56px height on all action buttons.
+
+**Desktop / shared terminal:**
+Two-column layout. Active job on the left, job queue on the right. Supervisor and Manager see a wider view with all workstations visible.
+
+---
+
+### Job states and transitions
+
+```
+         ┌─────────────────────────────────────────┐
+         │              QUEUED                     │
+         │  Job assigned, waiting for operator     │
+         └──────────────────┬──────────────────────┘
+                            │ Operator taps START
+                            ▼
+         ┌─────────────────────────────────────────┐
+         │             IN PROGRESS                 │
+         │  Timer running. Green indicator.        │◄──────┐
+         └──────────┬──────────────────────────────┘       │
+                    │ Operator taps PAUSE                   │ Operator taps
+                    ▼                                       │ RESUME
+         ┌─────────────────────────────────────────┐       │
+         │               PAUSED                   │───────┘
+         │  Timer stopped. Reason recorded.       │
+         │  Amber indicator.                      │
+         └──────────┬──────────────────────────────┘
+                    │ Operator taps CLOSE
+                    ▼
+         ┌─────────────────────────────────────────┐
+         │               CLOSED                   │
+         │  Job complete. UID advances to next     │
+         │  step. Full timing record saved.        │
+         └─────────────────────────────────────────┘
+```
+
+State is saved to the database on every transition. If the device loses connection mid-job, the state is preserved and the timer continues from where it was when connection restores.
+
+---
+
+### Active job card — IN PROGRESS state
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  ● IN PROGRESS                                    Shift 2 · MM22 │
+│                                                                  │
+│  E043                                                            │
+│  OP10 Rough Mill · MM22 · Step 5                                 │
+│  EAT  ·  1500mm  ·  Plain  ·  MO-2024-089  ·  ● HIGH            │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  ACTIVE TIME                    TOTAL ELAPSED              │  │
+│  │  00:23:41                       00:23:41                   │  │
+│  │  (since last resume)            (net work time)            │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  Step progress ──────────────────────────────────────────────►   │
+│  [1][2][3][4][●5][6][7][8][9][10]...                             │
+│                                                                  │
+│  ┌──────────────────┐  ┌──────────────────┐                      │
+│  │  ⏸  PAUSE        │  │  ✓  CLOSE JOB    │                      │
+│  │  (record reason) │  │  (mark complete) │                      │
+│  └──────────────────┘  └──────────────────┘                      │
+│                                                                  │
+│  🚩 Flag issue (does not pause timer)                            │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Timer display:**
+- **Active time** — time since the last Resume (or Start if no pauses). Resets on each Resume.
+- **Total elapsed** — wall clock time from first Start to now (includes pause durations for reference)
+- **Net work time** — active time only, pauses excluded. This is the figure used in reports and performance tracking.
+- All timers show HH:MM:SS and update every second.
+
+**Step progress tracker:** same 27-node horizontal track as UID Detail. Current step highlighted with pulsing animation.
+
+---
+
+### START action
+
+When operator taps START on a queued job:
+- Job status → In Progress
+- Start timestamp recorded (date + time + operator)
+- Timer begins
+- Workstation unit auto-assigned (system picks available unit — e.g. MM22-1 or MM22-2)
+- Active job card replaces the queued job card
+
+If starting a furnace batch job: START applies to the entire batch. All UIDs in the batch move to In Progress simultaneously.
+
+---
+
+### PAUSE action
+
+Tapping PAUSE opens a mandatory reason selector. Job does not pause until a reason is selected.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Pause reason — required                                         │
+│                                                                  │
+│  ○  Break                                                        │
+│  ○  Machine issue                                                │
+│  ○  Material not ready                                           │
+│  ○  Waiting for supervisor                                       │
+│  ○  Other (enter reason below)                                   │
+│                                                                  │
+│  [ Optional notes field — free text                           ]  │
+│                                                                  │
+│  [ CANCEL ]                        [ CONFIRM PAUSE ]            │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+On confirm:
+- Job status → Paused
+- Pause timestamp recorded
+- Pause reason and notes saved
+- Timer stops — net work time preserved
+- Active job card shows amber PAUSED state with reason and pause duration counting up
+
+A job can be paused and resumed multiple times. Each pause/resume cycle is a separate log entry.
+
+---
+
+### Active job card — PAUSED state
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  ⏸ PAUSED — Machine issue                        Shift 2 · MM22 │
+│                                                                  │
+│  E043                                                            │
+│  OP10 Rough Mill · MM22 · Step 5                                 │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  PAUSED FOR               NET WORK TIME SO FAR             │  │
+│  │  00:04:17                 00:23:41                         │  │
+│  │  (pause duration)         (active time only)               │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐    │
+│  │  ▶  RESUME JOB                                           │    │
+│  └──────────────────────────────────────────────────────────┘    │
+│                                                                  │
+│  Pause history this job:                                         │
+│  14:23 — Break (5 min 12 sec)                                    │
+│  15:41 — Machine issue (ongoing)                                 │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### RESUME action
+
+Tapping RESUME:
+- Job status → In Progress
+- Resume timestamp recorded
+- Timer restarts
+- Active time counter resets to 00:00:00 (showing time since this resume)
+- Net work time continues accumulating from where it was
+
+---
+
+### CLOSE JOB action
+
+Tapping CLOSE JOB opens the completion panel:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Close Job — E043 · Step 5 · OP10 Rough Mill                     │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  Net work time:   00:31:14                                 │  │
+│  │  Total elapsed:   00:38:42  (incl. pauses)                 │  │
+│  │  Pauses:          2  (Machine issue · Break)               │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  QC check required at this step?                                 │
+│  ○ No QC check for this step                                     │
+│  ○ Hardness (HRC)                                                │
+│  ○ Width (mm)                                                    │
+│  ○ Straightness                                                  │
+│  ○ Visual                                                        │
+│                                                                  │
+│  Measured value: [              ]                                │
+│  Result:  ● Pass   ○ Fail   ○ Borderline                        │
+│                                                                  │
+│  Notes (optional): [                                          ]  │
+│                                                                  │
+│  [ CANCEL ]               [ CONFIRM CLOSE — ADVANCE TO STEP 6 ] │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+On confirm:
+- Job status → Closed
+- Close timestamp recorded
+- Net work time finalised
+- QC result (if any) saved to step log
+- UID current step advances to next step
+- UID storage location updates to destination storage for this step
+- If QC result is Fail: UID placed on hold automatically, Supervisor alerted
+- Next job in operator's queue becomes the active job card
+
+**Special close flows:**
+
+- **Tempering steps (9, 10, 14, 23):** Close panel additionally requires actual temperature achieved and actual soak time held. System compares against Admin-configured target and flags deviation if outside tolerance.
+- **Converting — Step 16:** Close panel opens the full Converting workflow (child UID creation, pattern selection, scrap calculation). Cannot be closed with a simple confirm.
+- **Step 16B — Child UID Marking:** Close panel shows each child UID and requires physical marking confirmation for each before closing.
+- **QC Inspection — Step 26:** Close panel requires QC result — cannot be closed without Pass or Fail selection.
+
+---
+
+### Job queue (below active job card)
+
+List of all jobs in the operator's queue for this shift, in priority order.
+
+Each queued job shows:
+- UID code and step name
+- Workstation code
+- Wait time (how long this job has been waiting)
+- Priority badge
+- Estimated duration (if configured for this step)
+
+Operator cannot reorder their own queue. Priority order is set by the system (High first, then Normal, then Low, FIFO within same priority). Supervisor can reorder the queue from Job Assignment page.
+
+---
+
+### Supervisor / Manager view — all jobs at their location
+
+Supervisors and Managers see an expanded view showing all jobs across all workstations at their location.
+
+**Layout — desktop:**
+Grid of workstation panels. Each panel shows the active job with its live timer.
+
+```
+┌─────────────────────────────┐  ┌─────────────────────────────┐
+│  MM22 — OP10 Rough Mill     │  │  HT70 — Hardening           │
+│  ● IN PROGRESS              │  │  ● IN PROGRESS              │
+│  E043  ·  00:31:14          │  │  Batch HT70-2024-112        │
+│  Ravi K.   ● HIGH           │  │  6 bars  ·  00:45:00        │
+│  [View]  [Pause]  [Close]   │  │  S. Kumar (Supervisor)      │
+│                             │  │  [View]  [Pause]  [Close]   │
+│  Queued: 4 UIDs             │  │  Queued: 8 UIDs             │
+└─────────────────────────────┘  └─────────────────────────────┘
+
+┌─────────────────────────────┐  ┌─────────────────────────────┐
+│  SG-DLT — Surface Grind 1  │  │  STR-MAN — Straightening    │
+│  ⏸ PAUSED — Break          │  │  ○ IDLE                     │
+│  E041-A + E041-B            │  │  No active job              │
+│  Priya S.  ·  paused 3m    │  │                             │
+│  [View]  [Resume]           │  │  Queued: 2 UIDs             │
+│                             │  │                             │
+│  Queued: 6 UIDs             │  │                             │
+└─────────────────────────────┘  └─────────────────────────────┘
+```
+
+Supervisor can Start, Pause, Resume, or Close any job from this view — not just their own. Useful when an operator is absent or needs assistance.
+
+---
+
+### Batch job timing (furnace and grinding batches)
+
+For batch jobs, the timer applies to the entire batch — all UIDs share one set of timing records.
+
+**Furnace batch timing:**
+- One START timestamp for the batch
+- Pause/Resume applies to the whole batch (e.g. furnace paused for maintenance)
+- On Close: one actual temperature and soak time entered for the batch
+- All UIDs in the batch get the same timing record stamped on their step log
+- Net work time = time from Start to Close, minus pauses
+
+**Grinding batch timing:**
+- One START timestamp for the batch (all bars on the machine)
+- One net work time for the whole batch
+- On Close: all bars in the batch advance to next step simultaneously
+- Each UID's step log shows the same start/close timestamps and net work time
+
+---
+
+### Where timing is shown across the system
+
+**1. Job Execution page (this page) — live:**
+- Active time counter (HH:MM:SS, live)
+- Net work time counter (HH:MM:SS, live)
+- Pause duration counter when paused
+
+**2. Production Floor (Page 7) — per workstation:**
+Each workstation card shows:
+- Current job status (● IN PROGRESS / ⏸ PAUSED / ○ IDLE)
+- Elapsed time on current job: e.g. "Running 00:31:14"
+- Paused indicator with reason if paused: "⏸ Paused — Break · 00:04:17"
+
+**3. UID Detail page (Page 11) — per step:**
+Step history table gains timing columns:
+- Started at (timestamp)
+- Closed at (timestamp)
+- Net work time (HH:MM:SS — active time only, pauses excluded)
+- Pause count
+- Pause detail (expandable — each pause with reason, duration, timestamp)
+
+**4. Reports (Page 13) — aggregate:**
+Report 10 — Job Timing Report (new report):
+
+**What it shows:**
+- Average net work time per step per workstation across any date range
+- Comparison: average vs actual for individual UIDs (which jobs ran long, which ran short)
+- Pause frequency and reasons per step and per operator
+- Time per operator per shift (how much active work time vs idle vs pause)
+- Longest running jobs (UIDs that spent the most time at a specific step — potential quality or machine issues)
+
+**Filters:** Date range, location, workstation, step, operator, cycle type, shift.
+
+---
+
+### Timing record stored per job
+
+Each job close event saves a complete timing record:
+
+```json
+{
+  "uid": "E043",
+  "step": 5,
+  "operation": "OP10 Rough Mill",
+  "workstation": "MM22",
+  "workstation_unit": "MM22-1",
+  "operator_id": "EMP-042",
+  "operator_name": "Ravi K.",
+  "shift_id": "SHIFT-2024-1115-2",
+  "batch_id": null,
+  "started_at": "2024-11-15T14:22:00",
+  "closed_at": "2024-11-15T15:01:42",
+  "net_work_seconds": 1874,
+  "total_elapsed_seconds": 2322,
+  "pauses": [
+    {
+      "paused_at": "2024-11-15T14:38:17",
+      "resumed_at": "2024-11-15T14:43:29",
+      "reason": "Break",
+      "notes": "",
+      "duration_seconds": 312
+    },
+    {
+      "paused_at": "2024-11-15T14:55:00",
+      "resumed_at": "2024-11-15T14:59:44",
+      "reason": "Machine issue",
+      "notes": "Chuck re-tightened",
+      "duration_seconds": 284
+    }
+  ],
+  "qc_result": "Pass",
+  "qc_value": "",
+  "qc_type": null
+}
+```
+
+---
+
+### Role-by-role: what each sees on login
+
+**Operator:**
+- Lands directly on Job Execution page
+- Sees only their assigned jobs at their location
+- Active job card at top, queue below
+- Large touch targets — optimised for tablet and phone
+- Cannot see other operators' jobs
+
+**Supervisor:**
+- Sees Job Execution page as a floor-wide view at their location
+- All workstations with live job status and timers
+- Can act on any job (Start / Pause / Resume / Close)
+- Receives alert when any job at their location is paused longer than a configured threshold (e.g. paused for >30 minutes — potential issue)
+
+**Manager:**
+- Same as Supervisor view but includes summary metrics at top:
+  - Jobs running right now: count
+  - Jobs paused right now: count and top pause reason
+  - Average active time per step today vs historical average
+  - Operators with no active job (idle)
+- Can act on any job at their location
+
+**Admin:**
+- Both locations visible. Can toggle between Faridabad / Dharmapuri / Both.
+- All the above.
+
+---
+
+### Pause threshold alert
+
+Admin configures a maximum acceptable pause duration per step (e.g. 30 minutes). If any job remains paused longer than this threshold:
+- Alert sent to Supervisor on duty at that location
+- Alert appears in topbar bell
+- Workstation card on Production Floor shows red pulsing indicator
+- Dashboard alerts panel shows: "E043 at MM22 paused >30 min — Machine issue"
+
+---
+
+### Access table update
+
+| Page | Admin | Manager | Supervisor | Operator | Service | Shopfloor |
+|---|---|---|---|---|---|---|
+| Job Execution | ✓ both | ✓ own location | ✓ own location | ✓ own jobs | — | — |
+

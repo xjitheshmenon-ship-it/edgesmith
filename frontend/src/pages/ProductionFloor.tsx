@@ -118,6 +118,7 @@ export default function ProductionFloor() {
   const [storageFilter, setStorageFilter] = useState<string | null>(null)
   const [sidePanelOpen, setSidePanelOpen] = useState(true)
   const [pendingUid, setPendingUid] = useState<number | null>(null)
+  const [view, setView] = useState<'stations' | 'kanban'>('stations')
 
   // ── Live data ──────────────────────────────────────────────────────────────
   const { data: uids = [] } = useQuery<UID[]>({
@@ -255,6 +256,26 @@ export default function ProductionFloor() {
     return { totalActive, onHold, inBatch, running, idle, hold, total: totalActive + onHold }
   }, [uids, heldUids, cards])
 
+  // ── Kanban: UIDs grouped by current storage location (WIP flow) ────────────
+  const KANBAN_ORDER = ['RM', 'RM-Q', 'RM-D', 'HT-Q', 'HT-D', 'MC-Q', 'MC-D', 'QC-Q', 'QC-D', 'FG']
+  const kanbanCols = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    const all = [...uids, ...heldUids].filter(
+      (u) => (!term || u.code.toLowerCase().includes(term)) && (!storageFilter || u.current_storage_code === storageFilter)
+    )
+    const seen = new Set<string>()
+    const byStorage = new Map<string, UID[]>()
+    for (const u of all) {
+      const k = u.current_storage_code || '—'
+      seen.add(k)
+      const arr = byStorage.get(k)
+      if (arr) arr.push(u)
+      else byStorage.set(k, [u])
+    }
+    const ordered = [...KANBAN_ORDER.filter((k) => seen.has(k)), ...[...seen].filter((k) => !KANBAN_ORDER.includes(k))]
+    return ordered.map((code) => ({ code, uids: byStorage.get(code) ?? [] }))
+  }, [uids, heldUids, search, storageFilter])
+
   return (
     <div style={{ padding: '24px 28px 60px' }}>
       {/* ── Header ───────────────────────────────────────────────────────── */}
@@ -268,6 +289,21 @@ export default function ProductionFloor() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* View switcher */}
+          <div style={{ display: 'flex', gap: 3, background: 'var(--surface-3)', borderRadius: 9, padding: 3 }}>
+            {([['stations', 'Stations'], ['kanban', 'Kanban']] as const).map(([key, label]) => {
+              const on = view === key
+              return (
+                <button key={key} onClick={() => setView(key)}
+                  style={{ border: 'none', borderRadius: 7, padding: '6px 12px', cursor: 'pointer',
+                    background: on ? 'var(--surface)' : 'transparent', color: on ? 'var(--ink)' : 'var(--ink-2)',
+                    boxShadow: on ? 'var(--shadow-e1)' : 'none',
+                    fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, letterSpacing: '0.04em' }}>
+                  {label}
+                </button>
+              )
+            })}
+          </div>
           <div style={{ position: 'relative' }}>
             <Search size={14} style={{ position: 'absolute', left: 11, top: 11, color: 'var(--ink-3)' }} />
             <input
@@ -278,10 +314,12 @@ export default function ProductionFloor() {
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <button className="btn-secondary" onClick={() => setSidePanelOpen((o) => !o)}>
-            {sidePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-            Storage
-          </button>
+          {view === 'stations' && (
+            <button className="btn-secondary" onClick={() => setSidePanelOpen((o) => !o)}>
+              {sidePanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
+              Storage
+            </button>
+          )}
         </div>
       </div>
 
@@ -322,7 +360,8 @@ export default function ProductionFloor() {
         </div>
       )}
 
-      {/* ── Body: cards grid + storage side panel ────────────────────────── */}
+      {/* ── Body: Stations view (cards + storage panel) or Kanban view ────── */}
+      {view === 'stations' ? (
       <div style={{ display: 'grid', gridTemplateColumns: sidePanelOpen ? '1fr 220px' : '1fr', gap: 20, alignItems: 'start' }}>
         {/* Workstation cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
@@ -412,6 +451,51 @@ export default function ProductionFloor() {
           </div>
         )}
       </div>
+      ) : (
+        <KanbanBoard columns={kanbanCols} />
+      )}
+    </div>
+  )
+}
+
+// ── Kanban view: UIDs as cards in columns by storage location (WIP flow) ─────
+function kpill(bg: string, fg: string): React.CSSProperties {
+  return { display: 'inline-flex', alignItems: 'center', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', padding: '2px 7px', borderRadius: 20, background: bg, color: fg }
+}
+function KanbanBoard({ columns }: { columns: { code: string; uids: UID[] }[] }) {
+  if (columns.length === 0) {
+    return <div className="card" style={{ padding: 32, textAlign: 'center', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-3)' }}>No UIDs in production.</div>
+  }
+  return (
+    <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12, alignItems: 'flex-start' }}>
+      {columns.map((col) => (
+        <div key={col.code} style={{ flex: '0 0 232px', background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: 12, display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 280px)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderBottom: '1px solid var(--line)' }}>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>{col.code}</span>
+            <span style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13, color: col.uids.length ? 'var(--accent)' : 'var(--ink-3)' }}>{col.uids.length}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 10, overflowY: 'auto' }}>
+            {col.uids.map((u) => (
+              <div key={u.id} style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 10, padding: '10px 12px', boxShadow: 'var(--shadow-e1)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{u.code}</span>
+                  {u.status === 'on_hold'
+                    ? <span style={kpill('rgba(229,72,77,.13)', '#c0392b')}>HOLD</span>
+                    : <span style={kpill('rgba(34,160,107,.14)', '#1c7a52')}>{(u.status || 'active').toUpperCase()}</span>}
+                </div>
+                <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 11.5, color: 'var(--ink-2)' }}>
+                  Step {u.current_step_number} · {u.current_step_name}
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 7 }}>
+                  {u.cycle_type_name && <span style={kpill('rgba(45,111,181,.14)', '#2d6fb5')}>{u.cycle_type_name}</span>}
+                  {u.priority && u.priority !== 'normal' && <span style={kpill('rgba(229,72,77,.13)', '#e5484d')}>{u.priority.toUpperCase()}</span>}
+                </div>
+              </div>
+            ))}
+            {col.uids.length === 0 && <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', padding: '6px 2px' }}>empty</div>}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

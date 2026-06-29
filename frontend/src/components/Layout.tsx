@@ -7,7 +7,7 @@ import { format } from 'date-fns'
 import { useState, useEffect } from 'react'
 import {
   LayoutDashboard, Package, Search, Monitor, Users, LogOut,
-  Plus, X, Zap, ChevronRight, Sun, Moon,
+  Plus, X, Zap, ChevronRight, ChevronDown, Sun, Moon,
   Inbox, Link2, Truck, Download, Tag, Factory, Layers, CheckCircle2,
   FileText, Calendar, UserPlus, BarChart3, GitBranch, List, Thermometer, BadgeCheck, Lock,
 } from 'lucide-react'
@@ -19,7 +19,7 @@ interface NavItem {
   icon: React.ReactNode
   roles: string[]
 }
-interface NavSection { title: string; items: NavItem[]; location?: 'F1' | 'F2' }
+interface NavSection { title: string; items: NavItem[]; location?: 'F1' | 'F2'; defaultCollapsed?: boolean }
 
 const ALL = ['admin', 'manager', 'supervisor', 'operator', 'service', 'shopfloor']
 const sz = 16
@@ -28,6 +28,7 @@ const sz = 16
 const SECTIONS: NavSection[] = [
   { title: 'OVERVIEW', items: [
     { label: 'Dashboard', to: '/', icon: <LayoutDashboard size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+    { label: 'Shopfloor Display', to: '/shopfloor', icon: <Monitor size={sz} />, roles: ALL },
   ]},
   { title: 'FARIDABAD', location: 'F2', items: [
     { label: 'Raw Material Intake', to: '/faridabad', icon: <Inbox size={sz} />, roles: ['admin', 'manager'] },
@@ -48,15 +49,12 @@ const SECTIONS: NavSection[] = [
     { label: 'Reports', to: '/reports', icon: <BarChart3 size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'Service Lookup', to: '/uid-lookup', icon: <Search size={sz} />, roles: ['admin', 'manager', 'supervisor', 'service'] },
   ]},
-  { title: 'CONFIGURATION', items: [
+  { title: 'CONFIGURATION', defaultCollapsed: true, items: [
     { label: 'Cycle Builder', to: '/config', icon: <GitBranch size={sz} />, roles: ['admin', 'manager'] },
     { label: 'Master Lists', to: '/config', icon: <List size={sz} />, roles: ['admin', 'manager'] },
     { label: 'Tempering Parameters', to: '/config', icon: <Thermometer size={sz} />, roles: ['admin'] },
     { label: 'Employee Profiles', to: '/employees', icon: <BadgeCheck size={sz} />, roles: ['admin', 'manager'] },
     { label: 'Users and Roles', to: '/users', icon: <Lock size={sz} />, roles: ['admin'] },
-  ]},
-  { title: 'DISPLAY', items: [
-    { label: 'Shopfloor Display', to: '/shopfloor', icon: <Monitor size={sz} />, roles: ALL },
   ]},
 ]
 
@@ -234,6 +232,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   })
   const canSwitchLocation = ['admin', 'manager'].includes(user?.role || '')
   const [loc, setLoc] = useState<'F1' | 'F2' | 'both'>('both')
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    () => new Set(SECTIONS.filter(s => s.defaultCollapsed).map(s => s.title))
+  )
+  const toggleSection = (title: string) =>
+    setCollapsed(prev => {
+      const next = new Set(prev)
+      next.has(title) ? next.delete(title) : next.add(title)
+      return next
+    })
 
   const role = user?.role || ''
   const visibleSections = SECTIONS
@@ -288,12 +295,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Sectioned nav */}
         <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px 12px 0' }}>
-          {visibleSections.map(section => (
+          {visibleSections.map(section => {
+            const isCollapsed = collapsed.has(section.title)
+            const sectionActive = section.items.some(it => it.to !== '/' && (location.pathname === it.to || location.pathname.startsWith(it.to + '/')))
+            return (
             <div key={section.title} style={{ marginBottom: 6 }}>
-              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.16em', color: 'var(--chrome-muted)', padding: '12px 8px 6px' }}>
+              <button
+                onClick={() => toggleSection(section.title)}
+                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', background: 'none', border: 'none', cursor: 'pointer',
+                  fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.16em',
+                  color: sectionActive && isCollapsed ? 'var(--brand-dot)' : 'var(--chrome-muted)', padding: '12px 8px 6px', textAlign: 'left' }}
+              >
+                <ChevronDown size={11} style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'none', transition: 'transform .15s', flexShrink: 0 }} />
                 {section.title}
-              </div>
-              {section.items.map((item, i) => {
+              </button>
+              {!isCollapsed && section.items.map((item, i) => {
                 const active = item.to === '/'
                   ? location.pathname === '/'
                   : location.pathname === item.to || location.pathname.startsWith(item.to + '/')
@@ -319,7 +335,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                 )
               })}
             </div>
-          ))}
+            )
+          })}
         </nav>
 
         {/* ── Job Queue panel (supervisor+) ─── */}
