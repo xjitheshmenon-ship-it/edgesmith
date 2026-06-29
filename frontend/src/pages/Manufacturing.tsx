@@ -34,10 +34,14 @@ const PRIORITIES = ['high', 'normal', 'low'] as const
 type Priority = (typeof PRIORITIES)[number]
 
 /* The MO list/detail endpoints may also return priority and a required
-   delivery date that aren't yet in the shared ManufacturingOrder type. */
+   delivery date that aren't yet in the shared ManufacturingOrder type.
+   The list endpoint now also returns per-row aggregate UID counts. */
 type Mo = ManufacturingOrder & {
   priority?: string | null
   required_delivery_date?: string | null
+  uids_linked?: number | null
+  uids_dispatched?: number | null
+  uids_remaining?: number | null
 }
 
 /* ─── derived fulfilment state ─────────────────────────────────────────────── */
@@ -104,11 +108,16 @@ function SectionLabel({ icon, children, right }: { icon?: React.ReactNode; child
   )
 }
 
-/* compute fulfilment stats for an MO given its linked UIDs (if loaded) */
+/* Compute fulfilment stats for an MO.
+   The list endpoint returns uids_linked / uids_dispatched / uids_remaining on
+   every row, so prefer those aggregates. When the linked-UID detail (uids) is
+   loaded for the selected row, prefer its live count for `linked` so the table
+   stays in sync with the drawer; the dispatched/remaining aggregates remain the
+   source of truth. */
 function computeStats(mo: Mo, uids?: UID[]): MoStats {
-  const linked = uids ? uids.length : mo.uid_count ?? 0
-  const dispatched = uids ? uids.filter((u) => u.status === 'dispatched').length : 0
-  const remaining = Math.max((mo.quantity ?? 0) - dispatched, 0)
+  const linked = uids ? uids.length : mo.uids_linked ?? mo.uid_count ?? 0
+  const dispatched = mo.uids_dispatched ?? 0
+  const remaining = mo.uids_remaining ?? Math.max((mo.quantity ?? 0) - dispatched, 0)
   let fulfil: Fulfil = 'open'
   if (linked === 0) fulfil = 'open'
   else if (dispatched === 0) fulfil = 'in_progress'
@@ -176,9 +185,10 @@ export default function Manufacturing() {
 
   // Aggregate counts for the header strip.
   const summary = useMemo(() => {
-    const open = orders.filter((o) => (o.uid_count ?? 0) === 0).length
+    const linkedOf = (o: Mo) => o.uids_linked ?? o.uid_count ?? 0
+    const open = orders.filter((o) => linkedOf(o) === 0).length
     const totalQty = orders.reduce((a, o) => a + (o.quantity ?? 0), 0)
-    const totalLinked = orders.reduce((a, o) => a + (o.uid_count ?? 0), 0)
+    const totalLinked = orders.reduce((a, o) => a + linkedOf(o), 0)
     return { total: orders.length, open, totalQty, totalLinked }
   }, [orders])
 
@@ -277,7 +287,9 @@ export default function Manufacturing() {
                 <tbody>
                   {filtered.map((mo) => {
                     const isSel = mo.id === selectedId
-                    // For the selected row use live UID data; others fall back to uid_count.
+                    // Dispatched/Remaining come from the row's own aggregate fields
+                    // for every row; the selected row also uses live UID data so
+                    // its linked count tracks the drawer.
                     const stats = computeStats(mo, isSel ? selectedUids : undefined)
                     const meta = FULFIL_META[stats.fulfil]
                     return (
@@ -296,10 +308,10 @@ export default function Manufacturing() {
                         <td style={TD}><span className={meta.cls}>{meta.label}</span></td>
                         <td style={{ ...TD, textAlign: 'right', fontFamily: MONO }}>{stats.linked}</td>
                         <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: stats.dispatched > 0 ? C.greenText : C.ink3 }}>
-                          {isSel ? stats.dispatched : '—'}
+                          {stats.dispatched}
                         </td>
                         <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: C.ink2 }}>
-                          {isSel ? stats.remaining : (mo.quantity ?? 0)}
+                          {stats.remaining}
                         </td>
                         <td style={TD}>
                           <ProgressBar dispatched={stats.dispatched} quantity={mo.quantity ?? 0} fulfil={stats.fulfil} />

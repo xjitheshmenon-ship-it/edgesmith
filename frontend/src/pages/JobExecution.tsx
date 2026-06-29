@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { uidApi, factoryApi, cycleApi, shiftApi } from '../api/client'
+import { uidApi, factoryApi, cycleApi, shiftApi, jobApi } from '../api/client'
 import type { UID, Workstation, CycleType, CycleStep, FactoryLocation } from '../types'
 import PriorityBadge from '../components/PriorityBadge'
 import { useAuth } from '../hooks/useAuth'
@@ -21,27 +21,29 @@ import {
 } from 'lucide-react'
 import { format, formatDistanceToNowStrict } from 'date-fns'
 
-// ── Local job runtime state ──────────────────────────────────────────────────
-// NOTE: the spec describes a persisted START / PAUSE / RESUME / CLOSE timer.
-// The available API only exposes uidApi.completeStep (the CLOSE → advance
-// action). No start/pause/resume endpoints exist, so the timer here is driven
-// client-side (resets on reload). CLOSE is wired to the real completeStep call.
+// ── Persisted job runtime state ──────────────────────────────────────────────
+// Timing is now server-backed via jobApi.start / pause / resume / complete,
+// each of which records a job_events row. jobApi.events(uid) returns the
+// authoritative active_seconds / paused_seconds / status; the page keeps a
+// local one-second ticker for a smooth display that re-syncs from the server
+// figure on each refetch. CLOSE records the timing event AND calls the existing
+// uidApi.completeStep path so the step still advances.
+type JobStatus = 'running' | 'paused' | 'idle' | 'complete'
+// Visual phase used by the active-job card, derived from the server status.
 type JobPhase = 'queued' | 'in_progress' | 'paused'
 
-interface PauseLog {
-  reason: string
-  notes: string
-  startedAt: number
-  endedAt: number | null
+interface JobEvent {
+  event_type: 'start' | 'pause' | 'resume' | 'complete'
+  reason: string | null
+  operator_name: string | null
+  created_at: string
 }
 
-interface Runtime {
-  uid_id: number
-  phase: JobPhase
-  startedAt: number // first start (epoch ms)
-  resumedAt: number // last resume/start (epoch ms)
-  netBeforeResume: number // accumulated net work ms before current run
-  pauses: PauseLog[]
+interface JobEventsResponse {
+  events: JobEvent[]
+  active_seconds: number
+  paused_seconds: number
+  status: JobStatus
 }
 
 const PAUSE_REASONS = [
@@ -219,12 +221,7 @@ export default function JobExecution() {
       : adminLocation
     : user?.primary_location_id ?? undefined
 
-  // Pause-threshold (minutes). Admin-configured per spec; no endpoint exists,
-  // so this is a client-side control clearly marked "not yet wired".
-  const [pauseThresholdMin, setPauseThresholdMin] = useState(30)
-
   const [activeId, setActiveId] = useState<number | null>(null)
-  const [runtime, setRuntime] = useState<Runtime | null>(null)
   const [showPause, setShowPause] = useState(false)
   const [pauseReason, setPauseReason] = useState(PAUSE_REASONS[0])
   const [pauseNotes, setPauseNotes] = useState('')
@@ -237,8 +234,8 @@ export default function JobExecution() {
   const [actualTemp, setActualTemp] = useState('')
   const [actualTime, setActualTime] = useState('')
   const [flagged, setFlagged] = useState(false)
-  const runtimeRef = useRef(runtime)
-  runtimeRef.current = runtime
+  const activeIdRef = useRef(activeId)
+  activeIdRef.current = activeId
 
   // ── Operator queue (location-scoped server-side) ──────────────────────────
   const {
@@ -261,6 +258,28 @@ export default function JobExecution() {
   const { data: cycles = [] } = useQuery<CycleType[]>({
     queryKey: ['jobexec-cycles'],
     queryFn: () => cycleApi.list().then((r) => r.data),
+  })
+
+  // ── Persisted job timing for the active UID (server-authoritative) ────────
+  const { data: jobEvents, dataUpdatedAt: eventsUpdatedAt } = useQuery<JobEventsResponse>({
+    queryKey: ['jobexec-events', activeId],
+    queryFn: () => jobApi.events(activeId as number).then((r) => r.data),
+    enabled: activeId != null && !isFloorView,
+    refetchInterval: 15_000,
+  })
+
+  // ── Admin pause-threshold (persisted) ─────────────────────────────────────
+  const { data: pauseThreshold } = useQuery<{ max_pause_minutes: number }>({
+    queryKey: ['jobexec-pause-threshold'],
+    queryFn: () => jobApi.getPauseThreshold().then((r) => r.data),
+    enabled: isFloorView,
+  })
+  const pauseThresholdMin = pauseThreshold?.max_pause_minutes ?? 30
+
+  const setPauseThreshold = useMutation({
+    mutationFn: (max_pause_minutes: number) =>
+      jobApi.setPauseThreshold({ max_pause_minutes }).then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobexec-pause-threshold'] }),
   })
 
   // ── Floor-wide view data (supervisor / manager / admin) ───────────────────
@@ -299,13 +318,34 @@ export default function JobExecution() {
     })
   }, [floorRows, workstations, isAdmin, adminLocation, user])
 
+  // ── Timing mutations (each records a job_events row) ──────────────────────
+  const invalidateEvents = () =>
+    qc.invalidateQueries({ queryKey: ['jobexec-events', activeIdRef.current] })
+
+  const startJobMut = useMutation({
+    mutationFn: () => jobApi.start(activeIdRef.current as number).then((r) => r.data),
+    onSuccess: invalidateEvents,
+  })
+  const pauseJobMut = useMutation({
+    mutationFn: (reason: string) =>
+      jobApi.pause(activeIdRef.current as number, { reason }).then((r) => r.data),
+    onSuccess: invalidateEvents,
+  })
+  const resumeJobMut = useMutation({
+    mutationFn: () => jobApi.resume(activeIdRef.current as number).then((r) => r.data),
+    onSuccess: invalidateEvents,
+  })
+
   const completeStep = useMutation({
-    mutationFn: (data: Record<string, unknown>) => {
-      const id = (runtimeRef.current?.uid_id ?? activeId) as number
+    mutationFn: async (data: Record<string, unknown>) => {
+      const id = activeIdRef.current as number
+      // Record the timing event first, then advance the step.
+      await jobApi.complete(id, { reason: (data.notes as string) || undefined })
       return uidApi.completeStep(id, data).then((r) => r.data)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['jobexec-queue'] })
+      invalidateEvents()
       resetActive()
     },
   })
@@ -349,13 +389,37 @@ export default function JobExecution() {
     }
   }, [currentStep, workstations, selectedWS])
 
-  // Is the runtime for the currently-active UID? Otherwise treat as queued.
-  const liveRuntime = runtime && active && runtime.uid_id === active.id ? runtime : null
-  const phase: JobPhase = liveRuntime?.phase ?? 'queued'
+  // ── Server-driven phase + live timer ──────────────────────────────────────
+  // jobEvents.status is authoritative. Map it to the visual phase used by the
+  // card. 'idle'/'complete'/absent → queued (Start available).
+  const status: JobStatus = jobEvents?.status ?? 'idle'
+  const phase: JobPhase =
+    status === 'running' ? 'in_progress' : status === 'paused' ? 'paused' : 'queued'
   const now = useNow(phase === 'in_progress' || phase === 'paused')
 
+  // Pause events recorded for this job (for the status row + pause history).
+  const pauseEvents = useMemo(
+    () => (jobEvents?.events ?? []).filter((e) => e.event_type === 'pause'),
+    [jobEvents]
+  )
+  const lastPauseEvent = pauseEvents.length ? pauseEvents[pauseEvents.length - 1] : null
+
+  // Wall-clock seconds elapsed since the server figures were last fetched; we
+  // add these to the running/paused counter so the on-screen clock ticks, then
+  // re-sync to the server value on every refetch.
+  const sinceSyncSec = Math.max(0, Math.floor((now - eventsUpdatedAt) / 1000))
+  const serverActiveSec = jobEvents?.active_seconds ?? 0
+  const serverPausedSec = jobEvents?.paused_seconds ?? 0
+  const activeSec = serverActiveSec + (status === 'running' ? sinceSyncSec : 0)
+  const pausedSec = serverPausedSec + (status === 'paused' ? sinceSyncSec : 0)
+
+  // Display figures (ms for the shared hhmmss helper).
+  const netMs = activeSec * 1000
+  const activeSinceResumeMs = netMs
+  const totalElapsedMs = (activeSec + pausedSec) * 1000
+  const pausedForMs = pausedSec * 1000
+
   function resetActive() {
-    setRuntime(null)
     setShowClose(false)
     setShowPause(false)
     setSelectedWS(undefined)
@@ -369,53 +433,26 @@ export default function JobExecution() {
   }
 
   function startJob() {
-    if (!active) return
-    const t = Date.now()
-    setRuntime({
-      uid_id: active.id,
-      phase: 'in_progress',
-      startedAt: t,
-      resumedAt: t,
-      netBeforeResume: 0,
-      pauses: [],
-    })
+    if (!active || startJobMut.isPending) return
+    startJobMut.mutate()
   }
 
   function confirmPause() {
-    if (!liveRuntime) return
-    const t = Date.now()
-    setRuntime({
-      ...liveRuntime,
-      phase: 'paused',
-      netBeforeResume: liveRuntime.netBeforeResume + (t - liveRuntime.resumedAt),
-      pauses: [...liveRuntime.pauses, { reason: pauseReason, notes: pauseNotes, startedAt: t, endedAt: null }],
+    if (pauseJobMut.isPending) return
+    const reason = pauseNotes.trim() ? `${pauseReason} — ${pauseNotes.trim()}` : pauseReason
+    pauseJobMut.mutate(reason, {
+      onSuccess: () => {
+        setShowPause(false)
+        setPauseNotes('')
+        setPauseReason(PAUSE_REASONS[0])
+      },
     })
-    setShowPause(false)
-    setPauseNotes('')
-    setPauseReason(PAUSE_REASONS[0])
   }
 
   function resumeJob() {
-    if (!liveRuntime) return
-    const t = Date.now()
-    const pauses = liveRuntime.pauses.slice()
-    const last = pauses[pauses.length - 1]
-    if (last && last.endedAt == null) pauses[pauses.length - 1] = { ...last, endedAt: t }
-    setRuntime({ ...liveRuntime, phase: 'in_progress', resumedAt: t, pauses })
+    if (resumeJobMut.isPending) return
+    resumeJobMut.mutate()
   }
-
-  // Derived timer figures.
-  const netMs =
-    liveRuntime == null
-      ? 0
-      : liveRuntime.phase === 'in_progress'
-        ? liveRuntime.netBeforeResume + (now - liveRuntime.resumedAt)
-        : liveRuntime.netBeforeResume
-  const activeSinceResumeMs =
-    liveRuntime && liveRuntime.phase === 'in_progress' ? now - liveRuntime.resumedAt : 0
-  const totalElapsedMs = liveRuntime ? now - liveRuntime.startedAt : 0
-  const lastPause = liveRuntime?.pauses[liveRuntime.pauses.length - 1]
-  const pausedForMs = lastPause && lastPause.endedAt == null ? now - lastPause.startedAt : 0
 
   const temper = isTemperStep(active?.current_step_name)
   const converting = isConvertingStep(active?.current_step_name) || !!currentStep?.is_converting_step
@@ -447,7 +484,7 @@ export default function JobExecution() {
       data.actual_temp_c = actualTemp ? parseFloat(actualTemp) : null
       data.actual_soak_minutes = actualTime ? parseInt(actualTime, 10) : null
     }
-    if (liveRuntime) data.net_work_seconds = Math.round(netMs / 1000)
+    if (jobEvents && status !== 'idle') data.net_work_seconds = activeSec
     completeStep.mutate(data)
   }
 
@@ -527,9 +564,11 @@ export default function JobExecution() {
           floorShift={floorShift}
           setFloorShift={setFloorShift}
           role={role}
+          isAdmin={isAdmin}
           metrics={floorMetrics}
           pauseThresholdMin={pauseThresholdMin}
-          setPauseThresholdMin={setPauseThresholdMin}
+          onSavePauseThreshold={(v) => setPauseThreshold.mutate(v)}
+          savingPauseThreshold={setPauseThreshold.isPending}
         />
       ) : isLoading ? (
         <div
@@ -593,7 +632,7 @@ export default function JobExecution() {
                       }}
                     >
                       {phaseLabel}
-                      {phase === 'paused' && lastPause ? ` — ${lastPause.reason}` : ''}
+                      {phase === 'paused' && lastPauseEvent?.reason ? ` — ${lastPauseEvent.reason}` : ''}
                     </span>
                   </div>
                   <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>
@@ -681,21 +720,21 @@ export default function JobExecution() {
                 {/* Step progress track */}
                 <StepTrack steps={steps} currentNumber={active.current_step_number} />
 
-                {/* Pause history */}
-                {liveRuntime && liveRuntime.pauses.length > 0 && (
+                {/* Pause history (from persisted job events) */}
+                {pauseEvents.length > 0 && (
                   <div>
                     <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-3)', marginBottom: 6 }}>
                       Pause history this job
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {liveRuntime.pauses.map((p, i) => (
+                      {pauseEvents.map((p, i) => (
                         <div key={i} style={{ fontSize: 12, color: 'var(--ink-2)' }}>
-                          {p.reason}
+                          {p.reason ?? 'Paused'}
                           {' — '}
                           <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>
-                            {p.endedAt ? hhmmss(p.endedAt - p.startedAt) : 'ongoing'}
+                            {format(new Date(p.created_at), 'HH:mm')}
                           </span>
-                          {p.notes ? ` · ${p.notes}` : ''}
+                          {p.operator_name ? ` · ${p.operator_name}` : ''}
                         </div>
                       ))}
                     </div>
@@ -715,10 +754,10 @@ export default function JobExecution() {
                     <button
                       className="btn-primary"
                       style={{ flex: 1, minWidth: 180, height: 56, fontSize: 16, justifyContent: 'center' }}
-                      disabled={active.status !== 'active'}
+                      disabled={active.status !== 'active' || startJobMut.isPending}
                       onClick={startJob}
                     >
-                      <Play size={20} /> Start Job
+                      <Play size={20} /> {startJobMut.isPending ? 'Starting…' : 'Start Job'}
                     </button>
                   )}
                   {phase === 'in_progress' && (
@@ -743,9 +782,10 @@ export default function JobExecution() {
                     <button
                       className="btn-primary"
                       style={{ flex: 1, minWidth: 180, height: 56, fontSize: 16, justifyContent: 'center' }}
+                      disabled={resumeJobMut.isPending}
                       onClick={resumeJob}
                     >
-                      <Play size={20} /> Resume Job
+                      <Play size={20} /> {resumeJobMut.isPending ? 'Resuming…' : 'Resume Job'}
                     </button>
                   )}
                 </div>
@@ -857,8 +897,8 @@ export default function JobExecution() {
             <button className="btn-secondary" style={{ flex: 1, height: 48, justifyContent: 'center' }} onClick={() => setShowPause(false)}>
               Cancel
             </button>
-            <button className="btn-primary" style={{ flex: 1, height: 48, justifyContent: 'center' }} onClick={confirmPause}>
-              <Pause size={16} /> Confirm Pause
+            <button className="btn-primary" style={{ flex: 1, height: 48, justifyContent: 'center' }} disabled={pauseJobMut.isPending} onClick={confirmPause}>
+              <Pause size={16} /> {pauseJobMut.isPending ? 'Pausing…' : 'Confirm Pause'}
             </button>
           </div>
         </ModalShell>
@@ -889,8 +929,8 @@ export default function JobExecution() {
             <SummaryRow
               label="Pauses"
               value={
-                liveRuntime && liveRuntime.pauses.length
-                  ? `${liveRuntime.pauses.length}  (${liveRuntime.pauses.map((p) => p.reason).join(' · ')})`
+                pauseEvents.length
+                  ? `${pauseEvents.length}  (${pauseEvents.map((p) => p.reason ?? 'paused').join(' · ')})`
                   : '0'
               }
             />
@@ -1119,9 +1159,10 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 // ════════════════════════════════════════════════════════════════════════════
 // FLOOR-WIDE VIEW — Supervisor / Manager / Admin
 // Shows every workstation at the location with its operator and queue.
-// Live per-job timing and Start/Pause/Resume/Close-any-job require a server
-// job-state endpoint that does not exist; those controls are rendered disabled
-// and clearly marked "not yet wired".
+// The admin pause-alert threshold is persisted via jobApi.get/setPauseThreshold.
+// Acting on ANOTHER operator's job (cross-operator View/Pause/Close) and the
+// aggregate live "running now / paused now" floor metrics still need a
+// cross-operator job-state feed; those controls remain disabled / not yet wired.
 // ════════════════════════════════════════════════════════════════════════════
 const SHIFT_OPTS = [
   { value: 'morning', label: 'Morning' },
@@ -1137,9 +1178,11 @@ function FloorView({
   floorShift,
   setFloorShift,
   role,
+  isAdmin,
   metrics,
   pauseThresholdMin,
-  setPauseThresholdMin,
+  onSavePauseThreshold,
+  savingPauseThreshold,
 }: {
   rows: QueueViewRow[]
   loading: boolean
@@ -1148,11 +1191,17 @@ function FloorView({
   floorShift: string
   setFloorShift: (v: string) => void
   role: string
+  isAdmin: boolean
   metrics: { stations: number; stationsStaffed: number; totalQueued: number; totalReady: number; idleOperators: number }
   pauseThresholdMin: number
-  setPauseThresholdMin: (v: number) => void
+  onSavePauseThreshold: (v: number) => void
+  savingPauseThreshold: boolean
 }) {
   const isManagerPlus = role === 'manager' || role === 'admin'
+  // Local draft synced from the persisted value; admin can save it back.
+  const [thresholdDraft, setThresholdDraft] = useState(pauseThresholdMin)
+  useEffect(() => setThresholdDraft(pauseThresholdMin), [pauseThresholdMin])
+  const thresholdDirty = thresholdDraft !== pauseThresholdMin
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -1176,8 +1225,11 @@ function FloorView({
 
         <div style={{ flex: 1 }} />
 
-        {/* Pause-threshold alert config — client-side, not yet wired */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} title="No endpoint to persist this yet — local only.">
+        {/* Pause-threshold alert config — persisted (admin-editable) */}
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          title={isAdmin ? 'Persisted server-wide pause alert threshold.' : 'Configured by admin.'}
+        >
           <Bell size={14} style={{ color: 'var(--ink-3)' }} />
           <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-3)' }}>
             Pause alert threshold
@@ -1185,13 +1237,23 @@ function FloorView({
           <input
             type="number"
             min={1}
-            value={pauseThresholdMin}
-            onChange={(e) => setPauseThresholdMin(Math.max(1, Number(e.target.value) || 1))}
+            value={thresholdDraft}
+            disabled={!isAdmin}
+            onChange={(e) => setThresholdDraft(Math.max(1, Number(e.target.value) || 1))}
             className="input"
             style={{ width: 70, height: 32, padding: '0 8px' }}
           />
           <span style={{ fontSize: 12, color: 'var(--ink-2)' }}>min</span>
-          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, color: 'var(--ink-3)' }}>not yet wired</span>
+          {isAdmin && (
+            <button
+              className="btn-secondary"
+              style={{ height: 32, padding: '0 12px', fontSize: 12 }}
+              disabled={!thresholdDirty || savingPauseThreshold}
+              onClick={() => onSavePauseThreshold(thresholdDraft)}
+            >
+              {savingPauseThreshold ? 'Saving…' : 'Save'}
+            </button>
+          )}
         </div>
 
         <button className="btn-secondary" style={{ height: 32, padding: '0 12px', fontSize: 12 }} onClick={onRetry}>

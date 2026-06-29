@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { uidApi, cycleApi } from '../api/client'
-import type { UID, CycleType, StepHistory } from '../types'
+import { uidApi } from '../api/client'
+import type { UID, StepHistory } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import {
   ShieldCheck,
@@ -111,7 +111,17 @@ export default function QC() {
   const [pendingUid, setPendingUid] = useState<number | null>(null)
 
   // ── Live data ──────────────────────────────────────────────────────────────
-  const { data: activeResult, isLoading: activeLoading, isError: activeError } = useQuery({
+  // Pending QC queue now comes straight from the dedicated endpoint, which
+  // returns the UIDs awaiting sign-off (with workstation/step already resolved).
+  const { data: pendingRows, isLoading: pendingLoading, isError: pendingError } = useQuery<UID[]>({
+    queryKey: ['qc-pending', scopedLocation],
+    queryFn: () => uidApi.qcPending(scopedLocation).then((r) => r.data),
+    refetchInterval: 30_000,
+    retry: false,
+  })
+
+  // History view: step_history carrying qc_result, sourced from the UID list.
+  const { data: activeResult, isError: activeError } = useQuery({
     queryKey: ['qc-uids-active', scopedLocation],
     queryFn: () => uidApi.list({ status: 'active', location_id: scopedLocation, limit: 500 }).then((r) => r.data),
     refetchInterval: 30_000,
@@ -124,49 +134,16 @@ export default function QC() {
     retry: false,
   })
 
-  // Cycle definitions identify which steps are QC sign-off steps (is_qc_step).
-  const { data: cycles = [] } = useQuery<CycleType[]>({
-    queryKey: ['qc-cycles'],
-    queryFn: () => cycleApi.list().then((r) => r.data),
-  })
-
   const activeUids: UID[] = activeResult?.items ?? []
   const holdUids: UID[] = holdResult?.items ?? []
   const allUids = useMemo(() => [...activeUids, ...holdUids], [activeUids, holdUids])
 
-  // Set of cycle-step ids flagged is_qc_step across all current cycle versions.
-  const qcStepIds = useMemo(() => {
-    const s = new Set<number>()
-    for (const ct of cycles) {
-      for (const step of ct.current_version?.steps ?? []) {
-        if (step.is_qc_step) s.add(step.id)
-      }
-    }
-    return s
-  }, [cycles])
-
-  // Workstation lookup per cycle-step id (for the pending sign-off rows; the
-  // UID payload carries no current-workstation field of its own).
-  const stepWorkstation = useMemo(() => {
-    const m = new Map<number, string>()
-    for (const ct of cycles) {
-      for (const step of ct.current_version?.steps ?? []) {
-        if (step.workstation_code || step.workstation_name) {
-          m.set(step.id, step.workstation_code ?? step.workstation_name)
-        }
-      }
-    }
-    return m
-  }, [cycles])
-
-  // ── Pending sign-offs: active UIDs whose current step is a QC step ──────────
+  // ── Pending sign-offs: live from the qc/pending endpoint ────────────────────
   const pending = useMemo(() => {
     const term = search.trim().toLowerCase()
-    return allUids
-      .filter((u) => u.current_step_id != null && qcStepIds.has(u.current_step_id))
+    return (pendingRows ?? [])
       .filter((u) => !term || u.code.toLowerCase().includes(term))
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-  }, [allUids, qcStepIds, search])
+  }, [pendingRows, search])
 
   // ── QC history: step_history entries carrying a qc_result, newest first ─────
   const qcRecords = useMemo<QcRecord[]>(() => {
@@ -193,16 +170,25 @@ export default function QC() {
     [pending, selectedUid]
   )
 
-  // ── Sign-off: only "Pass" maps to an available endpoint (advances the step) ─
+  // ── Sign-off: dedicated QC endpoint ─────────────────────────────────────────
+  //   pass       → advances the UID
+  //   fail       → puts it on_hold + alerts supervisor
+  //   borderline → flags for review without advancing
   const signOff = useMutation({
-    mutationFn: ({ uid_id, data }: { uid_id: number; data: Record<string, unknown> }) =>
-      uidApi.completeStep(uid_id, data).then((r) => r.data),
+    mutationFn: ({ uid_id, result, values, notes }: {
+      uid_id: number
+      result: 'pass' | 'fail' | 'borderline'
+      values?: Record<string, unknown>
+      notes?: string
+    }) => uidApi.qcSignoff(uid_id, { result, values, notes }).then((r) => r.data as UID),
     onMutate: ({ uid_id }) => setPendingUid(uid_id),
     onSettled: () => setPendingUid(null),
     onSuccess: () => {
       setSelectedUid(null)
+      qc.invalidateQueries({ queryKey: ['qc-pending'] })
       qc.invalidateQueries({ queryKey: ['qc-uids-active'] })
       qc.invalidateQueries({ queryKey: ['qc-uids-hold'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
     },
   })
 
@@ -245,7 +231,7 @@ export default function QC() {
         <StatTile value={counts.borderline} label="Borderline flagged" color={counts.borderline > 0 ? C.orange : undefined} />
       </div>
 
-      {activeError && (
+      {(activeError || pendingError) && (
         <div style={{ fontFamily: MONO, fontSize: 12, color: C.red, padding: '12px 16px', background: 'rgba(229,72,77,.10)', borderRadius: 10, border: '1px solid rgba(229,72,77,.25)', marginBottom: 18 }}>
           Could not load UID data. The server may be starting up — refresh in a moment.
         </div>
@@ -262,7 +248,7 @@ export default function QC() {
               : undefined}
           >Pending Sign-offs</SectionLabel>
 
-          {activeLoading && allUids.length === 0 ? (
+          {pendingLoading && (pendingRows ?? []).length === 0 ? (
             <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '20px 0' }}>Loading QC queue…</div>
           ) : pending.length === 0 ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '24px 0', color: C.ink3, fontFamily: SANS, fontSize: 13 }}>
@@ -301,7 +287,7 @@ export default function QC() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <Factory size={11} />
-                        {workstationFor(u, stepWorkstation)}
+                        {workstationFor(u)}
                       </span>
                       {u.current_storage_code && <span>· {u.current_storage_code}</span>}
                     </div>
@@ -325,13 +311,8 @@ export default function QC() {
                               <button
                                 className="btn-primary"
                                 style={{ height: 32, fontSize: 12, background: C.green }}
-                                disabled={isPending || onHold}
-                                onClick={() =>
-                                  signOff.mutate({
-                                    uid_id: u.id,
-                                    data: { qc_result: 'pass', notes: 'QC sign-off: pass' },
-                                  })
-                                }
+                                disabled={isPending}
+                                onClick={() => signOff.mutate({ uid_id: u.id, result: 'pass' })}
                               >
                                 <CheckCircle2 size={14} />
                                 {isPending ? 'Saving…' : 'Pass'}
@@ -339,25 +320,27 @@ export default function QC() {
                               <button
                                 className="btn-secondary"
                                 style={{ height: 32, fontSize: 12, color: C.redText, borderColor: 'rgba(229,72,77,.35)' }}
-                                disabled
-                                title="Fail sign-off (auto-hold + reason) requires a dedicated QC endpoint not yet exposed by the API."
+                                disabled={isPending}
+                                onClick={() => signOff.mutate({ uid_id: u.id, result: 'fail' })}
+                                title="Fail places the UID on hold and alerts the supervisor."
                               >
                                 <XCircle size={14} />
                                 Fail
                               </button>
                               <button
                                 className="btn-secondary"
-                                style={{ height: 32, fontSize: 12 }}
-                                disabled
-                                title="Rework routing to an earlier step requires a dedicated QC endpoint not yet exposed by the API."
+                                style={{ height: 32, fontSize: 12, color: C.orange, borderColor: 'rgba(245,158,11,.35)' }}
+                                disabled={isPending}
+                                onClick={() => signOff.mutate({ uid_id: u.id, result: 'borderline' })}
+                                title="Borderline flags the UID for supervisor review without advancing it."
                               >
                                 <RotateCcw size={14} />
-                                Request rework
+                                Borderline
                               </button>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
                               <Info size={11} />
-                              Pass advances the UID via complete-step. Fail / rework need dedicated endpoints (not yet available).
+                              Pass advances the UID · Fail holds it &amp; alerts the supervisor · Borderline flags for review.
                             </div>
                           </>
                         ) : (
@@ -378,6 +361,12 @@ export default function QC() {
         <LogMeasurementForm
           selected={selected}
           loggedBy={user?.full_name ?? user?.username ?? '—'}
+          canSignOff={canSignOff}
+          isPending={selected != null && pendingUid === selected.id}
+          onSignOff={(result, values, notes) => {
+            if (!selected) return
+            signOff.mutate({ uid_id: selected.id, result, values, notes })
+          }}
         />
       </div>
 
@@ -536,12 +525,11 @@ function signOffLabel(result?: string | null): string {
     default: return 'Pending'
   }
 }
-/* Best-effort workstation for a pending UID: cycle-step map first, else the
-   most recent step-history workstation, else em-dash. */
-function workstationFor(u: UID, stepWorkstation: Map<number, string>): string {
-  if (u.current_step_id != null && stepWorkstation.has(u.current_step_id)) {
-    return stepWorkstation.get(u.current_step_id)!
-  }
+/* Workstation for a pending UID. The qc/pending payload resolves the current
+   workstation directly; fall back to the most recent step-history workstation. */
+function workstationFor(u: UID): string {
+  const direct = (u as { workstation?: string | null }).workstation
+  if (direct) return direct
   const ws = (u.step_history ?? [])
     .slice()
     .sort((a, b) => new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime())
@@ -601,7 +589,19 @@ function MeasurementsRecap({ uid }: { uid: UID }) {
 }
 
 /* ── Log QC measurement form (right panel, PAGE 10 spec) ─────────────────────── */
-function LogMeasurementForm({ selected, loggedBy }: { selected: UID | null; loggedBy: string }) {
+function LogMeasurementForm({
+  selected,
+  loggedBy,
+  canSignOff,
+  isPending,
+  onSignOff,
+}: {
+  selected: UID | null
+  loggedBy: string
+  canSignOff: boolean
+  isPending: boolean
+  onSignOff: (result: 'pass' | 'fail' | 'borderline', values: Record<string, unknown>, notes?: string) => void
+}) {
   const [uidCode, setUidCode] = useState('')
   const [checkType, setCheckType] = useState<CheckType>('Hardness HRC')
   const [measured, setMeasured] = useState('')
@@ -611,9 +611,35 @@ function LogMeasurementForm({ selected, loggedBy }: { selected: UID | null; logg
   const effectiveCode = selected?.code ?? uidCode
   const stepLabel = selected
     ? `${selected.current_step_number ?? '—'} — ${selected.current_step_name ?? '—'}`
-    : 'Auto-filled from UID'
+    : 'Select a pending UID'
   const needsNotes = result === 'Fail' || result === 'Borderline'
   const isMeasurable = MEASURABLE.has(checkType)
+
+  // The measured values object posted to the QC endpoint (keyed by check type).
+  const buildValues = (): Record<string, unknown> => {
+    const v: Record<string, unknown> = {}
+    if (isMeasurable && measured.trim() !== '') {
+      const num = Number(measured)
+      v[checkType] = Number.isNaN(num) ? measured.trim() : num
+    } else if (!isMeasurable) {
+      v[checkType] = result
+    }
+    return v
+  }
+
+  const canSubmit =
+    !!selected && canSignOff && !isPending &&
+    (!needsNotes || notes.trim() !== '') &&
+    (!isMeasurable || measured.trim() !== '')
+
+  const submit = () => {
+    if (!canSubmit) return
+    const apiResult = result.toLowerCase() as 'pass' | 'fail' | 'borderline'
+    onSignOff(apiResult, buildValues(), notes.trim() || undefined)
+    setMeasured('')
+    setNotes('')
+    setResult('Pass')
+  }
 
   return (
     <div className="card" style={{ padding: '18px 20px' }}>
@@ -708,16 +734,27 @@ function LogMeasurementForm({ selected, loggedBy }: { selected: UID | null; logg
           <input className="input" value={loggedBy} disabled />
         </div>
 
-        <button className="btn-primary" disabled title="Saving QC measurements to a UID step log requires a dedicated QC endpoint not yet exposed by the API.">
+        <button className="btn-primary" disabled={!canSubmit} onClick={submit}>
           <CheckCircle2 size={14} />
-          Save measurement
+          {isPending ? 'Saving…' : 'Save & sign off'}
         </button>
 
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
-          <Info size={12} style={{ marginTop: 1, flexShrink: 0 }} />
-          Standalone measurement logging (without advancing the step) needs a dedicated QC endpoint. Until then,
-          use the Pass action in Pending Sign-offs to record a pass and advance the UID.
-        </div>
+        {!selected ? (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
+            <Info size={12} style={{ marginTop: 1, flexShrink: 0 }} />
+            Select a UID from Pending Sign-offs to record its measurement and sign off.
+          </div>
+        ) : !canSignOff ? (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
+            <Info size={12} style={{ marginTop: 1, flexShrink: 0 }} />
+            Supervisor sign-off required — your role cannot pass/fail this UID.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
+            <Info size={12} style={{ marginTop: 1, flexShrink: 0 }} />
+            Records the measured values and signs off via QC — Pass advances · Fail holds &amp; alerts · Borderline flags for review.
+          </div>
+        )}
       </div>
     </div>
   )

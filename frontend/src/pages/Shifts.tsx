@@ -516,6 +516,8 @@ export default function Shifts() {
           periodLabel={periodDef.label}
           supervisorName={supervisor?.name ?? null}
           canHandover={canHandover}
+          date={date}
+          period={period}
         />
       )}
 
@@ -560,6 +562,8 @@ function ActiveShiftTab({
   periodLabel,
   supervisorName,
   canHandover,
+  date,
+  period,
 }: {
   rows: RosterRow[]
   queue: unknown
@@ -570,6 +574,8 @@ function ActiveShiftTab({
   periodLabel: string
   supervisorName: string | null
   canHandover: boolean
+  date: string
+  period: ShiftPeriod
 }) {
   // Handover window opens within 30 minutes of shift end (spec: Page 19).
   const handoverOpen = isLive && remaining != null && remaining <= 30
@@ -675,6 +681,8 @@ function ActiveShiftTab({
         outgoing={supervisorName}
         canHandover={canHandover}
         handoverOpen={handoverOpen}
+        date={date}
+        period={period}
       />
     </>
   )
@@ -690,9 +698,19 @@ function JobStatusPill({ status }: { status: string }) {
 }
 
 /* ── Shift handover panel ────────────────────────────────────────────────────
-   Structured per spec (Page 19 / Shifts §handover). No submit/acknowledge
-   endpoint exists yet, so submission is captured in local state and clearly
-   marked as not yet persisted. */
+   Structured per spec (Page 19 / Shifts §handover). Wired to the persisted
+   handover endpoints: getHandover reflects an existing record's submitted /
+   acknowledged status, submitHandover captures the panel's notes + workstation
+   snapshot, acknowledgeHandover lets the incoming supervisor take over. */
+function safeTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  try {
+    return format(parseISO(iso), 'HH:mm, d MMM')
+  } catch {
+    return iso
+  }
+}
+
 function HandoverPanel({
   wsTable,
   shiftLabel,
@@ -700,6 +718,8 @@ function HandoverPanel({
   outgoing,
   canHandover,
   handoverOpen,
+  date,
+  period,
 }: {
   wsTable: { code: string; name: string; ops: string[]; count: number; status: string }[]
   shiftLabel: string
@@ -707,15 +727,63 @@ function HandoverPanel({
   outgoing: string | null
   canHandover: boolean
   handoverOpen: boolean
+  date: string
+  period: ShiftPeriod
 }) {
+  const qc = useQueryClient()
+
+  // Existing persisted handover for this shift (null when none submitted yet).
+  const { data: handover } = useQuery<any>({
+    queryKey: ['shift-handover', date, period],
+    queryFn: () =>
+      shiftApi.getHandover({ shift_date: date, shift_period: period }).then((r) => r.data ?? null),
+    retry: false,
+  })
+
+  const submittedRow = handover ?? null
+  const isAcknowledged = submittedRow?.status === 'acknowledged'
+
   // Outgoing supervisor confirms the auto-populated workstation statuses.
   const [confirmed, setConfirmed] = useState<Record<string, boolean>>({})
+  const [furnace, setFurnace] = useState('')
+  const [onHold, setOnHold] = useState('')
   const [equipment, setEquipment] = useState('')
   const [urgent, setUrgent] = useState('')
-  const [submitted, setSubmitted] = useState<{ at: string } | null>(null)
-  const [acknowledged, setAcknowledged] = useState<{ at: string } | null>(null)
 
   const allConfirmed = wsTable.length > 0 && wsTable.every((w) => confirmed[w.code])
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['shift-handover', date, period] })
+    qc.invalidateQueries({ queryKey: ['shift-history'] })
+  }
+
+  const submitMut = useMutation({
+    mutationFn: () =>
+      shiftApi
+        .submitHandover({
+          shift_date: date,
+          shift_period: period,
+          furnace_notes: furnace || undefined,
+          on_hold_notes: onHold || undefined,
+          equipment_issues: equipment || undefined,
+          urgent_notes: urgent || undefined,
+          workstation_status: wsTable.map((w) => ({
+            code: w.code,
+            name: w.name,
+            status: w.status,
+            uid_count: w.count,
+            operators: w.ops,
+            confirmed: !!confirmed[w.code],
+          })),
+        })
+        .then((r) => r.data),
+    onSuccess: invalidate,
+  })
+
+  const ackMut = useMutation({
+    mutationFn: (id: number) => shiftApi.acknowledgeHandover(id).then((r) => r.data),
+    onSuccess: invalidate,
+  })
 
   return (
     <div className="card" style={{ overflow: 'hidden', marginBottom: 20 }}>
@@ -731,17 +799,57 @@ function HandoverPanel({
 
       <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 20 }}>
         <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2 }}>
-          Outgoing: <strong style={{ color: C.ink, fontWeight: 600 }}>{outgoing ?? '—'}</strong>
+          Outgoing: <strong style={{ color: C.ink, fontWeight: 600 }}>{submittedRow?.outgoing_supervisor_name ?? outgoing ?? '—'}</strong>
           {' · '}{shiftLabel} · {periodLabel}
         </div>
 
-        {!canHandover && (
+        {!canHandover && !submittedRow && (
           <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, padding: '14px 16px', background: C.surface3, borderRadius: 9 }}>
             Handover is performed by the supervisor on duty. You have view-only access to this shift.
           </div>
         )}
 
-        {canHandover && (
+        {/* A handover already exists for this shift — show its persisted status. */}
+        {submittedRow ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontFamily: SANS, fontSize: 13, color: C.greenText, display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', background: 'rgba(34,160,107,.1)', borderRadius: 9 }}>
+              <Check size={15} /> Handover submitted by {submittedRow.outgoing_supervisor_name ?? outgoing ?? 'outgoing supervisor'} at {safeTime(submittedRow.submitted_at)}.
+            </div>
+
+            {(submittedRow.furnace_notes || submittedRow.on_hold_notes || submittedRow.equipment_issues || submittedRow.urgent_notes) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {submittedRow.furnace_notes && <ReadNote icon={Flame} label="Furnace batches" text={submittedRow.furnace_notes} />}
+                {submittedRow.on_hold_notes && <ReadNote icon={PauseCircle} label="UIDs on hold" text={submittedRow.on_hold_notes} />}
+                {submittedRow.equipment_issues && <ReadNote icon={Wrench} label="Equipment issues" text={submittedRow.equipment_issues} />}
+                {submittedRow.urgent_notes && <ReadNote icon={AlertTriangle} label="Urgent notes" text={submittedRow.urgent_notes} />}
+              </div>
+            )}
+
+            {isAcknowledged ? (
+              <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink, display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', background: C.surface3, borderRadius: 9 }}>
+                <ClipboardCheck size={15} style={{ color: C.greenText }} /> Acknowledged by {submittedRow.incoming_supervisor_name ?? 'incoming supervisor'} at {safeTime(submittedRow.acknowledged_at)}. Handover complete — both supervisors named on record.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2 }}>
+                  Awaiting incoming supervisor. Until acknowledged, the outgoing supervisor remains supervisor of record.
+                </span>
+                {canHandover && (
+                  <button
+                    className="btn-primary"
+                    disabled={ackMut.isPending || submittedRow.id == null}
+                    onClick={() => ackMut.mutate(submittedRow.id as number)}
+                  >
+                    <ClipboardCheck size={15} /> {ackMut.isPending ? 'Acknowledging…' : 'Acknowledge & take over'}
+                  </button>
+                )}
+                {ackMut.isError && (
+                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.red }}>Could not acknowledge — retry.</span>
+                )}
+              </div>
+            )}
+          </div>
+        ) : canHandover ? (
           <>
             {/* 1. Workstation status confirm */}
             <section>
@@ -751,11 +859,10 @@ function HandoverPanel({
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
                   {wsTable.map((w) => (
-                    <label key={w.code} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: `1px solid ${C.line}`, borderRadius: 8, cursor: submitted ? 'default' : 'pointer' }}>
+                    <label key={w.code} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: `1px solid ${C.line}`, borderRadius: 8, cursor: 'pointer' }}>
                       <input
                         type="checkbox"
                         checked={!!confirmed[w.code]}
-                        disabled={!!submitted}
                         onChange={(e) => setConfirmed((c) => ({ ...c, [w.code]: e.target.checked }))}
                       />
                       <span style={{ fontFamily: MONO, fontWeight: 600, color: C.accent }}>{w.code}</span>
@@ -768,16 +875,28 @@ function HandoverPanel({
               )}
             </section>
 
-            {/* 2. Furnace batches in progress (auto-populated from Batch Management) */}
+            {/* 2. Furnace batches in progress */}
             <section>
               <SectionLabel icon={Flame} text="Furnace batches in progress" />
-              <EmptyLine text="Auto-population from Batch Management is not yet available — note any running or mid-soak batches in Urgent notes below." />
+              <textarea
+                className="input"
+                style={{ minHeight: 64, resize: 'vertical', marginTop: 8 }}
+                placeholder="Running or mid-soak furnace batches and their state…"
+                value={furnace}
+                onChange={(e) => setFurnace(e.target.value)}
+              />
             </section>
 
-            {/* 3. UIDs on hold (auto-populated from Production Floor) */}
+            {/* 3. UIDs on hold */}
             <section>
               <SectionLabel icon={PauseCircle} text="UIDs on hold" />
-              <EmptyLine text="Auto-population from Production Floor is not yet available — record on-hold UIDs and reasons in Urgent notes below." />
+              <textarea
+                className="input"
+                style={{ minHeight: 64, resize: 'vertical', marginTop: 8 }}
+                placeholder="On-hold UIDs and the reason they are held…"
+                value={onHold}
+                onChange={(e) => setOnHold(e.target.value)}
+              />
             </section>
 
             {/* 4. Equipment issues (free text, optional) */}
@@ -788,7 +907,6 @@ function HandoverPanel({
                 style={{ minHeight: 64, resize: 'vertical', marginTop: 8 }}
                 placeholder="Any equipment issues or workstation problems noted during the shift…"
                 value={equipment}
-                disabled={!!submitted}
                 onChange={(e) => setEquipment(e.target.value)}
               />
             </section>
@@ -799,56 +917,45 @@ function HandoverPanel({
               <textarea
                 className="input"
                 style={{ minHeight: 80, resize: 'vertical', marginTop: 8 }}
-                placeholder="QC failures needing attention, on-hold UIDs and reasons, furnace batches mid-soak, general notes…"
+                placeholder="QC failures needing attention, general notes for the next shift…"
                 value={urgent}
-                disabled={!!submitted}
                 onChange={(e) => setUrgent(e.target.value)}
               />
             </section>
 
-            {/* Submit / acknowledge */}
-            {submitted ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ fontFamily: SANS, fontSize: 13, color: C.greenText, display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', background: 'rgba(34,160,107,.1)', borderRadius: 9 }}>
-                  <Check size={15} /> Handover submitted by {outgoing ?? 'outgoing supervisor'} at {submitted.at}.
-                </div>
-                {acknowledged ? (
-                  <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink, display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', background: C.surface3, borderRadius: 9 }}>
-                    <ClipboardCheck size={15} style={{ color: C.greenText }} /> Acknowledged by incoming supervisor at {acknowledged.at}. Handover complete — both supervisors named on record.
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
-                    <span style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2 }}>
-                      Awaiting incoming supervisor. Until acknowledged, the outgoing supervisor remains supervisor of record.
-                    </span>
-                    <button className="btn-primary" onClick={() => setAcknowledged({ at: format(new Date(), 'HH:mm, d MMM') })}>
-                      <ClipboardCheck size={15} /> Acknowledge &amp; take over
-                    </button>
-                  </div>
-                )}
-                <div style={{ fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
-                  Handover persistence (submit / acknowledge endpoints and permanent record) is not yet available — this confirmation is local to your session.
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
-                <button
-                  className="btn-primary"
-                  disabled={!allConfirmed}
-                  onClick={() => setSubmitted({ at: format(new Date(), 'HH:mm, d MMM') })}
-                >
-                  <Send size={15} /> Submit handover
-                </button>
-                {!allConfirmed && (
-                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
-                    Confirm every workstation status to enable submit.
-                  </span>
-                )}
-              </div>
-            )}
+            {/* Submit */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+              <button
+                className="btn-primary"
+                disabled={!allConfirmed || submitMut.isPending}
+                onClick={() => submitMut.mutate()}
+              >
+                <Send size={15} /> {submitMut.isPending ? 'Submitting…' : 'Submit handover'}
+              </button>
+              {!allConfirmed && (
+                <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
+                  Confirm every workstation status to enable submit.
+                </span>
+              )}
+              {submitMut.isError && (
+                <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.red }}>Could not submit handover — retry.</span>
+              )}
+            </div>
           </>
-        )}
+        ) : null}
       </div>
+    </div>
+  )
+}
+
+function ReadNote({ icon: Icon, label, text }: { icon: typeof Cpu; label: string; text: string }) {
+  return (
+    <div style={{ padding: '10px 12px', border: `1px solid ${C.line}`, borderRadius: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
+        <Icon size={13} style={{ color: C.ink3 }} />
+        <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.ink2 }}>{label}</span>
+      </div>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink, whiteSpace: 'pre-wrap' }}>{text}</div>
     </div>
   )
 }
@@ -871,10 +978,52 @@ function EmptyLine({ text }: { text: string }) {
 }
 
 /* ── Shift History tab ──────────────────────────────────────────────────────
-   No completed-shift/history endpoint exists in the API client; render the
-   structured table header with a clear not-yet-available empty state. */
+   Populated from the handover-history endpoint (most recent first). */
+function periodLabelOf(p: string): string {
+  const def = PERIODS.find((x) => x.key === p)
+  if (!def) return p
+  return `${def.label}`
+}
+
+function StatusCell({ status, at, kind }: { status: string | undefined; at: string | null | undefined; kind: 'submitted' | 'acknowledged' }) {
+  if (kind === 'submitted') {
+    if (!at) return <span style={{ color: C.ink3 }}>—</span>
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ ...pill, background: 'rgba(34,160,107,.14)', color: C.greenText }}><Check size={11} /> Submitted</span>
+        <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3 }}>{safeTime(at)}</span>
+      </div>
+    )
+  }
+  if (status === 'acknowledged' && at) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <span style={{ ...pill, background: 'rgba(34,160,107,.14)', color: C.greenText }}><ClipboardCheck size={11} /> Acknowledged</span>
+        <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3 }}>{safeTime(at)}</span>
+      </div>
+    )
+  }
+  return <span style={{ ...pill, background: 'rgba(217,122,43,.16)', color: C.orange }}>Pending</span>
+}
+
 function ShiftHistoryTab() {
-  const cols = ['Date', 'Shift', 'Location', 'Supervisor', 'Operators', 'UIDs processed', 'UIDs dispatched', 'Handover submitted', 'Acknowledged']
+  const cols = ['Date', 'Shift', 'Location', 'Supervisor', 'Handover submitted', 'Acknowledged']
+
+  const { data: history = [], isLoading, isError, refetch } = useQuery<any[]>({
+    queryKey: ['shift-history'],
+    queryFn: () =>
+      shiftApi.history().then((r) => {
+        const d = r.data
+        const arr = Array.isArray(d) ? d : d?.items ?? []
+        return [...arr].sort((a: any, b: any) => {
+          const ka = `${a?.shift_date ?? ''}`
+          const kb = `${b?.shift_date ?? ''}`
+          return kb.localeCompare(ka)
+        })
+      }),
+    retry: false,
+  })
+
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -889,16 +1038,54 @@ function ShiftHistoryTab() {
             <tr>{cols.map((c) => <th key={c} style={TH}>{c}</th>)}</tr>
           </thead>
           <tbody>
-            <tr>
-              <td colSpan={cols.length} style={{ ...TD, textAlign: 'center', padding: '40px 18px' }}>
-                <div style={{ fontFamily: SANS, fontSize: 14, color: C.ink2, marginBottom: 6 }}>
-                  Shift history is not yet available.
-                </div>
-                <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3, letterSpacing: '0.04em' }}>
-                  A completed-shift / handover-history endpoint is required to populate this table and the full shift record.
-                </div>
-              </td>
-            </tr>
+            {isError ? (
+              <tr>
+                <td colSpan={cols.length} style={{ ...TD, textAlign: 'center', padding: '36px 18px' }}>
+                  <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, marginBottom: 10 }}>
+                    Could not load shift history. The server may be starting up.
+                  </div>
+                  <button className="btn-secondary" onClick={() => refetch()}>Retry</button>
+                </td>
+              </tr>
+            ) : isLoading ? (
+              <tr>
+                <td colSpan={cols.length} style={{ ...TD, textAlign: 'center', padding: '36px 18px', fontFamily: MONO, fontSize: 12, color: C.ink3 }}>
+                  Loading history…
+                </td>
+              </tr>
+            ) : history.length === 0 ? (
+              <tr>
+                <td colSpan={cols.length} style={{ ...TD, textAlign: 'center', padding: '40px 18px' }}>
+                  <div style={{ fontFamily: SANS, fontSize: 14, color: C.ink2, marginBottom: 6 }}>
+                    No completed shifts on record yet.
+                  </div>
+                  <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3, letterSpacing: '0.04em' }}>
+                    Submitted handovers will appear here once shifts are handed over.
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              history.map((h: any, i: number) => {
+                const supervisor = h?.outgoing_supervisor_name ?? h?.supervisor_name ?? '—'
+                const location = h?.factory_location_name ?? h?.location_name ?? (h?.factory_location_id != null ? `Location #${h.factory_location_id}` : '—')
+                let dateLabel: string = h?.shift_date ?? '—'
+                try {
+                  if (h?.shift_date) dateLabel = format(parseISO(h.shift_date), 'd MMM yyyy')
+                } catch { /* keep raw */ }
+                return (
+                  <tr key={h?.id ?? `${h?.shift_date}-${h?.shift_period}-${i}`} className="row-hover">
+                    <td style={{ ...TD, whiteSpace: 'nowrap' }}>{dateLabel}</td>
+                    <td style={TD}>
+                      <span style={{ fontFamily: MONO, fontSize: 12, color: C.ink2 }}>{periodLabelOf(h?.shift_period ?? '')}</span>
+                    </td>
+                    <td style={{ ...TD, color: C.ink2 }}>{location}</td>
+                    <td style={TD}>{supervisor}</td>
+                    <td style={TD}><StatusCell kind="submitted" status={h?.status} at={h?.submitted_at} /></td>
+                    <td style={TD}><StatusCell kind="acknowledged" status={h?.status} at={h?.acknowledged_at} /></td>
+                  </tr>
+                )
+              })
+            )}
           </tbody>
         </table>
       </div>

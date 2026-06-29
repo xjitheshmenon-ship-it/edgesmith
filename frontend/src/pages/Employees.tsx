@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { userApi, factoryApi } from '../api/client'
+import { userApi, factoryApi, badgeApi } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import type { FactoryLocation, Workstation } from '../types'
 import {
@@ -10,7 +10,6 @@ import {
   ShieldAlert,
   ShieldX,
   Award,
-  AlertTriangle,
   CheckCircle,
   XCircle,
   Plus,
@@ -40,9 +39,9 @@ const MONO = "'IBM Plex Mono', monospace"
 const SANS = "'IBM Plex Sans', sans-serif"
 const ARCHIVO = "'Archivo', sans-serif"
 
-/* The roster only exposes username / full_name / role / location / is_active.
-   Skills & badge data (certifications, expiry, trainer) require a dedicated
-   endpoint that is not yet available — badge UI is rendered as structure only. */
+/* The roster exposes username / full_name / role / location / is_active.
+   Skill-badge data is served by the dedicated /badges endpoint and grouped
+   onto each employee below. */
 interface Employee {
   id: number
   username: string
@@ -50,6 +49,30 @@ interface Employee {
   role: string
   primary_location_id: number | null
   is_active: boolean
+}
+
+interface Badge {
+  id: number
+  user_id: number
+  operator_name: string
+  operator_username: string
+  badge_code: string
+  badge_name: string
+  workstation_id: number | null
+  workstation_code?: string | null
+  workstation_name?: string | null
+  certified_at: string | null
+  expires_at: string | null
+  is_active: boolean
+  status: 'valid' | 'expiring' | 'expired'
+  notes: string | null
+}
+
+function fmtDate(d: string | null | undefined): string {
+  if (!d) return '—'
+  const dt = new Date(d)
+  if (Number.isNaN(dt.getTime())) return '—'
+  return dt.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 const ROLES = ['admin', 'manager', 'supervisor', 'operator', 'service', 'shopfloor'] as const
@@ -105,18 +128,26 @@ function RolePill({ role }: { role: string }) {
   return <span style={{ ...pill, background: C.surface3, color: C.ink2 }}>{ROLE_LABEL[role] ?? role}</span>
 }
 
-/* Badge data source is not available, so every employee's badge status reads as
-   "unknown" — we still render the three-state structure the spec requires. */
-type BadgeStatus = 'valid' | 'expiring' | 'expired' | 'unknown'
+/* Per-badge status (valid/expiring/expired) comes straight from the API.
+   "none" is the roster-row aggregate when an employee holds no badges. */
+type BadgeStatus = 'valid' | 'expiring' | 'expired' | 'none'
 function BadgeStatusPill({ status }: { status: BadgeStatus }) {
   const map: Record<BadgeStatus, { bg: string; fg: string; label: string; icon: React.ReactNode }> = {
-    valid:    { bg: 'rgba(34,160,107,.14)', fg: C.greenText, label: 'All valid',     icon: <ShieldCheck size={11} /> },
+    valid:    { bg: 'rgba(34,160,107,.14)', fg: C.greenText, label: 'Valid',         icon: <ShieldCheck size={11} /> },
     expiring: { bg: 'rgba(217,122,43,.16)', fg: C.orange,    label: 'Expiring soon', icon: <ShieldAlert size={11} /> },
     expired:  { bg: 'rgba(229,72,77,.13)',  fg: C.redText,   label: 'Expired',       icon: <ShieldX size={11} /> },
-    unknown:  { bg: C.surface3,             fg: C.ink3,      label: 'No data',       icon: <Info size={11} /> },
+    none:     { bg: C.surface3,             fg: C.ink3,      label: 'No badges',     icon: <Info size={11} /> },
   }
   const s = map[status]
   return <span style={{ ...pill, background: s.bg, color: s.fg, textTransform: 'none', letterSpacing: '0.02em' }}>{s.icon}{s.label}</span>
+}
+
+/* Roster-row aggregate: worst status across an employee's badges. */
+function rosterBadgeStatus(badges: Badge[]): BadgeStatus {
+  if (badges.length === 0) return 'none'
+  if (badges.some((b) => b.status === 'expired')) return 'expired'
+  if (badges.some((b) => b.status === 'expiring')) return 'expiring'
+  return 'valid'
 }
 
 /* ─── badge expiry summary strip ────────────────────────────────────────────── */
@@ -149,20 +180,44 @@ const TD: React.CSSProperties = {
 
 /* ─── employee detail panel ─────────────────────────────────────────────────── */
 function DetailPanel({
-  emp, locations, onToggleActive, pending, canEdit, isSelf,
+  emp, locations, workstations, badges, onToggleActive, pending, canEdit, isSelf,
+  onAssignBadge, onArchiveBadge, assignPending, archivingId,
 }: {
   emp: Employee
   locations: FactoryLocation[]
+  workstations: Workstation[]
+  badges: Badge[]
   onToggleActive: (e: Employee) => void
   pending: boolean
   canEdit: boolean
   isSelf: boolean
+  onAssignBadge: (data: Record<string, unknown>) => void
+  onArchiveBadge: (id: number) => void
+  assignPending: boolean
+  archivingId: number | null
 }) {
+  const [showAssign, setShowAssign] = useState(false)
+  const [form, setForm] = useState({ badge_code: '', badge_name: '', workstation_id: '', expires_at: '' })
+
   const locName = emp.primary_location_id
     ? locations.find((l) => l.id === emp.primary_location_id)?.name ?? `Location ${emp.primary_location_id}`
     : 'Both / unassigned'
 
   const isFurnaceRole = emp.role === 'supervisor' || emp.role === 'admin'
+
+  function submitAssign(ev: React.FormEvent) {
+    ev.preventDefault()
+    if (!form.badge_code.trim() || !form.badge_name.trim()) return
+    onAssignBadge({
+      user_id: emp.id,
+      badge_code: form.badge_code.trim(),
+      badge_name: form.badge_name.trim(),
+      ...(form.workstation_id ? { workstation_id: Number(form.workstation_id) } : {}),
+      ...(form.expires_at ? { expires_at: form.expires_at } : {}),
+    })
+    setForm({ badge_code: '', badge_name: '', workstation_id: '', expires_at: '' })
+    setShowAssign(false)
+  }
 
   return (
     <div className="card" style={{ padding: '20px 22px', position: 'sticky', top: 20 }}>
@@ -230,7 +285,11 @@ function DetailPanel({
       <SectionLabel
         icon={<Award size={13} style={{ color: C.ink3 }} />}
         right={canEdit ? (
-          <button className="btn-secondary" style={{ height: 28, fontSize: 11.5 }} disabled title="Badge data source not yet available">
+          <button
+            className="btn-secondary"
+            style={{ height: 28, fontSize: 11.5 }}
+            onClick={() => setShowAssign((v) => !v)}
+          >
             <Plus size={13} /> Assign Badge
           </button>
         ) : undefined}
@@ -238,39 +297,124 @@ function DetailPanel({
         Skill Badges
       </SectionLabel>
 
-      <div style={{
-        border: `1px dashed ${C.line}`, borderRadius: 11, padding: '20px 18px',
-        background: C.surface2, display: 'flex', alignItems: 'flex-start', gap: 11,
-      }}>
-        <Info size={16} style={{ color: C.ink3, flexShrink: 0, marginTop: 1 }} />
-        <div>
-          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, fontWeight: 500 }}>
-            Badge data source not yet available
+      {canEdit && showAssign && (
+        <form
+          onSubmit={submitAssign}
+          style={{
+            border: `1px solid ${C.line}`, borderRadius: 11, padding: '14px 15px',
+            background: C.surface2, marginBottom: 12,
+          }}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div>
+              <div className="label" style={{ marginBottom: 4 }}>Badge Code</div>
+              <input
+                className="input"
+                placeholder="e.g. HT70"
+                value={form.badge_code}
+                onChange={(e) => setForm((f) => ({ ...f, badge_code: e.target.value }))}
+                required
+              />
+            </div>
+            <div>
+              <div className="label" style={{ marginBottom: 4 }}>Badge Name</div>
+              <input
+                className="input"
+                placeholder="e.g. Furnace Operator"
+                value={form.badge_name}
+                onChange={(e) => setForm((f) => ({ ...f, badge_name: e.target.value }))}
+                required
+              />
+            </div>
+            <div>
+              <div className="label" style={{ marginBottom: 4 }}>Workstation</div>
+              <select
+                className="input"
+                value={form.workstation_id}
+                onChange={(e) => setForm((f) => ({ ...f, workstation_id: e.target.value }))}
+              >
+                <option value="">None</option>
+                {workstations.map((w) => (
+                  <option key={w.id} value={String(w.id)}>{w.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <div className="label" style={{ marginBottom: 4 }}>Expiry Date</div>
+              <input
+                className="input"
+                type="date"
+                value={form.expires_at}
+                onChange={(e) => setForm((f) => ({ ...f, expires_at: e.target.value }))}
+              />
+            </div>
           </div>
-          <div style={{ fontFamily: SANS, fontSize: 12, color: C.ink3, marginTop: 4, lineHeight: 1.5 }}>
-            Per-employee skill badges — certified workstation, date certified, certified by, expiry &amp; days
-            remaining — require a dedicated badges endpoint that is not yet exposed by the API. The list and
-            assignment controls will populate once that endpoint is live.
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, justifyContent: 'flex-end' }}>
+            <button type="button" className="btn-secondary" style={{ height: 30, fontSize: 12 }} onClick={() => setShowAssign(false)}>
+              Cancel
+            </button>
+            <button type="submit" className="btn-primary" style={{ height: 30, fontSize: 12 }} disabled={assignPending}>
+              {assignPending ? 'Assigning…' : 'Assign Badge'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {badges.length === 0 ? (
+        <div style={{
+          border: `1px dashed ${C.line}`, borderRadius: 11, padding: '20px 18px',
+          background: C.surface2, display: 'flex', alignItems: 'flex-start', gap: 11,
+        }}>
+          <Info size={16} style={{ color: C.ink3, flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, fontWeight: 500 }}>
+              No skill badges on record
+            </div>
+            <div style={{ fontFamily: SANS, fontSize: 12, color: C.ink3, marginTop: 4, lineHeight: 1.5 }}>
+              {canEdit
+                ? 'Use “Assign Badge” to certify this employee on a workstation skill.'
+                : 'This employee has no certified workstation skills yet.'}
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* Structural placeholder badge rows (the shape each badge row will take) */}
-      <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8, opacity: 0.55 }}>
-        {[0, 1].map((i) => (
-          <div key={i} style={{
-            display: 'flex', alignItems: 'center', gap: 12, padding: '11px 13px',
-            border: `1px solid ${C.line}`, borderRadius: 10, background: C.surface,
-          }}>
-            <Award size={15} style={{ color: C.ink3, flexShrink: 0 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2, fontWeight: 500 }}>Badge name · Workstation</div>
-              <div style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginTop: 2 }}>Certified — · By — · Expiry —</div>
-            </div>
-            <BadgeStatusPill status="unknown" />
-          </div>
-        ))}
-      </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {badges.map((b) => {
+            const wsName = b.workstation_name ?? b.workstation_code ?? (b.workstation_id ? `Workstation ${b.workstation_id}` : null)
+            return (
+              <div key={b.id} style={{
+                display: 'flex', alignItems: 'center', gap: 12, padding: '11px 13px',
+                border: `1px solid ${C.line}`, borderRadius: 10, background: C.surface,
+              }}>
+                <Award size={15} style={{ color: C.ink3, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink, fontWeight: 500 }}>
+                    {b.badge_name}{wsName ? <span style={{ color: C.ink3 }}> · {wsName}</span> : null}
+                  </div>
+                  <div style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginTop: 2 }}>
+                    {b.badge_code} · Certified {fmtDate(b.certified_at)} · Expiry {fmtDate(b.expires_at)}
+                  </div>
+                  {b.notes && (
+                    <div style={{ fontFamily: SANS, fontSize: 11, color: C.ink3, marginTop: 3 }}>{b.notes}</div>
+                  )}
+                </div>
+                <BadgeStatusPill status={b.status} />
+                {canEdit && (
+                  <button
+                    className="btn-secondary"
+                    style={{ height: 26, fontSize: 11, padding: '0 9px' }}
+                    onClick={() => onArchiveBadge(b.id)}
+                    disabled={archivingId === b.id}
+                    title="Archive badge"
+                  >
+                    {archivingId === b.id ? '…' : 'Archive'}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -312,15 +456,48 @@ export default function Employees() {
     queryFn: () => factoryApi.locations().then((r) => r.data),
   })
 
-  // Workstations underpin the (future) "no qualified operator" risk surface.
+  // Workstations underpin badge assignment and the "no qualified operator" risk surface.
   const { data: workstations = [] } = useQuery<Workstation[]>({
     queryKey: ['workstations'],
     queryFn: () => factoryApi.workstations().then((r) => r.data),
   })
 
+  // Skill badges for the whole roster, grouped by user below. Operators may only
+  // request their own (user_id scoping keeps the self-only gate intact server-side too).
+  const { data: badges = [] } = useQuery<Badge[]>({
+    queryKey: ['badges', operatorSelfOnly ? user?.id ?? null : null],
+    queryFn: () =>
+      badgeApi.list(operatorSelfOnly ? user?.id : undefined).then((r) => r.data),
+  })
+
+  const { data: expiringCount } = useQuery<number>({
+    queryKey: ['badges', 'expiring'],
+    queryFn: () => badgeApi.expiring().then((r) => r.data.count),
+  })
+
+  const badgesByUser = useMemo(() => {
+    const map = new Map<number, Badge[]>()
+    for (const b of badges) {
+      const arr = map.get(b.user_id)
+      if (arr) arr.push(b)
+      else map.set(b.user_id, [b])
+    }
+    return map
+  }, [badges])
+
   const toggleActive = useMutation({
     mutationFn: (e: Employee) => userApi.update(e.id, { is_active: !e.is_active }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['employees'] }),
+  })
+
+  const assignBadge = useMutation({
+    mutationFn: (data: Record<string, unknown>) => badgeApi.create(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['badges'] }),
+  })
+
+  const archiveBadge = useMutation({
+    mutationFn: (id: number) => badgeApi.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['badges'] }),
   })
 
   // Operators may only ever see their own profile (spec line 1601).
@@ -349,6 +526,16 @@ export default function Employees() {
 
   const activeWorkstations = workstations.filter((w) => w.is_active).length
 
+  // Employees holding at least one expired badge.
+  const employeesWithExpired = useMemo(() => {
+    const ids = new Set<number>()
+    for (const b of badges) if (b.status === 'expired') ids.add(b.user_id)
+    return ids.size
+  }, [badges])
+
+  // Prefer the dedicated endpoint; fall back to counting from the loaded list.
+  const expiringSoon = expiringCount ?? badges.filter((b) => b.status === 'expiring').length
+
   return (
     <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
       {/* ── Header ──────────────────────────────────────────────────────────── */}
@@ -375,21 +562,10 @@ export default function Employees() {
       </div>
 
       {/* ── Badge expiry summary strip ─────────────────────────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12, marginBottom: 18 }}>
-        <SummaryTile value="—" label="Employees · Expired Badges" color={C.red} icon={<ShieldX size={20} />} note="Pending badge endpoint" />
-        <SummaryTile value="—" label="Badges Expiring < 30 Days" color={C.orange} icon={<ShieldAlert size={20} />} note="Pending badge endpoint" />
-        <SummaryTile value={activeWorkstations} label="Active Workstations" color={C.accent} icon={<ShieldCheck size={20} />} note="Qualified-operator coverage TBD" />
-      </div>
-
-      {/* ── Badge-source notice ────────────────────────────────────────────── */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 9, padding: '10px 14px', borderRadius: 10,
-        background: 'rgba(217,122,43,.10)', border: '1px solid rgba(217,122,43,.25)',
-        color: C.orange, fontSize: 12.5, marginBottom: 20, fontFamily: SANS,
-      }}>
-        <AlertTriangle size={15} style={{ flexShrink: 0 }} />
-        Skill-badge data (certifications, expiry, trainer, no-qualified-operator alerts) requires a dedicated endpoint not yet
-        available. Profiles below are built from the employee roster; badge management is shown as structure only.
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12, marginBottom: 20 }}>
+        <SummaryTile value={employeesWithExpired} label="Employees · Expired Badges" color={C.red} icon={<ShieldX size={20} />} note="At least one expired badge" />
+        <SummaryTile value={expiringSoon} label="Badges Expiring < 30 Days" color={C.orange} icon={<ShieldAlert size={20} />} note="Renewal due soon" />
+        <SummaryTile value={activeWorkstations} label="Active Workstations" color={C.accent} icon={<ShieldCheck size={20} />} note="Skill-badge eligible stations" />
       </div>
 
       {isError && (
@@ -474,7 +650,7 @@ export default function Employees() {
                         <td style={{ ...TD, fontFamily: MONO, color: C.ink2 }}>{e.username}</td>
                         <td style={TD}><RolePill role={e.role} /></td>
                         <td style={{ ...TD, fontFamily: SANS, color: C.ink2 }}>{loc}</td>
-                        <td style={TD}><BadgeStatusPill status="unknown" /></td>
+                        <td style={TD}><BadgeStatusPill status={rosterBadgeStatus(badgesByUser.get(e.id) ?? [])} /></td>
                         <td style={{ ...TD, textAlign: 'right' }}>
                           {e.is_active
                             ? <span style={{ ...pill, background: 'rgba(34,160,107,.14)', color: C.greenText }}>Active</span>
@@ -490,7 +666,7 @@ export default function Employees() {
 
           <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid var(--surface-2)`, display: 'flex', alignItems: 'center', gap: 6, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.06em' }}>
             <Clock size={11} />
-            Badge-status column shows “No data” until a skills/badge endpoint is exposed.
+            Badge column shows each employee’s worst current badge status. Select a row for the full list.
           </div>
         </div>
         )}
@@ -500,10 +676,16 @@ export default function Employees() {
           <DetailPanel
             emp={selected}
             locations={locations}
+            workstations={workstations}
+            badges={badgesByUser.get(selected.id) ?? []}
             onToggleActive={(e) => toggleActive.mutate(e)}
             pending={toggleActive.isPending}
             canEdit={canEdit}
             isSelf={selected.id === user?.id}
+            onAssignBadge={(data) => assignBadge.mutate(data)}
+            onArchiveBadge={(id) => archiveBadge.mutate(id)}
+            assignPending={assignBadge.isPending}
+            archivingId={archiveBadge.isPending ? (archiveBadge.variables ?? null) : null}
           />
         ) : (
           <div className="card" style={{ padding: 32, textAlign: 'center', fontFamily: MONO, fontSize: 12, color: C.ink3 }}>

@@ -25,6 +25,19 @@ const MONO = "'IBM Plex Mono', monospace"
 const SANS = "'IBM Plex Sans', sans-serif"
 const ARCHIVO = "'Archivo', sans-serif"
 
+/* A single parameter version snapshot as returned by
+   GET /tempering/parameters/:id/versions (most recent first). */
+interface ParamVersion {
+  id: number
+  parameter_id: number
+  target_temp_c: number | null
+  target_soak_minutes: number | null
+  tolerance_temp_c: number | null
+  tolerance_soak_minutes: number | null
+  changed_by_name: string | null
+  changed_at: string
+}
+
 /* A tempering parameter row as returned by GET /tempering/parameters. */
 interface ParamRow {
   id: number
@@ -94,6 +107,74 @@ function CycleBadge({ name }: { name: string }) {
   return <span style={{ ...pill, background: s.bg, color: s.fg }}>{key}</span>
 }
 
+/* ─── version history (real, via parameterVersions endpoint) ───────────────── */
+function VersionHistory({ parameterId }: { parameterId: number }) {
+  const versionsQ = useQuery<ParamVersion[]>({
+    queryKey: ['tempering-param-versions', parameterId],
+    queryFn: () =>
+      temperingApi.parameterVersions(parameterId).then((r) => (Array.isArray(r.data) ? r.data : r.data?.items ?? [])),
+    retry: false,
+    staleTime: 30_000,
+  })
+
+  const rowLabel: React.CSSProperties = {
+    fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', color: C.ink3, textTransform: 'uppercase',
+  }
+
+  return (
+    <div style={{ marginTop: 11, borderTop: `1px solid ${C.line}`, paddingTop: 9 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 7 }}>
+        <History size={11} style={{ color: C.ink3 }} />
+        <span style={rowLabel}>Version history</span>
+      </div>
+
+      {versionsQ.isLoading ? (
+        <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>Loading history…</div>
+      ) : versionsQ.isError ? (
+        <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.red, display: 'flex', alignItems: 'center', gap: 5 }}>
+          <AlertTriangle size={11} /> Could not load history.
+        </div>
+      ) : (versionsQ.data?.length ?? 0) === 0 ? (
+        <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>No prior versions — this is the first.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 168, overflowY: 'auto' }}>
+          {versionsQ.data!.map((v, i) => (
+            <div
+              key={v.id}
+              style={{
+                display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
+                padding: '5px 8px', borderRadius: 7,
+                background: i === 0 ? 'rgba(34,160,107,.10)' : C.surface3,
+              }}
+            >
+              {i === 0 && (
+                <span style={{ ...pill, background: 'rgba(34,160,107,.16)', color: '#1c7a52', padding: '1px 6px', fontSize: 8.5 }}>
+                  Active
+                </span>
+              )}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <Thermometer size={10} style={{ color: C.orange }} />
+                <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: C.ink }}>{v.target_temp_c ?? '—'}°C</span>
+                <span style={{ fontFamily: MONO, fontSize: 9, color: C.ink3 }}>±{v.tolerance_temp_c ?? 0}</span>
+              </span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <Timer size={10} style={{ color: C.accent }} />
+                <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, color: C.ink }}>{v.target_soak_minutes ?? '—'} min</span>
+                <span style={{ fontFamily: MONO, fontSize: 9, color: C.ink3 }}>±{v.tolerance_soak_minutes ?? 0}</span>
+              </span>
+              <div style={{ flex: 1 }} />
+              <span style={{ fontFamily: MONO, fontSize: 9.5, color: C.ink3 }}>
+                {format(new Date(v.changed_at), 'dd MMM yyyy HH:mm')}
+                {v.changed_by_name ? ` · ${v.changed_by_name}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ─── editable parameter cell ──────────────────────────────────────────────── */
 function ParamCell({
   param,
@@ -107,6 +188,7 @@ function ParamCell({
   onSave: (vals: { target_temp_c: number; target_soak_minutes: number; tolerance_temp_c: number; tolerance_soak_minutes: number }) => void
 }) {
   const [editing, setEditing] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
   const [temp, setTemp] = useState('')
   const [soak, setSoak] = useState('')
   const [tolT, setTolT] = useState('')
@@ -169,6 +251,7 @@ function ParamCell({
             <X size={12} /> Cancel
           </button>
         </div>
+        {param?.id != null && <VersionHistory parameterId={param.id} />}
       </td>
     )
   }
@@ -201,12 +284,35 @@ function ParamCell({
             <Thermometer size={12} style={{ color: C.orange, flexShrink: 0 }} />
             <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.02em', color: C.ink }}>{param!.target_temp_c}°C</span>
             <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3 }}>±{param!.tolerance_temp_c ?? 0}</span>
+            {param?.id != null && (
+              <button
+                type="button"
+                title="View version history"
+                className="row-hover"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setShowHistory((v) => !v)
+                }}
+                style={{
+                  marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', cursor: 'pointer',
+                  background: 'transparent', border: 'none', padding: 2, borderRadius: 5,
+                  color: showHistory ? C.accent : C.ink3,
+                }}
+              >
+                <History size={12} />
+              </button>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
             <Timer size={12} style={{ color: C.accent, flexShrink: 0 }} />
             <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: C.ink }}>{param!.target_soak_minutes} min</span>
             <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3 }}>±{param!.tolerance_soak_minutes ?? 0}</span>
           </div>
+          {showHistory && param?.id != null && (
+            <div onClick={(e) => e.stopPropagation()} style={{ cursor: 'default' }}>
+              <VersionHistory parameterId={param.id} />
+            </div>
+          )}
         </div>
       )}
     </td>
@@ -245,7 +351,12 @@ export default function Tempering() {
     mutationFn: (data: Record<string, unknown>) => temperingApi.upsertParameter(data).then((r) => r.data),
     onMutate: (data) => setSavingKey(`${data.cycle_type_id}:${data.cycle_step_id}`),
     onSettled: () => setSavingKey(null),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tempering-params'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tempering-params'] })
+      // A successful upsert creates a new version snapshot — refresh any open
+      // history panels so the new entry appears most-recent-first.
+      qc.invalidateQueries({ queryKey: ['tempering-param-versions'] })
+    },
   })
 
   const cycles = cyclesQ.data ?? []
@@ -445,6 +556,10 @@ export default function Tempering() {
             {isAdmin
               ? 'Click any cell to edit. Saving creates a new parameter version with a timestamp; historical furnace batches keep the values active when they ran.'
               : 'Only Admins can edit these values. Changing a parameter creates a new timestamped version.'}
+          </li>
+          <li>
+            Use the <strong>history</strong> icon on any configured cell (or open the editor) to view the full version
+            timeline — target temp, soak, tolerances, who changed it and when — most recent first.
           </li>
         </ul>
       </div>
