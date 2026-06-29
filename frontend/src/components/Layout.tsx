@@ -7,8 +7,8 @@ import { format } from 'date-fns'
 import {
   LayoutDashboard, Package, Settings, Search,
   ClipboardList, Monitor, Users, LogOut,
-  Hammer, Layers, CalendarClock, Plus,
-  Zap, ChevronRight, ArrowRight,
+  Hammer, CalendarClock,
+  Zap, ChevronRight,
 } from 'lucide-react'
 
 interface NavItem {
@@ -21,12 +21,10 @@ interface NavItem {
 const NAV: NavItem[] = [
   { label: 'Dashboard',    to: '/',              icon: <LayoutDashboard size={16} /> },
   { label: 'Shop Floor',   to: '/shopfloor',     icon: <Monitor size={16} /> },
-  { label: 'UID Lookup',   to: '/uid-lookup',    icon: <Search size={16} /> },
   { label: 'Job Queue',    to: '/queue',          icon: <ClipboardList size={16} />, roles: ['operator', 'supervisor'] },
   { label: 'Shifts',       to: '/shifts',         icon: <CalendarClock size={16} />, roles: ['admin', 'manager', 'supervisor'] },
   { label: 'UIDs',         to: '/uids',           icon: <Package size={16} />,       roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Mfg Orders',   to: '/manufacturing',  icon: <Hammer size={16} />,        roles: ['admin', 'manager'] },
-  { label: 'Cycles',       to: '/cycles',         icon: <Layers size={16} />,        roles: ['admin', 'manager'] },
   { label: 'Config',       to: '/config',         icon: <Settings size={16} />,      roles: ['admin'] },
   { label: 'Users',        to: '/users',          icon: <Users size={16} />,         roles: ['admin'] },
 ]
@@ -121,46 +119,6 @@ function ShiftPanel() {
   )
 }
 
-/* ── Today's operator assignments mini-list ────────────────────────────────── */
-function AssignmentsPanel() {
-  const today = format(new Date(), 'yyyy-MM-dd')
-  const hour = new Date().getHours()
-  const period = hour >= 6 && hour < 14 ? 'morning' : hour >= 14 && hour < 22 ? 'afternoon' : 'night'
-
-  const { data: assignments = [] } = useQuery({
-    queryKey: ['sidebar-assignments', today, period],
-    queryFn: () => shiftApi.listAssignments({ shift_date: today, shift_period: period }).then(r => r.data),
-    refetchInterval: 120_000,
-    retry: false,
-  })
-
-  if ((assignments as any[]).length === 0) return null
-
-  return (
-    <div style={{ margin: '8px 12px 0', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--line)', overflow: 'hidden' }}>
-      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '.12em', color: 'var(--ink-2)', fontWeight: 600 }}>TODAY'S OPERATORS</span>
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, color: 'var(--ink-2)' }}>{(assignments as any[]).length}</span>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-        {(assignments as any[]).slice(0, 5).map((a: any) => (
-          <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 12px', borderBottom: '1px solid var(--line)' }}>
-            <div style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--surface-3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 9, color: 'var(--accent)', flexShrink: 0 }}>
-              {(a.operator_full_name || a.operator_username || '?').split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.operator_full_name || a.operator_username}</div>
-              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: 'var(--ink-3)' }}>{a.workstation_code}</div>
-            </div>
-            {a.confirmed_by
-              ? <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#22a06b', flexShrink: 0 }} />
-              : <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
@@ -246,55 +204,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        {/* ── Live shift panels (supervisor+) ─── */}
+        {/* ── Job Queue panel (supervisor+) ─── */}
         {isSupervisorPlus && (
           <>
             <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--ink-2)', padding: '16px 20px 6px' }}>
-              LIVE SHIFT
+              JOB QUEUE
             </div>
             <ShiftPanel />
-            <AssignmentsPanel />
           </>
         )}
 
         {/* Spacer */}
         <div style={{ flex: 1, minHeight: 12 }} />
-
-        {/* APPEARANCE section */}
-        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--line)' }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--ink-2)', marginBottom: 10 }}>APPEARANCE</div>
-          <div style={{ display: 'flex', gap: 7 }}>
-            {[
-              { name: 'Navy',    bg: '#11305f', surface: '#173a70', line: '#2c5191', ink: '#eaf4e4', accent: '#d4eecb' },
-              { name: 'Cream',   bg: '#f3efe6', surface: '#fbf9f4', line: '#ddd5c6', ink: '#1c1a17', accent: '#d2491f' },
-              { name: 'Slate',   bg: '#0f172a', surface: '#1e293b', line: '#334155', ink: '#f1f5f9', accent: '#38bdf8' },
-            ].map(t => (
-              <button
-                key={t.name}
-                title={t.name}
-                onClick={() => {
-                  const isNavy = t.bg === '#11305f', isCream = t.bg === '#f3efe6'
-                  const r = document.documentElement.style
-                  r.setProperty('--bg', t.bg)
-                  r.setProperty('--surface', t.surface)
-                  r.setProperty('--surface-2', isNavy ? '#21498a' : isCream ? '#efe9dc' : '#263349')
-                  r.setProperty('--surface-3', isNavy ? '#2a5aa0' : isCream ? '#e5ddd0' : '#324060')
-                  r.setProperty('--line', t.line)
-                  r.setProperty('--ink', t.ink)
-                  r.setProperty('--ink-2', isNavy ? '#9bb4d4' : isCream ? '#6b6358' : '#94a3b8')
-                  r.setProperty('--ink-3', isNavy ? '#5a7aaa' : isCream ? '#9c9080' : '#64748b')
-                  r.setProperty('--accent', t.accent)
-                  r.setProperty('--accent-h', isNavy ? '#bde0b0' : isCream ? '#b83d18' : '#0ea5e9')
-                  r.setProperty('--accent-dim', isNavy ? 'rgba(212,238,203,.12)' : isCream ? '#fdf0eb' : 'rgba(56,189,248,.12)')
-                  r.setProperty('--accent-ink', isNavy ? '#143160' : '#fff')
-                }}
-                style={{ width: 28, height: 28, borderRadius: 7, border: '1.5px solid var(--line)', cursor: 'pointer', padding: 3, background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              >
-                <span style={{ display: 'block', width: '100%', height: '100%', borderRadius: 4, background: `linear-gradient(135deg, ${t.surface} 50%, ${t.accent} 50%)` }} />
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/* User footer */}
         <div style={{ padding: '14px 20px', borderTop: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 10 }}>

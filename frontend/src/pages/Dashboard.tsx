@@ -1,9 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
-import { shopfloorApi } from '../api/client'
+import { shopfloorApi, shiftApi } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
 import type { CSSProperties } from 'react'
 import type { DashboardSummary, ShopfloorStatus } from '../types'
-import { Package, AlertTriangle, CheckCircle, ClipboardList, TrendingUp, Box } from 'lucide-react'
+import { Package, AlertTriangle, CheckCircle, ClipboardList, TrendingUp, Box, Zap, ChevronRight } from 'lucide-react'
+import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 
 const T = {
   bg: '#11305f', surface: '#173a70', s2: '#21498a', s3: '#2a5aa0',
@@ -32,6 +34,94 @@ function StatCard({ label, value, icon, color }: {
         color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
       }}>
         {icon}
+      </div>
+    </div>
+  )
+}
+
+const STATUS_DOT: Record<string, string> = { active: T.green, on_hold: T.amber, converting: '#a78bfa', dispatched: T.blue }
+
+function LiveShiftSection() {
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const hour = new Date().getHours()
+  const period = hour >= 6 && hour < 14 ? 'morning' : hour >= 14 && hour < 22 ? 'afternoon' : 'night'
+  const PERIOD_LABEL: Record<string, string> = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' }
+
+  const { data: queueData = [] } = useQuery({
+    queryKey: ['dash-queue', today, period],
+    queryFn: () => shiftApi.queueView(today, period).then(r => r.data),
+    refetchInterval: 60_000,
+    retry: false,
+  })
+  const { data: assignments = [] } = useQuery({
+    queryKey: ['dash-assignments', today, period],
+    queryFn: () => shiftApi.listAssignments({ shift_date: today, shift_period: period }).then(r => r.data),
+    refetchInterval: 120_000,
+    retry: false,
+  })
+
+  const ws = queueData as any[]
+  const ops = assignments as any[]
+  const totalQueued = ws.reduce((s: number, w: any) => s + (w.queue?.length ?? 0), 0)
+  const totalReady  = ws.reduce((s: number, w: any) => s + (w.ready_count ?? 0), 0)
+
+  if (ws.length === 0 && ops.length === 0) return null
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <Zap size={14} style={{ color: T.accent }} />
+        <span style={{ ...mono, fontSize: 10, letterSpacing: '0.14em', color: T.ink3, textTransform: 'uppercase' }}>
+          Live Shift — {PERIOD_LABEL[period]}
+        </span>
+        <span style={{ ...mono, fontSize: 10, color: T.accent, fontWeight: 700 }}>{totalQueued} queued</span>
+        {totalReady > 0 && <span style={{ ...mono, fontSize: 10, color: T.green }}>+{totalReady} ready</span>}
+        <div style={{ flex: 1 }} />
+        <Link to="/shifts" style={{ ...mono, fontSize: 10, color: T.accent, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 3 }}>
+          Manage <ChevronRight size={11} />
+        </Link>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+        {ws.map((w: any) => (
+          <div key={w.assignment_id} style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ ...mono, fontWeight: 700, fontSize: 13, color: T.accent }}>{w.workstation_code}</span>
+              <span style={{ ...sans, fontSize: 11, color: T.ink2 }}>{w.operator_name?.split(' ')[0]}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+              {w.queue?.slice(0, 6).map((j: any) => (
+                <span key={j.id} style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_DOT[j.uid_status] || T.ink3, flexShrink: 0, display: 'inline-block' }} />
+              ))}
+              {(w.queue?.length ?? 0) > 6 && <span style={{ ...mono, fontSize: 9, color: T.ink3 }}>+{w.queue.length - 6}</span>}
+              {(w.queue?.length ?? 0) === 0 && <span style={{ ...mono, fontSize: 10, color: T.ink3 }}>Empty queue</span>}
+              {w.ready_count > 0 && <span style={{ ...mono, fontSize: 9, color: T.green, marginLeft: 4 }}>({w.ready_count}↑ ready)</span>}
+            </div>
+            {w.from_storage?.length > 0 && (
+              <div style={{ ...mono, fontSize: 9, color: T.ink3, marginTop: 6 }}>
+                {w.from_storage.join(', ')} → {w.to_storage?.join(', ') || '—'}
+              </div>
+            )}
+          </div>
+        ))}
+        {/* Operators mini-list */}
+        {ops.length > 0 && (
+          <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: 12, padding: '12px 14px' }}>
+            <div style={{ ...mono, fontSize: 9.5, letterSpacing: '0.12em', color: T.ink3, textTransform: 'uppercase', marginBottom: 8 }}>Operators</div>
+            {ops.slice(0, 4).map((a: any) => (
+              <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <div style={{ width: 22, height: 22, borderRadius: '50%', background: T.s3, display: 'flex', alignItems: 'center', justifyContent: 'center', ...arch, fontWeight: 700, fontSize: 8, color: T.accent, flexShrink: 0 }}>
+                  {(a.operator_full_name || a.operator_username || '?').split(' ').map((n: string) => n[0]).join('').slice(0, 2)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ ...sans, fontSize: 11, fontWeight: 600, color: T.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.operator_full_name || a.operator_username}</div>
+                  <div style={{ ...mono, fontSize: 9, color: T.ink3 }}>{a.workstation_code}</div>
+                </div>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: a.confirmed_by ? T.green : T.amber, flexShrink: 0 }} />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -124,6 +214,8 @@ export default function Dashboard() {
           </span>
         </div>
       )}
+
+      <LiveShiftSection />
 
       {shopfloor && shopfloor.map((loc) => (
         <div key={loc.location_id} style={{
