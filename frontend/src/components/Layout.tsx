@@ -4,13 +4,14 @@ import { authStore } from '../store/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { shiftApi, factoryApi, userApi } from '../api/client'
 import { format } from 'date-fns'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   LayoutDashboard, Package, Settings, Search,
   ClipboardList, Monitor, Users, LogOut,
   Hammer, CalendarClock, Factory, Plus, X,
-  Zap, ChevronRight,
+  Zap, ChevronRight, Sun, Moon,
 } from 'lucide-react'
+import { toggleTheme, getCurrentTheme, type Theme } from '../store/theme'
 
 interface NavItem {
   label: string
@@ -187,6 +188,13 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
   const location = useLocation()
   const [showAssign, setShowAssign] = useState(false)
+  const [theme, setTheme] = useState<Theme>(getCurrentTheme)
+
+  useEffect(() => {
+    const handler = (e: Event) => setTheme((e as CustomEvent<Theme>).detail)
+    window.addEventListener('es-theme-change', handler)
+    return () => window.removeEventListener('es-theme-change', handler)
+  }, [])
 
   const visibleNav = NAV.filter(item =>
     !item.roles || (user && item.roles.includes(user.role))
@@ -289,6 +297,27 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Spacer */}
         <div style={{ flex: 1, minHeight: 12 }} />
+
+        {/* APPEARANCE section */}
+        <div style={{ padding: '0 12px 10px' }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--ink-2)', padding: '8px 8px 6px' }}>
+            APPEARANCE
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button
+              onClick={() => { if (theme !== 'lapis') toggleTheme() }}
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 0', borderRadius: 8, border: `1px solid ${theme === 'lapis' ? 'var(--accent)' : 'var(--line)'}`, background: theme === 'lapis' ? 'var(--accent-dim)' : 'transparent', color: theme === 'lapis' ? 'var(--accent)' : 'var(--ink-3)', cursor: 'pointer', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', transition: 'all 180ms cubic-bezier(.2,.8,.2,1)' }}
+            >
+              <Moon size={11} /> LAPIS
+            </button>
+            <button
+              onClick={() => { if (theme !== 'daylight') toggleTheme() }}
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 0', borderRadius: 8, border: `1px solid ${theme === 'daylight' ? 'var(--accent)' : 'var(--line)'}`, background: theme === 'daylight' ? 'var(--accent-dim)' : 'transparent', color: theme === 'daylight' ? 'var(--accent)' : 'var(--ink-3)', cursor: 'pointer', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', transition: 'all 180ms cubic-bezier(.2,.8,.2,1)' }}
+            >
+              <Sun size={11} /> DAYLIGHT
+            </button>
+          </div>
+        </div>
 
         {/* User footer */}
         <div style={{ padding: '14px 20px', borderTop: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 10 }}>
