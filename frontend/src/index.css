@@ -1,11 +1,12 @@
-@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ── Design tokens ──────────────────────────────────────────────────────── */
-:root {
+/* ── Design tokens — Lapis (default dark) ───────────────────────────────── */
+:root,
+:root[data-theme="lapis"] {
   --bg:        #11305f;
   --surface:   #173a70;
   --surface-2: #21498a;
@@ -19,9 +20,39 @@
   --accent-dim:rgba(212,238,203,.12);
   --accent-ink:#143160;
   --success:   #22a06b;
-  --error:     #f87171;
-  --warning:   #fbbf24;
-  --info:      #60a5fa;
+  --error:     #e5484d;
+  --warning:   #f59e0b;
+  --info:      #3b82f6;
+  --shadow-e1: 0 1px 3px rgba(21,54,106,.10);
+  --shadow-e2: 0 4px 8px rgba(21,54,106,.10);
+  --shadow-e3: 0 8px 24px rgba(21,54,106,.12);
+  --shadow-e4: 0 18px 40px rgba(21,54,106,.14);
+  --shadow-e5: -20px 0 50px rgba(20,18,15,.16);
+}
+
+/* ── Daylight theme (light sage) ────────────────────────────────────────── */
+:root[data-theme="daylight"] {
+  --bg:        #eef2ec;
+  --surface:   #ffffff;
+  --surface-2: #e3ebde;
+  --surface-3: #d6e0d2;
+  --line:      #d6e0d2;
+  --ink:       #15366a;
+  --ink-2:     #5d7188;
+  --ink-3:     #8fa4b8;
+  --accent:    #15366a;
+  --accent-h:  #1e4585;
+  --accent-dim:rgba(21,54,106,.10);
+  --accent-ink:#eaf4e4;
+  --success:   #22a06b;
+  --error:     #e5484d;
+  --warning:   #f59e0b;
+  --info:      #3b82f6;
+  --shadow-e1: 0 1px 3px rgba(21,54,106,.08);
+  --shadow-e2: 0 4px 8px rgba(21,54,106,.08);
+  --shadow-e3: 0 8px 24px rgba(21,54,106,.10);
+  --shadow-e4: 0 18px 40px rgba(21,54,106,.12);
+  --shadow-e5: -20px 0 50px rgba(21,54,106,.12);
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */
@@ -53,8 +84,8 @@ body {
   .card {
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+    border-radius: 11px;
+    box-shadow: var(--shadow-e2);
   }
 
   /* Inputs */
@@ -68,13 +99,14 @@ body {
     font-size: 13px;
     color: var(--ink);
     outline: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition: border-color 180ms cubic-bezier(.2,.8,.2,1), box-shadow 180ms cubic-bezier(.2,.8,.2,1);
     display: block;
+    width: 100%;
   }
   .input::placeholder { color: var(--ink-3); }
   .input:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(210,73,31,.12);
+    box-shadow: 0 0 0 3px var(--accent-dim);
   }
   textarea.input { height: auto; padding: 8px 12px; resize: vertical; }
   select.input {
@@ -102,7 +134,7 @@ body {
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background 180ms cubic-bezier(.2,.8,.2,1);
     white-space: nowrap;
     flex-shrink: 0;
   }
@@ -123,31 +155,33 @@ body {
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.15s;
+    transition: background 180ms cubic-bezier(.2,.8,.2,1);
     white-space: nowrap;
     flex-shrink: 0;
   }
   .btn-secondary:hover:not(:disabled) { background: var(--surface-2); }
   .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
 
-  /* Badges */
+  /* Badges — pill shape per design system */
   .badge {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 8px;
-    border-radius: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 10.5px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: .02em;
+    white-space: nowrap;
   }
-  .badge-blue   { @apply badge; background: rgba(96,165,250,.18);  color: #93c5fd; }
-  .badge-green  { @apply badge; background: rgba(34,160,107,.2);  color: #6ee7b7; }
-  .badge-red    { @apply badge; background: rgba(248,113,113,.18); color: #fca5a5; }
-  .badge-yellow { @apply badge; background: rgba(251,191,36,.18);  color: #fcd34d; }
-  .badge-gray   { @apply badge; background: var(--surface-2); color: var(--ink-2); }
-  .badge-orange { @apply badge; background: rgba(251,146,60,.18);  color: #fdba74; }
+  /* Status colors per design system */
+  .badge-blue   { @apply badge; background: rgba(59,130,246,.14);  color: #3b82f6; }
+  .badge-green  { @apply badge; background: rgba(34,160,107,.14);  color: #22a06b; }
+  .badge-red    { @apply badge; background: rgba(229,72,77,.14);   color: #e5484d; }
+  .badge-yellow { @apply badge; background: rgba(245,158,11,.14);  color: #f59e0b; }
+  .badge-gray   { @apply badge; background: rgba(154,160,166,.14); color: #9aa0a6; }
+  .badge-orange { @apply badge; background: rgba(245,158,11,.14);  color: #f59e0b; }
 
   /* Mono uppercase section labels */
   .label-caps {
@@ -202,9 +236,21 @@ body {
   .row-hover:hover { background: var(--surface-3) !important; }
 }
 
+/* ── Form label helper ────────────────────────────────────────────────────── */
+.label {
+  display: block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+  margin-bottom: 5px;
+  font-weight: 600;
+}
+
 /* ── Animation ────────────────────────────────────────────────────────────── */
 @keyframes es-fade {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.animate-es { animation: es-fade 0.18s ease; }
+.animate-es { animation: es-fade 180ms cubic-bezier(.2,.8,.2,1); }

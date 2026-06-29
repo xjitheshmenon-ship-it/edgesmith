@@ -115,11 +115,13 @@ class BatchCreate(BaseModel):
     cycle_type_id: int
     cycle_step_id: int
     intake_count: Optional[int] = None  # None = take all available
+    uid_ids: Optional[List[int]] = None  # explicit selection overrides intake_count
 
 
 class BatchComplete(BaseModel):
     actual_temp_c: Optional[float] = None
     actual_soak_minutes: Optional[int] = None
+    notes: Optional[str] = None
 
 
 @router.get("/batches")
@@ -140,19 +142,23 @@ def get_batch(batch_id: int, db: Session = Depends(get_db), _=Depends(get_curren
 
 @router.post("/batches", status_code=201)
 def create_batch(body: BatchCreate, db: Session = Depends(get_db), user=Depends(require_supervisor)):
-    # Auto-select UIDs currently at this tempering step, FIFO order
-    uid_query = (
-        db.query(UID)
-        .filter(
+    # Select UIDs: explicit list takes priority, then intake_count, then all available
+    if body.uid_ids:
+        uids = db.query(UID).filter(
+            UID.id.in_(body.uid_ids),
             UID.current_step_id == body.cycle_step_id,
             UID.status.in_([UIDStatus.active, UIDStatus.on_hold]),
-        )
-        .order_by(UID.created_at)
-    )
-    if body.intake_count is not None:
-        uids = uid_query.limit(body.intake_count).all()
+        ).all()
     else:
-        uids = uid_query.all()
+        uid_query = (
+            db.query(UID)
+            .filter(
+                UID.current_step_id == body.cycle_step_id,
+                UID.status.in_([UIDStatus.active, UIDStatus.on_hold]),
+            )
+            .order_by(UID.created_at)
+        )
+        uids = uid_query.limit(body.intake_count).all() if body.intake_count is not None else uid_query.all()
 
     if not uids:
         raise HTTPException(400, "No UIDs available at this tempering step")
@@ -200,6 +206,9 @@ def complete_batch(batch_id: int, body: BatchComplete, db: Session = Depends(get
 
     b.ended_at = datetime.utcnow()
     b.operator_id = user.id
+
+    if body.notes:
+        b.deviation_notes = body.notes
 
     if body.actual_temp_c is not None or body.actual_soak_minutes is not None:
         b.actual_temp_c = body.actual_temp_c
