@@ -742,6 +742,7 @@ function BuildBatchForm({
 }) {
   const [stepKey, setStepKey] = useState('') // `${cycle_step_id}` (stable per step)
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [uidSearch, setUidSearch] = useState('')
 
   const step = steps.find((s) => String(s.cycle_step_id) === stepKey)
   const matchingParam = step
@@ -759,6 +760,21 @@ function BuildBatchForm({
   const availableUIDs: any[] = available ?? []
   const availableCount = availableUIDs.length
 
+  // ── Search-driven, capped picker (12k-scale safe) ───────────────────────────
+  // Never render the whole eligible list as one block. Filter client-side on the
+  // server-scoped available set, then cap the rendered rows to a fixed window.
+  const UID_RENDER_CAP = 50
+  const uidTerm = uidSearch.trim().toLowerCase()
+  const filteredUIDs = uidTerm
+    ? availableUIDs.filter((u: any) => {
+        const code = String(u.uid_code ?? u.code ?? '').toLowerCase()
+        const sz = u.size_mm != null ? String(u.size_mm) : ''
+        return code.includes(uidTerm) || sz.includes(uidTerm)
+      })
+    : availableUIDs
+  const filteredCount = filteredUIDs.length
+  const renderedUIDs = filteredUIDs.slice(0, UID_RENDER_CAP)
+
   // ── Capacity depends on bar size (1500 base, 2750 derived) ──────────────────
   // Determine the dominant bar size among the queued UIDs to size the furnace.
   const sizes = availableUIDs.map((u: any) => u.size_mm).filter((v: any) => v != null) as number[]
@@ -774,11 +790,13 @@ function BuildBatchForm({
   const effectiveCount = selected.size > 0 ? selected.size : Math.min(availableCount, capacity || availableCount)
   const overCapacity = capacity > 0 && selected.size > capacity
 
+  const atCapacity = capacity > 0 && selected.size >= capacity
   const toggle = (id: number) => {
     setSelected((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
-      else next.add(id)
+      // Respect the furnace capacity cap: block adding beyond capacity.
+      else if (!(capacity > 0 && next.size >= capacity)) next.add(id)
       return next
     })
   }
@@ -834,6 +852,7 @@ function BuildBatchForm({
           onChange={(e) => {
             setStepKey(e.target.value)
             setSelected(new Set())
+            setUidSearch('')
           }}
         >
           <option value="">Select tempering / furnace step…</option>
@@ -938,45 +957,94 @@ function BuildBatchForm({
                     queued (FIFO). Click to hand-pick, or leave none selected to auto-fill to capacity.
                   </span>
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
-                  {availableUIDs.map((u: any) => {
-                    const id = u.uid_id ?? u.id
-                    const code = u.uid_code ?? u.code
-                    const on = selected.has(id)
-                    const priority = (u.priority ?? 'normal') as string
-                    const sz = u.size_mm as number | null | undefined
-                    return (
-                      <button
-                        key={id}
-                        onClick={() => toggle(id)}
-                        title={priority !== 'normal' ? priority.toUpperCase() : undefined}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 5,
-                          fontFamily: "'IBM Plex Mono', monospace",
-                          fontSize: 11,
-                          fontWeight: 600,
-                          padding: '4px 9px',
-                          borderRadius: 7,
-                          cursor: 'pointer',
-                          background: on ? 'var(--accent-dim)' : 'var(--surface)',
-                          border: `1px solid ${on ? 'var(--accent)' : 'var(--line)'}`,
-                          color: on ? 'var(--accent)' : 'var(--ink)',
-                        }}
-                      >
-                        {on && <CheckCircle size={11} />}
-                        {code}
-                        {sz != null && (
-                          <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>{sz}mm</span>
-                        )}
-                        {priority !== 'normal' && (
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: priority === 'urgent' ? 'var(--error)' : 'var(--warning)' }} />
-                        )}
-                      </button>
-                    )
-                  })}
+
+                {/* Search-driven picker — never an unbounded UID block at 12k scale */}
+                <div style={{ position: 'relative', marginBottom: 8, maxWidth: 280 }}>
+                  <Search size={13} style={{ position: 'absolute', left: 10, top: 10, color: 'var(--ink-3)' }} />
+                  <input
+                    className="input"
+                    style={{ paddingLeft: 30 }}
+                    placeholder="Search UID…"
+                    value={uidSearch}
+                    onChange={(e) => setUidSearch(e.target.value)}
+                  />
                 </div>
+
+                <div
+                  style={{
+                    fontFamily: "'IBM Plex Mono', monospace",
+                    fontSize: 10,
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    color: 'var(--ink-3)',
+                    marginBottom: 8,
+                  }}
+                >
+                  Showing {Math.min(renderedUIDs.length, filteredCount)} of {filteredCount}
+                  {uidTerm ? ` matching (${availableCount} available)` : ' available'}
+                  {selected.size > 0 ? ` · ${selected.size} selected` : ''}
+                  {atCapacity ? ' · at capacity' : ''}
+                </div>
+
+                {filteredCount === 0 ? (
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>
+                    No queued UIDs match “{uidSearch.trim()}”.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                    {renderedUIDs.map((u: any) => {
+                      const id = u.uid_id ?? u.id
+                      const code = u.uid_code ?? u.code
+                      const on = selected.has(id)
+                      const priority = (u.priority ?? 'normal') as string
+                      const sz = u.size_mm as number | null | undefined
+                      const blocked = !on && atCapacity
+                      return (
+                        <button
+                          key={id}
+                          onClick={() => toggle(id)}
+                          disabled={blocked}
+                          title={
+                            blocked
+                              ? 'Furnace at capacity — deselect a bar first'
+                              : priority !== 'normal'
+                                ? priority.toUpperCase()
+                                : undefined
+                          }
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            fontFamily: "'IBM Plex Mono', monospace",
+                            fontSize: 11,
+                            fontWeight: 600,
+                            padding: '4px 9px',
+                            borderRadius: 7,
+                            cursor: blocked ? 'not-allowed' : 'pointer',
+                            opacity: blocked ? 0.5 : 1,
+                            background: on ? 'var(--accent-dim)' : 'var(--surface)',
+                            border: `1px solid ${on ? 'var(--accent)' : 'var(--line)'}`,
+                            color: on ? 'var(--accent)' : 'var(--ink)',
+                          }}
+                        >
+                          {on && <CheckCircle size={11} />}
+                          {code}
+                          {sz != null && (
+                            <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>{sz}mm</span>
+                          )}
+                          {priority !== 'normal' && (
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: priority === 'urgent' ? 'var(--error)' : 'var(--warning)' }} />
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                {filteredCount > renderedUIDs.length && (
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 8 }}>
+                    +{filteredCount - renderedUIDs.length} more — refine the search to narrow the list.
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -1291,8 +1359,12 @@ function QueuedBarRow({ u }: { u: any }) {
   )
 }
 
+// Render cap for grinding queue columns — never map over the whole active-UID
+// set (12k scale). Show the top-N by priority/wait with a "showing N of total".
+const QUEUE_RENDER_CAP = 50
 function QueuedColumn({ queued, loading }: { queued: any[]; loading?: boolean }) {
   const sorted = [...queued].sort(sortQueue)
+  const rendered = sorted.slice(0, QUEUE_RENDER_CAP)
   return (
     <div style={{ minWidth: 230 }}>
       <SectionLabel>Queued Bars ({queued.length})</SectionLabel>
@@ -1302,9 +1374,14 @@ function QueuedColumn({ queued, loading }: { queued: any[]; loading?: boolean })
         ) : sorted.length === 0 ? (
           <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>No bars queued at this step.</div>
         ) : (
-          sorted.map((u) => <QueuedBarRow key={u.uid_id ?? u.id} u={u} />)
+          rendered.map((u) => <QueuedBarRow key={u.uid_id ?? u.id} u={u} />)
         )}
       </div>
+      {!loading && sorted.length > rendered.length && (
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 6 }}>
+          Showing top {rendered.length} of {sorted.length} by priority.
+        </div>
+      )}
     </div>
   )
 }

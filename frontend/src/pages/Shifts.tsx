@@ -534,7 +534,7 @@ export default function Shifts() {
           period={period}
           periodLabel={`${shiftLabel} · ${periodDef.label}`}
           submitting={createMut.isPending}
-          error={createMut.isError}
+          error={createMut.isError ? ((createMut.error as any)?.response?.data?.detail ?? 'Could not create the assignment. The operator may already be assigned for this shift.') : ''}
           onClose={() => { setDrawerOpen(false); createMut.reset() }}
           onSubmit={(payload) => createMut.mutate(payload)}
         />
@@ -1113,7 +1113,7 @@ function AssignmentDrawer({
   period: ShiftPeriod
   periodLabel: string
   submitting: boolean
-  error: boolean
+  error: string
   onClose: () => void
   onSubmit: (payload: Record<string, unknown>) => void
 }) {
@@ -1127,7 +1127,7 @@ function AssignmentDrawer({
   const submit = () => {
     if (!valid) return
     onSubmit({
-      user_id: Number(userId),
+      operator_id: Number(userId),
       workstation_id: Number(wsId),
       shift_date: date,
       shift_period: period,
@@ -1188,7 +1188,7 @@ function AssignmentDrawer({
 
           {error && (
             <div style={{ fontFamily: SANS, fontSize: 12, color: C.red, padding: '10px 12px', background: 'rgba(229,72,77,.1)', borderRadius: 9, border: '1px solid rgba(229,72,77,.25)' }}>
-              Could not create the assignment. Check that this operator is not already assigned for this shift.
+              {error}
             </div>
           )}
         </div>
