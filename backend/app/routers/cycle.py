@@ -31,6 +31,11 @@ def step_out(s: CycleStep) -> dict:
     }
 
 
+def _step_sort_key(s: CycleStep):
+    import re
+    m = re.match(r'^(\d+)(.*)', str(s.step_number))
+    return (int(m.group(1)), m.group(2)) if m else (9999, str(s.step_number))
+
 def version_out(v: CycleVersion) -> dict:
     return {
         "id": v.id,
@@ -38,7 +43,7 @@ def version_out(v: CycleVersion) -> dict:
         "is_current": v.is_current,
         "created_at": v.created_at,
         "change_notes": v.change_notes,
-        "steps": [step_out(s) for s in v.steps],
+        "steps": [step_out(s) for s in sorted(v.steps, key=_step_sort_key)],
     }
 
 

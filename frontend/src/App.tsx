@@ -12,6 +12,8 @@ import Cycles from './pages/Cycles'
 import Config from './pages/Config'
 import Users from './pages/Users'
 import Shifts from './pages/Shifts'
+import Faridabad from './pages/Faridabad'
+import Tempering from './pages/Tempering'
 
 function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user, isAuthenticated } = useAuth()
@@ -43,6 +45,8 @@ export default function App() {
                   <Route path="/config" element={<ProtectedRoute roles={['admin']}><Config /></ProtectedRoute>} />
                   <Route path="/shifts" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Shifts /></ProtectedRoute>} />
                   <Route path="/users" element={<ProtectedRoute roles={['admin']}><Users /></ProtectedRoute>} />
+                  <Route path="/faridabad" element={<ProtectedRoute roles={['admin', 'manager']}><Faridabad /></ProtectedRoute>} />
+                  <Route path="/tempering" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Tempering /></ProtectedRoute>} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

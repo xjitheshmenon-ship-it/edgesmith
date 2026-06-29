@@ -65,6 +65,17 @@ class UID(Base):
     parent_uid = relationship("UID", remote_side="UID.id", foreign_keys=[parent_uid_id], backref="children")
     child_suffix = Column(String(4), nullable=True)   # A, B, C, D
 
+    # Material traceability from Faridabad
+    faridabad_dispatch_id = Column(Integer, ForeignKey("faridabad_dispatches.id"), nullable=True)
+    receiving_event_id = Column(Integer, ForeignKey("receiving_events.id"), nullable=True)
+    alloy_supplier = Column(String(256), nullable=True)
+    alloy_grade = Column(String(64), nullable=True)
+    alloy_heat_number = Column(String(64), nullable=True)
+    ms_supplier = Column(String(256), nullable=True)
+    ms_grade = Column(String(64), nullable=True)
+    ms_heat_number = Column(String(64), nullable=True)
+    rolling_contractor = Column(String(256), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     notes = Column(Text, nullable=True)
