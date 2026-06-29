@@ -135,4 +135,5 @@ export const shiftApi = {
   createAllotment: (data: Record<string, unknown>) => api.post('/shifts/allotments', data),
   removeAllotment: (id: number) => api.delete(`/shifts/allotments/${id}`),
   autoAssign: (data: Record<string, unknown>) => api.post('/shifts/allotments/auto-assign', data),
+  queueView: (shift_date: string, shift_period: string) => api.get('/shifts/queue-view', { params: { shift_date, shift_period } }),
 }

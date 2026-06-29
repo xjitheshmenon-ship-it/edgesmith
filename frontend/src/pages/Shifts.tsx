@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { shiftApi, factoryApi, userApi } from '../api/client'
 import { format } from 'date-fns'
-import { Plus, Trash2, CheckCircle, Clock, UserCheck, Briefcase, Zap } from 'lucide-react'
+import { Plus, Trash2, CheckCircle, Clock, UserCheck, Briefcase, Zap, ChevronRight, ArrowRight, Users } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
 
 const SHIFTS = [
@@ -17,8 +17,12 @@ const SHIFT_PILL: Record<string, React.CSSProperties> = {
   night:     { background: 'rgba(167,139,250,.2)', color: '#c4b5fd', border: '1px solid rgba(167,139,250,.3)' },
 }
 
-const TH: React.CSSProperties = { padding: '8px 12px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', color: 'var(--ink-3)', fontWeight: 500, borderBottom: '1px solid var(--line)', textTransform: 'uppercase' }
-const TD: React.CSSProperties = { padding: '10px 12px', fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }
+const STATUS_COLOR: Record<string, string> = {
+  active: '#6ee7b7',
+  on_hold: '#fcd34d',
+  converting: '#c4b5fd',
+  dispatched: '#93c5fd',
+}
 
 export default function Shifts() {
   const { user } = useAuth()
@@ -34,18 +38,16 @@ export default function Shifts() {
   const [assignForm, setAssignForm] = useState({ workstation_id: '', operator_id: '', notes: '' })
   const [showAssignForm, setShowAssignForm] = useState(false)
 
-  const [allotForm, setAllotForm] = useState({ uid_id: '', operator_id: '', workstation_id: '', notes: '' })
-  const [uidSearch, setUidSearch] = useState('')
-  const [showAllotForm, setShowAllotForm] = useState(false)
-
   const { data: assignments = [] } = useQuery({
     queryKey: ['shift-assignments', selectedDate, selectedShift],
     queryFn: () => shiftApi.listAssignments({ shift_date: selectedDate, shift_period: selectedShift }).then(r => r.data),
   })
 
-  const { data: allotments = [] } = useQuery({
-    queryKey: ['job-allotments'],
-    queryFn: () => shiftApi.listAllotments({ active_only: true }).then(r => r.data),
+  const { data: queueData = [], isLoading: queueLoading } = useQuery({
+    queryKey: ['shift-queue', selectedDate, selectedShift],
+    queryFn: () => shiftApi.queueView(selectedDate, selectedShift).then(r => r.data),
+    enabled: activeTab === 'allotments',
+    refetchInterval: 30000,
   })
 
   const { data: workstations = [] } = useQuery({
@@ -56,12 +58,6 @@ export default function Shifts() {
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
     queryFn: () => userApi.list().then(r => r.data),
-  })
-
-  const { data: uidResult } = useQuery({
-    queryKey: ['uid-lookup', uidSearch],
-    queryFn: () => import('../api/client').then(m => m.uidApi.lookup(uidSearch).then(r => r.data)),
-    enabled: uidSearch.length >= 3,
   })
 
   const operators = (users as any[]).filter((u: any) => u.role === 'operator')
@@ -84,12 +80,12 @@ export default function Shifts() {
 
   const createAllotment = useMutation({
     mutationFn: (d: any) => shiftApi.createAllotment(d),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['job-allotments'] }); setShowAllotForm(false); setAllotForm({ uid_id: '', operator_id: '', workstation_id: '', notes: '' }); setUidSearch('') },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['shift-queue'] }),
   })
 
   const removeAllotment = useMutation({
     mutationFn: (id: number) => shiftApi.removeAllotment(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['job-allotments'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['shift-queue'] }),
   })
 
   const [autoAssignResult, setAutoAssignResult] = useState<{ allotted: number } | null>(null)
@@ -97,7 +93,7 @@ export default function Shifts() {
     mutationFn: () => shiftApi.autoAssign({ shift_date: selectedDate, shift_period: selectedShift }).then(r => r.data),
     onSuccess: (data) => {
       setAutoAssignResult(data)
-      qc.invalidateQueries({ queryKey: ['job-allotments'] })
+      qc.invalidateQueries({ queryKey: ['shift-queue'] })
     },
   })
 
@@ -118,12 +114,8 @@ export default function Shifts() {
                 key={s.value}
                 onClick={() => setSelectedShift(s.value)}
                 style={{
-                  padding: '8px 14px',
-                  fontSize: 13,
-                  fontWeight: 500,
-                  border: 'none',
-                  borderRight: '1px solid var(--line)',
-                  cursor: 'pointer',
+                  padding: '8px 14px', fontSize: 13, fontWeight: 500,
+                  border: 'none', borderRight: '1px solid var(--line)', cursor: 'pointer',
                   background: selectedShift === s.value ? 'var(--accent)' : 'var(--surface)',
                   color: selectedShift === s.value ? 'var(--accent-ink)' : 'var(--ink)',
                   transition: 'background 0.12s',
@@ -138,7 +130,7 @@ export default function Shifts() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--line)', marginBottom: 20 }}>
-        {[{ key: 'assignments', label: 'Operator Assignments', icon: <UserCheck size={14} /> }, { key: 'allotments', label: 'Job Allotments', icon: <Briefcase size={14} /> }].map(t => (
+        {[{ key: 'assignments', label: 'Operator Assignments', icon: <UserCheck size={14} /> }, { key: 'allotments', label: 'Job Queue', icon: <Briefcase size={14} /> }].map(t => (
           <button
             key={t.key}
             onClick={() => setActiveTab(t.key as any)}
@@ -163,21 +155,6 @@ export default function Shifts() {
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace", ...SHIFT_PILL[selectedShift] }}>
               <Clock size={12} /> {shiftInfo.label} Shift · {shiftInfo.time} · {format(new Date(selectedDate + 'T00:00:00'), 'dd MMM yyyy')}
             </div>
-            {canEdit && (
-              <button
-                className="btn-secondary"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}
-                disabled={autoAssign.isPending || (assignments as any[]).length === 0}
-                onClick={() => { setAutoAssignResult(null); autoAssign.mutate() }}
-              >
-                <Zap size={13} /> {autoAssign.isPending ? 'Assigning…' : 'Auto-Assign UIDs'}
-              </button>
-            )}
-            {autoAssignResult && (
-              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: autoAssignResult.allotted > 0 ? '#22a06b' : 'var(--ink-3)' }}>
-                {autoAssignResult.allotted > 0 ? `✓ ${autoAssignResult.allotted} UIDs allotted` : 'No matching UIDs found'}
-              </span>
-            )}
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
@@ -244,90 +221,217 @@ export default function Shifts() {
         </div>
       )}
 
-      {/* ALLOTMENTS TAB */}
+      {/* JOB QUEUE TAB */}
       {activeTab === 'allotments' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr>
-                  <th style={TH}>UID</th>
-                  <th style={TH}>Status</th>
-                  <th style={TH}>Step</th>
-                  <th style={TH}>Operator</th>
-                  <th style={TH}>Workstation</th>
-                  <th style={TH}>Allotted By</th>
-                  <th style={TH}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(allotments as any[]).map((j: any) => (
-                  <tr key={j.id}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
-                  >
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--accent)' }}>{j.uid_code}</td>
-                    <td style={TD}><span className="badge-blue">{j.uid_status}</span></td>
-                    <td style={{ ...TD, color: 'var(--ink-2)' }}>{j.current_step || '—'}</td>
-                    <td style={TD}>{j.operator_full_name || j.operator_username}</td>
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{j.workstation_code}</td>
-                    <td style={{ ...TD, color: 'var(--ink-2)' }}>{j.allotted_by}</td>
-                    <td style={TD}>
-                      {canEdit && (
-                        <button onClick={() => removeAllotment.mutate(j.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error)' }}>
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {allotments.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>No active job allotments.</div>
+        <div>
+          {/* Header bar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 20, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace", ...SHIFT_PILL[selectedShift] }}>
+              <Clock size={12} /> {shiftInfo.label} · {format(new Date(selectedDate + 'T00:00:00'), 'dd MMM yyyy')}
+            </div>
+            {canEdit && (
+              <button
+                className="btn-secondary"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+                disabled={autoAssign.isPending || (assignments as any[]).length === 0}
+                onClick={() => { setAutoAssignResult(null); autoAssign.mutate() }}
+              >
+                <Zap size={13} /> {autoAssign.isPending ? 'Assigning…' : 'Auto-Fill All Queues'}
+              </button>
             )}
+            {autoAssignResult && (
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: autoAssignResult.allotted > 0 ? '#22a06b' : 'var(--ink-3)' }}>
+                {autoAssignResult.allotted > 0 ? `✓ ${autoAssignResult.allotted} knives queued` : 'No matching knives found'}
+              </span>
+            )}
+            <span style={{ marginLeft: 'auto', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)' }}>
+              Refreshes every 30s
+            </span>
           </div>
 
-          {isSupervisor && (
-            !showAllotForm ? (
-              <button onClick={() => setShowAllotForm(true)} className="btn-secondary"><Plus size={15} /> Allot Job to Operator</button>
-            ) : (
-              <div className="card" style={{ padding: 16, maxWidth: 440, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>Allot Job</div>
-                <div>
-                  <input className="input" style={{ width: '100%' }} placeholder="Search UID code…" value={uidSearch} onChange={e => setUidSearch(e.target.value.toUpperCase())} />
-                  {uidResult && (
-                    <div
-                      onClick={() => setAllotForm(f => ({ ...f, uid_id: String(uidResult.id) }))}
-                      style={{ marginTop: 4, padding: '8px 10px', border: '1px solid var(--line)', borderRadius: 8, cursor: 'pointer', fontSize: 13, background: allotForm.uid_id === String(uidResult.id) ? 'var(--accent-dim)' : 'var(--surface-2)' }}
-                    >
-                      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, color: 'var(--accent)' }}>{uidResult.uid_code}</span>
-                      <span style={{ color: 'var(--ink-2)', marginLeft: 8 }}>· {uidResult.status} · Step {uidResult.current_step_number}</span>
-                      {allotForm.uid_id === String(uidResult.id) && <span style={{ marginLeft: 8, color: '#22a06b', fontSize: 12 }}>✓ selected</span>}
-                    </div>
-                  )}
-                </div>
-                <select className="input" value={allotForm.operator_id} onChange={e => setAllotForm(f => ({ ...f, operator_id: e.target.value }))}>
-                  <option value="">Select operator…</option>
-                  {operators.map((o: any) => <option key={o.id} value={o.id}>{o.full_name || o.username}</option>)}
-                </select>
-                <select className="input" value={allotForm.workstation_id} onChange={e => setAllotForm(f => ({ ...f, workstation_id: e.target.value }))}>
-                  <option value="">Select workstation…</option>
-                  {(workstations as any[]).map((w: any) => <option key={w.id} value={w.id}>{w.code} — {w.name}</option>)}
-                </select>
-                <input className="input" placeholder="Notes (optional)" value={allotForm.notes} onChange={e => setAllotForm(f => ({ ...f, notes: e.target.value }))} />
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn-primary" disabled={!allotForm.uid_id || !allotForm.operator_id || !allotForm.workstation_id || createAllotment.isPending} onClick={() => createAllotment.mutate({ uid_id: Number(allotForm.uid_id), operator_id: Number(allotForm.operator_id), workstation_id: Number(allotForm.workstation_id), notes: allotForm.notes || undefined })}>
-                    {createAllotment.isPending ? 'Saving…' : 'Allot Job'}
-                  </button>
-                  <button className="btn-secondary" onClick={() => { setShowAllotForm(false); setUidSearch('') }}>Cancel</button>
-                </div>
-                {createAllotment.isError && <p style={{ fontSize: 13, color: 'var(--error)' }}>{(createAllotment.error as any)?.response?.data?.detail || 'Error saving'}</p>}
-              </div>
-            )
+          {queueLoading && (
+            <div style={{ textAlign: 'center', padding: 40, color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>Loading queue…</div>
+          )}
+
+          {!queueLoading && (queueData as any[]).length === 0 && (
+            <div style={{ textAlign: 'center', padding: 48, color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
+              No operator assignments for this shift. Set up assignments first.
+            </div>
+          )}
+
+          {/* Workstation queue cards */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {(queueData as any[]).map((ws: any) => (
+              <WorkstationQueueCard
+                key={ws.assignment_id}
+                ws={ws}
+                canEdit={!!canEdit}
+                onAllot={(uid_id) => createAllotment.mutate({
+                  uid_id,
+                  operator_id: ws.operator_id,
+                  workstation_id: ws.workstation_id,
+                })}
+                onRemove={(allotment_id) => removeAllotment.mutate(allotment_id)}
+                allotting={createAllotment.isPending}
+                removing={removeAllotment.isPending}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Workstation Queue Card ────────────────────────────────────────────────────
+
+function WorkstationQueueCard({
+  ws, canEdit, onAllot, onRemove, allotting, removing,
+}: {
+  ws: any
+  canEdit: boolean
+  onAllot: (uid_id: number) => void
+  onRemove: (allotment_id: number) => void
+  allotting: boolean
+  removing: boolean
+}) {
+  const [showReady, setShowReady] = useState(false)
+
+  const fromStr = ws.from_storage?.join(', ') || '—'
+  const toStr = ws.to_storage?.join(', ') || '—'
+
+  return (
+    <div className="card" style={{ overflow: 'hidden' }}>
+      {/* Card header */}
+      <div style={{
+        padding: '12px 16px',
+        background: 'var(--surface-2)',
+        borderBottom: '1px solid var(--line)',
+        display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+      }}>
+        <div>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 14, color: 'var(--accent)' }}>{ws.workstation_code}</span>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-2)', marginLeft: 8 }}>{ws.workstation_name}</span>
+        </div>
+
+        {/* Source → Destination */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <StoragePill label={fromStr} />
+          <ArrowRight size={12} color="var(--ink-3)" />
+          <StoragePill label={toStr} accent />
+        </div>
+
+        {/* Operator */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+          <Users size={13} color="var(--ink-3)" />
+          <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>{ws.operator_name}</span>
+          {ws.confirmed && <span style={{ fontSize: 10, color: '#6ee7b7', fontFamily: "'IBM Plex Mono', monospace" }}>CONFIRMED</span>}
+        </div>
+
+        {/* Queue count */}
+        <div style={{
+          fontFamily: "'IBM Plex Mono', monospace", fontSize: 11,
+          background: ws.queue.length > 0 ? 'rgba(212,238,203,.15)' : 'var(--surface-3)',
+          border: `1px solid ${ws.queue.length > 0 ? 'rgba(212,238,203,.3)' : 'var(--line)'}`,
+          color: ws.queue.length > 0 ? 'var(--accent)' : 'var(--ink-3)',
+          padding: '3px 10px', borderRadius: 20,
+        }}>
+          {ws.queue.length} in queue
+        </div>
+      </div>
+
+      {/* Queue list */}
+      {ws.queue.length > 0 ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '12px 16px', borderBottom: ws.ready_count > 0 ? '1px solid var(--line)' : 'none' }}>
+          {ws.queue.map((j: any) => (
+            <div key={j.id} style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: 'var(--surface-2)', border: '1px solid var(--line)',
+              borderRadius: 8, padding: '4px 10px',
+            }}>
+              <span style={{
+                fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 12,
+                color: STATUS_COLOR[j.uid_status] || 'var(--ink)',
+              }}>{j.uid_code}</span>
+              {canEdit && (
+                <button
+                  onClick={() => onRemove(j.id)}
+                  disabled={removing}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)', padding: 0, lineHeight: 1 }}
+                >
+                  <Trash2 size={11} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ padding: '10px 16px', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, borderBottom: ws.ready_count > 0 ? '1px solid var(--line)' : 'none' }}>
+          Queue is empty
+        </div>
+      )}
+
+      {/* Ready pool */}
+      {ws.ready_count > 0 && canEdit && (
+        <div style={{ padding: '10px 16px', background: 'var(--surface)' }}>
+          <button
+            onClick={() => setShowReady(s => !s)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+              fontFamily: "'IBM Plex Mono', monospace", fontSize: 11,
+              color: 'var(--ink-2)',
+            }}
+          >
+            <ChevronRight size={12} style={{ transform: showReady ? 'rotate(90deg)' : 'none', transition: '0.15s' }} />
+            {ws.ready_count} knives ready at {fromStr} — click to add to queue
+          </button>
+
+          {showReady && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
+              {ws.ready_uids.map((u: any) => (
+                <button
+                  key={u.id}
+                  onClick={() => onAllot(u.id)}
+                  disabled={allotting}
+                  style={{
+                    fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 12,
+                    padding: '4px 10px', borderRadius: 8, cursor: allotting ? 'not-allowed' : 'pointer',
+                    border: '1px dashed var(--line)',
+                    background: 'var(--surface-2)',
+                    color: STATUS_COLOR[u.status] || 'var(--ink)',
+                    transition: 'border-color 0.1s',
+                  }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--accent)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.borderColor = 'var(--line)'}
+                >
+                  + {u.code}
+                </button>
+              ))}
+              {ws.ready_count > 50 && (
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', alignSelf: 'center' }}>
+                  …and {ws.ready_count - 50} more (use Auto-Fill)
+                </span>
+              )}
+            </div>
           )}
         </div>
       )}
     </div>
+  )
+}
+
+function StoragePill({ label, accent }: { label: string; accent?: boolean }) {
+  return (
+    <span style={{
+      fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600,
+      padding: '2px 8px', borderRadius: 6,
+      background: accent ? 'rgba(212,238,203,.12)' : 'var(--surface-3)',
+      color: accent ? 'var(--accent)' : 'var(--ink-2)',
+      border: `1px solid ${accent ? 'rgba(212,238,203,.25)' : 'var(--line)'}`,
+      letterSpacing: '0.06em',
+    }}>
+      {label}
+    </span>
   )
 }

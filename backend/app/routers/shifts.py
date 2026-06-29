@@ -59,9 +59,12 @@ def _allotment_out(j: JobAllotment):
     return {
         'id': j.id,
         'uid_id': j.uid_id,
-        'uid_code': j.uid.uid_code if j.uid else None,
+        'uid_code': j.uid.code if j.uid else None,
         'uid_status': j.uid.status if j.uid else None,
-        'current_step': j.uid.current_step_number if j.uid else None,
+        'current_step': j.uid.current_step.step_number if (j.uid and j.uid.current_step) else None,
+        'current_step_name': j.uid.current_step.operation_name if (j.uid and j.uid.current_step) else None,
+        'from_storage_code': j.uid.current_step.from_storage.code if (j.uid and j.uid.current_step and j.uid.current_step.from_storage) else None,
+        'to_storage_code': j.uid.current_step.to_storage.code if (j.uid and j.uid.current_step and j.uid.current_step.to_storage) else None,
         'operator_id': j.operator_id,
         'operator_username': j.operator.username if j.operator else None,
         'operator_full_name': j.operator.full_name if j.operator else None,
@@ -305,3 +308,68 @@ def auto_assign_allotments(
 
     db.commit()
     return {'allotted': total_allotted}
+
+
+# ── Queue View ────────────────────────────────────────────────────────────────
+
+@router.get('/queue-view')
+def queue_view(
+    shift_date: date_type,
+    shift_period: ShiftPeriod,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    For the given shift, return each assigned workstation with:
+    - operator info
+    - already allotted UIDs (their queue)
+    - ready UIDs (at source storage of that workstation's step, not yet allotted)
+    Source/destination auto-derived from cycle step config.
+    """
+    from ..models.cycle import CycleStep
+
+    assignments = db.query(ShiftAssignment).filter(
+        ShiftAssignment.shift_date == shift_date,
+        ShiftAssignment.shift_period == shift_period,
+    ).all()
+
+    result = []
+    for a in assignments:
+        # UIDs currently allotted to this workstation (active allotments)
+        allotted = db.query(JobAllotment).filter(
+            JobAllotment.workstation_id == a.workstation_id,
+            JobAllotment.is_active == 1,
+        ).order_by(JobAllotment.created_at).all()
+
+        allotted_uid_ids = {j.uid_id for j in allotted}
+
+        # Find step(s) for this workstation to get source/destination
+        steps = db.query(CycleStep).filter(CycleStep.workstation_id == a.workstation_id).all()
+        from_codes = list({s.from_storage.code for s in steps if s.from_storage})
+        to_codes = list({s.to_storage.code for s in steps if s.to_storage})
+
+        # Ready UIDs: at this workstation's step but not yet allotted
+        ready_uids = db.query(UID).join(
+            CycleStep, UID.current_step_id == CycleStep.id
+        ).filter(
+            CycleStep.workstation_id == a.workstation_id,
+            UID.status.in_([UIDStatus.active, UIDStatus.on_hold]),
+            UID.id.notin_(allotted_uid_ids),
+        ).order_by(UID.created_at).all()
+
+        result.append({
+            'assignment_id': a.id,
+            'workstation_id': a.workstation_id,
+            'workstation_code': a.workstation.code if a.workstation else None,
+            'workstation_name': a.workstation.name if a.workstation else None,
+            'operator_id': a.operator_id,
+            'operator_name': a.operator.full_name or a.operator.username if a.operator else None,
+            'confirmed': bool(a.confirmed_by_id),
+            'from_storage': from_codes,
+            'to_storage': to_codes,
+            'queue': [_allotment_out(j) for j in allotted],
+            'ready_count': len(ready_uids),
+            'ready_uids': [{'id': u.id, 'code': u.code, 'status': u.status, 'priority': u.priority} for u in ready_uids[:50]],
+        })
+
+    return result
