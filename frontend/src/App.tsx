@@ -13,10 +13,19 @@ import Users from './pages/Users'
 import Shifts from './pages/Shifts'
 import Faridabad from './pages/Faridabad'
 import Tempering from './pages/Tempering'
-import Placeholder from './pages/Placeholder'
 import ProductionFloor from './pages/ProductionFloor'
 import Receiving from './pages/Receiving'
 import UIDDetail from './pages/UIDDetail'
+import BatchManagement from './pages/BatchManagement'
+import QC from './pages/QC'
+import Intake from './pages/Intake'
+import Joining from './pages/Joining'
+import Dispatch from './pages/Dispatch'
+import Reports from './pages/Reports'
+import JobAssignment from './pages/JobAssignment'
+import JobExecution from './pages/JobExecution'
+import MasterLists from './pages/MasterLists'
+import Employees from './pages/Employees'
 
 function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user, isAuthenticated } = useAuth()
@@ -39,22 +48,37 @@ export default function App() {
               <Layout>
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
-                  <Route path="/uid-lookup" element={<UIDLookup />} />
                   <Route path="/shopfloor" element={<Shopfloor />} />
                   <Route path="/queue" element={<OperatorQueue />} />
-                  <Route path="/uids" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><UIDs /></ProtectedRoute>} />
-                  <Route path="/manufacturing" element={<ProtectedRoute roles={['admin', 'manager']}><Manufacturing /></ProtectedRoute>} />
-                  <Route path="/config" element={<ProtectedRoute roles={['admin']}><Config /></ProtectedRoute>} />
-                  <Route path="/shifts" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Shifts /></ProtectedRoute>} />
-                  <Route path="/users" element={<ProtectedRoute roles={['admin']}><Users /></ProtectedRoute>} />
+
+                  {/* Faridabad */}
+                  <Route path="/intake" element={<ProtectedRoute roles={['admin', 'manager']}><Intake /></ProtectedRoute>} />
+                  <Route path="/joining" element={<ProtectedRoute roles={['admin', 'manager']}><Joining /></ProtectedRoute>} />
+                  <Route path="/dispatch" element={<ProtectedRoute roles={['admin', 'manager']}><Dispatch /></ProtectedRoute>} />
                   <Route path="/faridabad" element={<ProtectedRoute roles={['admin', 'manager']}><Faridabad /></ProtectedRoute>} />
-                  <Route path="/tempering" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Tempering /></ProtectedRoute>} />
-                  <Route path="/production" element={<ProductionFloor />} />
-                  <Route path="/uid/:code" element={<UIDDetail />} />
+
+                  {/* Dharmapuri */}
                   <Route path="/receiving" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Receiving /></ProtectedRoute>} />
-                  <Route path="/qc" element={<Placeholder title="Quality Control" />} />
-                  <Route path="/reports" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Placeholder title="Reports" /></ProtectedRoute>} />
-                  <Route path="/employees" element={<ProtectedRoute roles={['admin', 'manager']}><Placeholder title="Employee Profiles & Badges" /></ProtectedRoute>} />
+                  <Route path="/uids" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><UIDs /></ProtectedRoute>} />
+                  <Route path="/production" element={<ProductionFloor />} />
+                  <Route path="/job-execution" element={<JobExecution />} />
+                  <Route path="/batches" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><BatchManagement /></ProtectedRoute>} />
+                  <Route path="/qc" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor', 'operator']}><QC /></ProtectedRoute>} />
+
+                  {/* Management */}
+                  <Route path="/manufacturing" element={<ProtectedRoute roles={['admin', 'manager']}><Manufacturing /></ProtectedRoute>} />
+                  <Route path="/shifts" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Shifts /></ProtectedRoute>} />
+                  <Route path="/job-assignment" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><JobAssignment /></ProtectedRoute>} />
+                  <Route path="/reports" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Reports /></ProtectedRoute>} />
+                  <Route path="/uid-lookup" element={<UIDLookup />} />
+                  <Route path="/uid/:code" element={<UIDDetail />} />
+
+                  {/* Configuration */}
+                  <Route path="/config" element={<ProtectedRoute roles={['admin', 'manager']}><Config /></ProtectedRoute>} />
+                  <Route path="/master-lists" element={<ProtectedRoute roles={['admin', 'manager']}><MasterLists /></ProtectedRoute>} />
+                  <Route path="/tempering" element={<ProtectedRoute roles={['admin']}><Tempering /></ProtectedRoute>} />
+                  <Route path="/employees" element={<ProtectedRoute roles={['admin', 'manager']}><Employees /></ProtectedRoute>} />
+                  <Route path="/users" element={<ProtectedRoute roles={['admin']}><Users /></ProtectedRoute>} />
                 </Routes>
               </Layout>
             </ProtectedRoute>

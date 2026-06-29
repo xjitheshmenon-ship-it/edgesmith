@@ -10,7 +10,7 @@ import {
   Plus, X, Zap, ChevronRight, ChevronDown, Sun, Moon,
   Inbox, Link2, Truck, Download, Tag, Factory, Layers, CheckCircle2,
   FileText, Calendar, UserPlus, BarChart3, GitBranch, List, Thermometer, BadgeCheck, Lock,
-  Bell, Clock, KeyRound, UserCircle,
+  Bell, Clock, KeyRound, UserCircle, Hammer,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toggleTheme, getCurrentTheme, type Theme } from '../store/theme'
@@ -33,28 +33,29 @@ const SECTIONS: NavSection[] = [
     { label: 'Shopfloor Display', to: '/shopfloor', icon: <Monitor size={sz} />, roles: ALL },
   ]},
   { title: 'FARIDABAD', location: 'F2', items: [
-    { label: 'Raw Material Intake', to: '/faridabad', icon: <Inbox size={sz} />, roles: ['admin', 'manager'] },
-    { label: 'Joining Operation', to: '/faridabad', icon: <Link2 size={sz} />, roles: ['admin', 'manager'] },
-    { label: 'Contractor Dispatch', to: '/faridabad', icon: <Truck size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Raw Material Intake', to: '/intake', icon: <Inbox size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Joining Operation', to: '/joining', icon: <Link2 size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Contractor Dispatch', to: '/dispatch', icon: <Truck size={sz} />, roles: ['admin', 'manager'] },
   ]},
   { title: 'DHARMAPURI', location: 'F1', items: [
     { label: 'Receiving', to: '/receiving', icon: <Download size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'UID Creation', to: '/uids', icon: <Tag size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'Production Floor', to: '/production', icon: <Factory size={sz} />, roles: ['admin', 'manager', 'supervisor', 'operator'] },
-    { label: 'Batch Management', to: '/tempering', icon: <Layers size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+    { label: 'Job Execution', to: '/job-execution', icon: <Hammer size={sz} />, roles: ['admin', 'manager', 'supervisor', 'operator'] },
+    { label: 'Batch Management', to: '/batches', icon: <Layers size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'QC', to: '/qc', icon: <CheckCircle2 size={sz} />, roles: ['admin', 'manager', 'supervisor', 'operator'] },
   ]},
   { title: 'MANAGEMENT', items: [
     { label: 'MO Linking', to: '/manufacturing', icon: <FileText size={sz} />, roles: ['admin', 'manager'] },
     { label: 'Shift Management', to: '/shifts', icon: <Calendar size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
-    { label: 'Job Assignment', to: '/shifts', icon: <UserPlus size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+    { label: 'Job Assignment', to: '/job-assignment', icon: <UserPlus size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'Reports', to: '/reports', icon: <BarChart3 size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'Service Lookup', to: '/uid-lookup', icon: <Search size={sz} />, roles: ['admin', 'manager', 'supervisor', 'service'] },
   ]},
   { title: 'CONFIGURATION', defaultCollapsed: true, items: [
     { label: 'Cycle Builder', to: '/config', icon: <GitBranch size={sz} />, roles: ['admin', 'manager'] },
-    { label: 'Master Lists', to: '/config', icon: <List size={sz} />, roles: ['admin', 'manager'] },
-    { label: 'Tempering Parameters', to: '/config', icon: <Thermometer size={sz} />, roles: ['admin'] },
+    { label: 'Master Lists', to: '/master-lists', icon: <List size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Tempering Parameters', to: '/tempering', icon: <Thermometer size={sz} />, roles: ['admin'] },
     { label: 'Employee Profiles', to: '/employees', icon: <BadgeCheck size={sz} />, roles: ['admin', 'manager'] },
     { label: 'Users and Roles', to: '/users', icon: <Lock size={sz} />, roles: ['admin'] },
   ]},
