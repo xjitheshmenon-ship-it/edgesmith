@@ -525,29 +525,71 @@ export default function Manufacturing() {
   )
 }
 
+const DT = {
+  surface: '#173a70', s2: '#21498a', s3: '#2a5aa0', line: '#2c5191',
+  ink: '#eaf4e4', ink2: '#9bb4d4', ink3: '#5a7aaa', accent: '#d4eecb', accentInk: '#143160',
+  red: '#e5484d', green: '#22a06b',
+}
+const dinput: React.CSSProperties = {
+  width: '100%', padding: '9px 12px', borderRadius: 8, boxSizing: 'border-box',
+  background: DT.s3, border: `1px solid ${DT.line}`, color: DT.ink,
+  fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, outline: 'none',
+}
+const dlabel: React.CSSProperties = {
+  fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em',
+  color: DT.ink3, textTransform: 'uppercase', marginBottom: 6, display: 'block',
+}
+
+function DrawerShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <>
+      <style>{`@keyframes es-drawer { from { transform: translateX(24px); opacity: 0 } to { transform: none; opacity: 1 } }`}</style>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(10,20,45,.52)', backdropFilter: 'blur(3px)', zIndex: 40 }} />
+      <aside style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, width: 460,
+        background: DT.surface, borderLeft: `1px solid ${DT.line}`,
+        zIndex: 41, display: 'flex', flexDirection: 'column',
+        animation: 'es-drawer .28s cubic-bezier(.2,.8,.2,1) both',
+      }}>
+        {children}
+      </aside>
+    </>
+  )
+}
+
 function CreateMOModal({ onClose }: { onClose: () => void }) {
   const [form, setForm] = useState({ mo_number: '', customer: '', quantity: 1, notes: '' })
   const mutation = useMutation({
     mutationFn: (data: Record<string, unknown>) => manufacturingApi.createOrder(data).then((r) => r.data),
     onSuccess: onClose,
   })
+  const errMsg = (mutation.error as any)?.response?.data?.detail ?? 'Failed to create order'
+
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
-      <div className="card" style={{ width: '100%', maxWidth: 440, padding: '24px 24px 20px' }}>
-        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)', marginBottom: 18 }}>New Manufacturing Order</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>MO Number</label><input className="input" style={{ width: '100%' }} value={form.mo_number} onChange={e => setForm({ ...form, mo_number: e.target.value })} /></div>
-          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Customer</label><input className="input" style={{ width: '100%' }} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div>
-          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Quantity</label><input className="input" style={{ width: '100%' }} type="number" min={1} value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} /></div>
-          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Notes</label><textarea className="input" style={{ width: '100%' }} rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
-          {mutation.error && <p style={{ color: 'var(--error)', fontSize: 13 }}>Failed to create order</p>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-            <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button className="btn-primary" disabled={mutation.isPending} onClick={() => mutation.mutate({ ...form, quantity: Number(form.quantity) })}>Create</button>
-          </div>
+    <DrawerShell onClose={onClose}>
+      <div style={{ padding: '18px 22px', borderBottom: `1px solid ${DT.line}`, background: DT.s2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div>
+          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: DT.ink }}>New Manufacturing Order</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: DT.ink3, marginTop: 3 }}>PRODUCTION RECORD</div>
+        </div>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: DT.ink2, padding: 4 }}><X size={18} /></button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 22, display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div><label style={dlabel}>MO Number</label><input style={dinput} value={form.mo_number} onChange={e => setForm({ ...form, mo_number: e.target.value })} /></div>
+        <div><label style={dlabel}>Customer</label><input style={dinput} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div>
+        <div><label style={dlabel}>Quantity</label><input style={dinput} type="number" min={1} value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} /></div>
+        <div><label style={dlabel}>Notes</label><textarea style={{ ...dinput, resize: 'vertical' }} rows={3} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
+        {mutation.error && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: `${DT.red}20`, border: `1px solid ${DT.red}40`, color: DT.red, fontSize: 13 }}>{errMsg}</div>
+        )}
+        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: `1px solid ${DT.line}`, background: 'transparent', color: DT.ink2, cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
+          <button disabled={mutation.isPending} onClick={() => mutation.mutate({ ...form, quantity: Number(form.quantity) })} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: DT.accent, color: DT.accentInk, cursor: 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
+            {mutation.isPending ? 'Creating…' : 'Create Order'}
+          </button>
         </div>
       </div>
-    </div>
+    </DrawerShell>
   )
 }
 
@@ -567,25 +609,46 @@ function CreatePatternModal({ onClose }: { onClose: () => void }) {
   const scrap = inputLen - parsedOutputs.reduce((a, b) => a + b, 0) - numCuts * kerf
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
-      <div className="card" style={{ width: '100%', maxWidth: 440, padding: '24px 24px 20px' }}>
-        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)', marginBottom: 18 }}>New Conversion Pattern</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Pattern Name</label><input className="input" style={{ width: '100%' }} value={name} onChange={e => setName(e.target.value)} /></div>
-          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Input Length (mm)</label><input className="input" style={{ width: '100%' }} type="number" value={inputLen} onChange={e => setInputLen(Number(e.target.value))} /></div>
-          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Output Lengths (comma-separated mm)</label><input className="input" style={{ width: '100%' }} value={outputs} onChange={e => setOutputs(e.target.value)} /></div>
-          <div><label className="label-caps" style={{ display: 'block', marginBottom: 5 }}>Kerf per cut (mm)</label><input className="input" style={{ width: '100%' }} type="number" value={kerf} onChange={e => setKerf(Number(e.target.value))} /></div>
-          <div style={{ background: 'var(--surface-2)', borderRadius: 8, padding: '10px 14px', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 5 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--ink-2)' }}>Cuts</span><span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{numCuts}</span></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: 'var(--ink-2)' }}>Scrap</span><span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: scrap < 0 ? 'var(--error)' : 'var(--ink)' }}>{scrap} mm</span></div>
-          </div>
-          {mutation.error && <p style={{ color: 'var(--error)', fontSize: 13 }}>Failed to create pattern</p>}
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-            <button className="btn-secondary" onClick={onClose}>Cancel</button>
-            <button className="btn-primary" disabled={mutation.isPending || scrap < 0} onClick={() => mutation.mutate({ name, input_length_mm: inputLen, output_lengths_mm: parsedOutputs, kerf_mm: kerf })}>Create</button>
-          </div>
+    <DrawerShell onClose={onClose}>
+      <div style={{ padding: '18px 22px', borderBottom: `1px solid ${DT.line}`, background: DT.s2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <div>
+          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: DT.ink }}>New Conversion Pattern</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: DT.ink3, marginTop: 3 }}>CUT LAYOUT</div>
+        </div>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: DT.ink2, padding: 4 }}><X size={18} /></button>
+      </div>
+      <div style={{ flex: 1, overflowY: 'auto', padding: 22, display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div><label style={dlabel}>Pattern Name</label><input style={dinput} value={name} onChange={e => setName(e.target.value)} /></div>
+        <div><label style={dlabel}>Input Length (mm)</label><input style={dinput} type="number" value={inputLen} onChange={e => setInputLen(Number(e.target.value))} /></div>
+        <div><label style={dlabel}>Output Lengths (comma-separated mm)</label><input style={dinput} value={outputs} onChange={e => setOutputs(e.target.value)} placeholder="1500,1500,1424" /></div>
+        <div><label style={dlabel}>Kerf per cut (mm)</label><input style={dinput} type="number" value={kerf} onChange={e => setKerf(Number(e.target.value))} /></div>
+
+        {/* Live preview */}
+        <div style={{ padding: '14px 16px', borderRadius: 10, background: DT.s2, border: `1px solid ${DT.line}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: DT.ink3, textTransform: 'uppercase', marginBottom: 2 }}>Preview</div>
+          {[
+            { label: 'Cuts', value: String(numCuts), color: DT.ink },
+            { label: 'Total output', value: `${parsedOutputs.reduce((a, b) => a + b, 0)} mm`, color: DT.ink },
+            { label: 'Kerf loss', value: `${numCuts * kerf} mm`, color: DT.ink2 },
+            { label: 'Scrap', value: `${scrap} mm`, color: scrap < 0 ? DT.red : DT.green },
+          ].map(r => (
+            <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+              <span style={{ color: DT.ink2 }}>{r.label}</span>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: r.color }}>{r.value}</span>
+            </div>
+          ))}
+        </div>
+
+        {mutation.error && (
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: `${DT.red}20`, border: `1px solid ${DT.red}40`, color: DT.red, fontSize: 13 }}>Failed to create pattern</div>
+        )}
+        <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: `1px solid ${DT.line}`, background: 'transparent', color: DT.ink2, cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
+          <button disabled={mutation.isPending || scrap < 0} onClick={() => mutation.mutate({ name, input_length_mm: inputLen, output_lengths_mm: parsedOutputs, kerf_mm: kerf })} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: scrap < 0 ? DT.s2 : DT.accent, color: scrap < 0 ? DT.ink3 : DT.accentInk, cursor: scrap < 0 ? 'not-allowed' : 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
+            {mutation.isPending ? 'Creating…' : 'Create Pattern'}
+          </button>
         </div>
       </div>
-    </div>
+    </DrawerShell>
   )
 }
