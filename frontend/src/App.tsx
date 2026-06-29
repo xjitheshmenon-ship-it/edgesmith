@@ -8,7 +8,6 @@ import Shopfloor from './pages/Shopfloor'
 import OperatorQueue from './pages/OperatorQueue'
 import UIDs from './pages/UIDs'
 import Manufacturing from './pages/Manufacturing'
-import Cycles from './pages/Cycles'
 import Config from './pages/Config'
 import Users from './pages/Users'
 import Shifts from './pages/Shifts'
@@ -41,7 +40,6 @@ export default function App() {
                   <Route path="/queue" element={<OperatorQueue />} />
                   <Route path="/uids" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><UIDs /></ProtectedRoute>} />
                   <Route path="/manufacturing" element={<ProtectedRoute roles={['admin', 'manager']}><Manufacturing /></ProtectedRoute>} />
-                  <Route path="/cycles" element={<ProtectedRoute roles={['admin', 'manager']}><Cycles /></ProtectedRoute>} />
                   <Route path="/config" element={<ProtectedRoute roles={['admin']}><Config /></ProtectedRoute>} />
                   <Route path="/shifts" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Shifts /></ProtectedRoute>} />
                   <Route path="/users" element={<ProtectedRoute roles={['admin']}><Users /></ProtectedRoute>} />
