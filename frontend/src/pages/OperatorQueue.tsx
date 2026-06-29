@@ -1,11 +1,16 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { uidApi, factoryApi } from '../api/client'
+import { uidApi, factoryApi, temperingApi } from '../api/client'
 import type { UID, Workstation } from '../types'
 import UIDStatusBadge from '../components/UIDStatusBadge'
 import PriorityBadge from '../components/PriorityBadge'
 import { useAuth } from '../hooks/useAuth'
-import { CheckCircle, AlertTriangle } from 'lucide-react'
+import { CheckCircle, AlertTriangle, Flame, Layers } from 'lucide-react'
+
+const isBatchStep = (u: any) =>
+  u?.current_step_name?.toLowerCase().includes('temper') ||
+  u?.current_step_name?.toLowerCase().includes('harden') ||
+  u?.current_step_name?.toLowerCase().includes('quench')
 
 export default function OperatorQueue() {
   const { user } = useAuth()
@@ -14,6 +19,11 @@ export default function OperatorQueue() {
   const [qcResult, setQCResult] = useState('na')
   const [notes, setNotes] = useState('')
   const [selectedWS, setSelectedWS] = useState<number | undefined>()
+  const [batchMode, setBatchMode] = useState(false)
+  const [batchUIDs, setBatchUIDs] = useState<number[]>([])
+  const [actualTemp, setActualTemp] = useState('')
+  const [actualTime, setActualTime] = useState('')
+  const [batchNotes, setBatchNotes] = useState('')
 
   const { data: uids = [] } = useQuery<UID[]>({
     queryKey: ['queue', user?.primary_location_id],
@@ -34,6 +44,37 @@ export default function OperatorQueue() {
       setSelectedUID(null)
       setNotes('')
       setQCResult('na')
+    },
+  })
+
+  const { data: batchAvailable = [] } = useQuery({
+    queryKey: ['batch-available', (selectedUID as any)?.current_step_id],
+    queryFn: () => temperingApi.availableUIDs((selectedUID as any).current_step_id).then(r => r.data),
+    enabled: batchMode && !!(selectedUID as any)?.current_step_id,
+  })
+
+  const startBatch = useMutation({
+    mutationFn: async () => {
+      const uid = selectedUID as any
+      const batch = await temperingApi.createBatch({
+        cycle_type_id: uid.cycle_type_id,
+        cycle_step_id: uid.current_step_id,
+        uid_ids: batchUIDs,
+      }).then(r => r.data)
+      await temperingApi.completeBatch(batch.id, {
+        actual_temp_c: actualTemp ? parseFloat(actualTemp) : null,
+        actual_soak_minutes: actualTime ? parseInt(actualTime) : null,
+        notes: batchNotes,
+      })
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['queue'] })
+      setSelectedUID(null)
+      setBatchMode(false)
+      setBatchUIDs([])
+      setActualTemp('')
+      setActualTime('')
+      setBatchNotes('')
     },
   })
 
@@ -123,24 +164,69 @@ export default function OperatorQueue() {
               )}
             </div>
 
-            <div><label className="label">Workstation</label><select className="input" value={selectedWS ?? ''} onChange={(e) => setSelectedWS(Number(e.target.value))}><option value="">Select workstation…</option>{workstations.map((w) => <option key={w.id} value={w.id}>{w.code} — {w.name}</option>)}</select></div>
-            <div><label className="label">QC Result</label><select className="input" value={qcResult} onChange={(e) => setQCResult(e.target.value)}><option value="na">N/A</option><option value="pass">Pass</option><option value="fail">Fail</option></select></div>
-            <div><label className="label">Notes</label><textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes…" /></div>
+            {/* Batch mode toggle for furnace steps */}
+            {isBatchStep(selectedUID) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 9, background: batchMode ? 'rgba(212,238,203,.1)' : 'var(--surface-2)', border: '1px solid var(--line)' }}>
+                <Flame size={14} style={{ color: 'var(--accent)', flexShrink: 0 }} />
+                <span style={{ fontSize: 12, color: 'var(--ink-2)', flex: 1 }}>Furnace step — supports batch processing</span>
+                <button
+                  onClick={() => { setBatchMode(b => !b); setBatchUIDs(b => b.length ? [] : [(selectedUID as any).id]) }}
+                  style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--accent)', background: batchMode ? 'var(--accent)' : 'transparent', color: batchMode ? 'var(--accent-ink)' : 'var(--accent)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}
+                >
+                  <Layers size={11} /> BATCH
+                </button>
+              </div>
+            )}
 
-            {completeStep.error && <p style={{ fontSize: 13, color: 'var(--error)' }}>Failed to complete step</p>}
-
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setSelectedUID(null)}>Cancel</button>
-              <button
-                className="btn-primary"
-                style={{ flex: 1 }}
-                disabled={!selectedWS || completeStep.isPending || selectedUID.status !== 'active'}
-                onClick={() => completeStep.mutate({ uid_id: selectedUID.id, workstation_id: selectedWS! })}
-              >
-                <CheckCircle size={15} />
-                {completeStep.isPending ? 'Saving…' : 'Mark Complete'}
-              </button>
-            </div>
+            {batchMode ? (
+              <>
+                <div>
+                  <label className="label">UIDs in this batch ({batchUIDs.length} selected)</label>
+                  <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid var(--line)', borderRadius: 8, background: 'var(--surface-2)' }}>
+                    {(batchAvailable as any[]).map((u: any) => (
+                      <label key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--line)', cursor: 'pointer', fontSize: 12 }}>
+                        <input type="checkbox" checked={batchUIDs.includes(u.id)} onChange={e => setBatchUIDs(ids => e.target.checked ? [...ids, u.id] : ids.filter(i => i !== u.id))} />
+                        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--ink)' }}>{u.code}</span>
+                        <span style={{ color: 'var(--ink-3)' }}>Step {u.current_step_number}</span>
+                      </label>
+                    ))}
+                    {(batchAvailable as any[]).length === 0 && <div style={{ padding: '12px', fontSize: 12, color: 'var(--ink-3)' }}>No other UIDs at this step</div>}
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div><label className="label">Actual Temp (°C)</label><input className="input" type="number" value={actualTemp} onChange={e => setActualTemp(e.target.value)} placeholder="e.g. 180" /></div>
+                  <div><label className="label">Actual Time (min)</label><input className="input" type="number" value={actualTime} onChange={e => setActualTime(e.target.value)} placeholder="e.g. 90" /></div>
+                </div>
+                <div><label className="label">Notes</label><textarea className="input" rows={2} value={batchNotes} onChange={e => setBatchNotes(e.target.value)} placeholder="Optional notes…" /></div>
+                {startBatch.isError && <p style={{ fontSize: 13, color: 'var(--error)' }}>Failed to complete batch</p>}
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="btn-secondary" style={{ flex: 1 }} onClick={() => { setSelectedUID(null); setBatchMode(false); setBatchUIDs([]) }}>Cancel</button>
+                  <button className="btn-primary" style={{ flex: 1 }} disabled={batchUIDs.length === 0 || startBatch.isPending} onClick={() => startBatch.mutate()}>
+                    <Flame size={14} />
+                    {startBatch.isPending ? 'Processing…' : `Complete Batch (${batchUIDs.length})`}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div><label className="label">Workstation</label><select className="input" value={selectedWS ?? ''} onChange={(e) => setSelectedWS(Number(e.target.value))}><option value="">Select workstation…</option>{workstations.map((w) => <option key={w.id} value={w.id}>{w.code} — {w.name}</option>)}</select></div>
+                <div><label className="label">QC Result</label><select className="input" value={qcResult} onChange={(e) => setQCResult(e.target.value)}><option value="na">N/A</option><option value="pass">Pass</option><option value="fail">Fail</option></select></div>
+                <div><label className="label">Notes</label><textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Optional notes…" /></div>
+                {completeStep.error && <p style={{ fontSize: 13, color: 'var(--error)' }}>Failed to complete step</p>}
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button className="btn-secondary" style={{ flex: 1 }} onClick={() => setSelectedUID(null)}>Cancel</button>
+                  <button
+                    className="btn-primary"
+                    style={{ flex: 1 }}
+                    disabled={!selectedWS || completeStep.isPending || selectedUID.status !== 'active'}
+                    onClick={() => completeStep.mutate({ uid_id: selectedUID.id, workstation_id: selectedWS! })}
+                  >
+                    <CheckCircle size={15} />
+                    {completeStep.isPending ? 'Saving…' : 'Mark Complete'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

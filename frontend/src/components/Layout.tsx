@@ -1,13 +1,14 @@
 import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { authStore } from '../store/auth'
-import { useQuery } from '@tanstack/react-query'
-import { shiftApi } from '../api/client'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { shiftApi, factoryApi, userApi } from '../api/client'
 import { format } from 'date-fns'
+import { useState } from 'react'
 import {
   LayoutDashboard, Package, Settings, Search,
   ClipboardList, Monitor, Users, LogOut,
-  Hammer, CalendarClock, Flame, Factory, Plus,
+  Hammer, CalendarClock, Factory, Plus, X,
   Zap, ChevronRight,
 } from 'lucide-react'
 
@@ -26,13 +27,73 @@ const NAV: NavItem[] = [
   { label: 'UIDs',         to: '/uids',           icon: <Package size={16} />,       roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Mfg Orders',   to: '/manufacturing',  icon: <Hammer size={16} />,        roles: ['admin', 'manager'] },
   { label: 'Faridabad',    to: '/faridabad',      icon: <Factory size={16} />,       roles: ['admin', 'manager'] },
-  { label: 'Tempering',    to: '/tempering',      icon: <Flame size={16} />,         roles: ['admin', 'manager', 'supervisor'] },
   { label: 'Config',       to: '/config',         icon: <Settings size={16} />,      roles: ['admin'] },
   { label: 'Users',        to: '/users',          icon: <Users size={16} />,         roles: ['admin'] },
 ]
 
 const STATUS_COLOR: Record<string, string> = {
   active: '#22a06b', on_hold: '#f59e0b', converting: '#a78bfa', dispatched: '#3b82f6',
+}
+
+/* ── Quick assign modal ─────────────────────────────────────────────────────── */
+function QuickAssign({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient()
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const hour = new Date().getHours()
+  const period = hour >= 6 && hour < 14 ? 'morning' : hour >= 14 && hour < 22 ? 'afternoon' : 'night'
+  const [form, setForm] = useState({ operator_id: '', workstation_id: '' })
+
+  const { data: users = [] } = useQuery({ queryKey: ['users'], queryFn: () => userApi.list().then(r => r.data) })
+  const { data: workstations = [] } = useQuery({ queryKey: ['workstations'], queryFn: () => factoryApi.workstations().then(r => r.data) })
+  const { data: existing = [] } = useQuery({ queryKey: ['assignments', today, period], queryFn: () => shiftApi.listAssignments({ shift_date: today, shift_period: period }).then(r => r.data) })
+
+  const assignedWsIds = new Set((existing as any[]).map((a: any) => a.workstation_id))
+  const operators = (users as any[]).filter((u: any) => u.role === 'operator')
+  const freeWorkstations = (workstations as any[]).filter((w: any) => !assignedWsIds.has(w.id))
+
+  const create = useMutation({
+    mutationFn: () => shiftApi.createAssignment({ shift_date: today, shift_period: period, operator_id: Number(form.operator_id), workstation_id: Number(form.workstation_id) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sidebar-queue'] }); qc.invalidateQueries({ queryKey: ['assignments'] }); onClose() },
+  })
+
+  const PERIOD_LABEL: Record<string, string> = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 16 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: 16, width: '100%', maxWidth: 360, padding: '20px 20px 16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div>
+            <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 15, color: 'var(--ink)' }}>Assign Operator</div>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 2, letterSpacing: '0.1em' }}>{PERIOD_LABEL[period].toUpperCase()} · {today}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)' }}><X size={16} /></button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <label className="label">Workstation</label>
+            <select className="input" value={form.workstation_id} onChange={e => setForm(f => ({ ...f, workstation_id: e.target.value }))}>
+              <option value="">Select workstation…</option>
+              {freeWorkstations.map((w: any) => <option key={w.id} value={w.id}>{w.code} — {w.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Operator</label>
+            <select className="input" value={form.operator_id} onChange={e => setForm(f => ({ ...f, operator_id: e.target.value }))}>
+              <option value="">Select operator…</option>
+              {operators.map((o: any) => <option key={o.id} value={o.id}>{o.full_name || o.username}</option>)}
+            </select>
+          </div>
+          {create.isError && <div style={{ fontSize: 12, color: 'var(--error)' }}>Failed to assign — workstation may already be taken.</div>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button className="btn-primary" disabled={!form.operator_id || !form.workstation_id || create.isPending} onClick={() => create.mutate()}>
+              {create.isPending ? 'Assigning…' : 'Assign'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 /* ── Sidebar shift/queue panel ─────────────────────────────────────────────── */
@@ -125,6 +186,7 @@ function ShiftPanel() {
 export default function Layout({ children }: { children: React.ReactNode }) {
   const { user } = useAuth()
   const location = useLocation()
+  const [showAssign, setShowAssign] = useState(false)
 
   const visibleNav = NAV.filter(item =>
     !item.roles || (user && item.roles.includes(user.role))
@@ -209,12 +271,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* ── Job Queue panel (supervisor+) ─── */}
         {isSupervisorPlus && (
           <>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--ink-2)', padding: '16px 20px 6px' }}>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--ink-2)', padding: '16px 20px 6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               JOB QUEUE
+              <button
+                onClick={() => setShowAssign(true)}
+                title="Assign operator"
+                style={{ background: 'rgba(212,238,203,.14)', border: '1px solid rgba(212,238,203,.22)', borderRadius: 6, cursor: 'pointer', color: 'var(--accent)', display: 'flex', alignItems: 'center', padding: '2px 6px', gap: 4, marginRight: 4 }}
+              >
+                <Plus size={11} />
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.08em' }}>ASSIGN</span>
+              </button>
             </div>
             <ShiftPanel />
           </>
         )}
+        {showAssign && <QuickAssign onClose={() => setShowAssign(false)} />}
 
         {/* Spacer */}
         <div style={{ flex: 1, minHeight: 12 }} />
