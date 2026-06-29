@@ -5,7 +5,46 @@
 @tailwind utilities;
 
 /* ── Design tokens — Lapis (default dark) ───────────────────────────────── */
+/* Light "control room" (default, per CPCMS Design Instructions). Content area is
+   light — green-pale page, white cards, navy text. The shell chrome (topbar /
+   sidebar / status bar) is always navy: see --chrome-* tokens below. */
 :root,
+:root[data-theme="daylight"] {
+  --bg:        #eef2ec;   /* page / content background */
+  --surface:   #ffffff;   /* cards                      */
+  --surface-2: #f4f7f2;   /* subtle inset / row hover   */
+  --surface-3: #e3ebde;   /* stronger inset             */
+  --line:      #e3ebde;   /* card borders / dividers    */
+  --ink:       #15366a;   /* primary text (navy mid)    */
+  --ink-2:     #5d7188;   /* secondary text             */
+  --ink-3:     #9bb4d4;   /* mono labels / tertiary     */
+  --accent:    #2d6fb5;   /* links / interactive        */
+  --accent-h:  #245d99;
+  --accent-dim:rgba(45,111,181,.12);
+  --accent-ink:#ffffff;
+  --success:   #22a06b;
+  --error:     #e5484d;
+  --warning:   #d97a2b;
+  --info:      #2d6fb5;
+  --shadow-e1: 0 1px 3px rgba(21,54,106,.06);
+  --shadow-e2: 0 4px 10px rgba(21,54,106,.08);
+  --shadow-e3: 0 8px 24px rgba(21,54,106,.10);
+  --shadow-e4: 0 18px 40px rgba(21,54,106,.20);
+  --shadow-e5: -20px 0 50px rgba(21,54,106,.16);
+
+  /* Navy chrome — topbar / sidebar / status bar (constant across themes) */
+  --chrome:       #11305f;
+  --chrome-2:     #0c2750;
+  --chrome-ink:   #eaf4e4;
+  --chrome-ink-2: #cfe0ee;
+  --chrome-muted: #9bb4d4;
+  --chrome-line:  #2c5191;
+  --brand-dot:    #d4eecb;
+  --chrome-hover: rgba(255,255,255,.07);
+  --chrome-active:rgba(212,238,203,.14);
+}
+
+/* ── Optional dark mode (Lapis) — opt-in only; chrome stays navy ─────────── */
 :root[data-theme="lapis"] {
   --bg:        #11305f;
   --surface:   #173a70;
@@ -19,40 +58,6 @@
   --accent-h:  #bde0b0;
   --accent-dim:rgba(212,238,203,.12);
   --accent-ink:#143160;
-  --success:   #22a06b;
-  --error:     #e5484d;
-  --warning:   #f59e0b;
-  --info:      #3b82f6;
-  --shadow-e1: 0 1px 3px rgba(21,54,106,.10);
-  --shadow-e2: 0 4px 8px rgba(21,54,106,.10);
-  --shadow-e3: 0 8px 24px rgba(21,54,106,.12);
-  --shadow-e4: 0 18px 40px rgba(21,54,106,.14);
-  --shadow-e5: -20px 0 50px rgba(20,18,15,.16);
-}
-
-/* ── Daylight theme (light sage) ────────────────────────────────────────── */
-:root[data-theme="daylight"] {
-  --bg:        #eef2ec;
-  --surface:   #ffffff;
-  --surface-2: #e3ebde;
-  --surface-3: #d6e0d2;
-  --line:      #d6e0d2;
-  --ink:       #15366a;
-  --ink-2:     #5d7188;
-  --ink-3:     #8fa4b8;
-  --accent:    #15366a;
-  --accent-h:  #1e4585;
-  --accent-dim:rgba(21,54,106,.10);
-  --accent-ink:#eaf4e4;
-  --success:   #22a06b;
-  --error:     #e5484d;
-  --warning:   #f59e0b;
-  --info:      #3b82f6;
-  --shadow-e1: 0 1px 3px rgba(21,54,106,.08);
-  --shadow-e2: 0 4px 8px rgba(21,54,106,.08);
-  --shadow-e3: 0 8px 24px rgba(21,54,106,.10);
-  --shadow-e4: 0 18px 40px rgba(21,54,106,.12);
-  --shadow-e5: -20px 0 50px rgba(21,54,106,.12);
 }
 
 /* ── Base ─────────────────────────────────────────────────────────────────── */
@@ -87,8 +92,8 @@ svg.lucide { stroke-width: 1.5; }
   .card {
     background: var(--surface);
     border: 1px solid var(--line);
-    border-radius: 11px;
-    box-shadow: var(--shadow-e2);
+    border-radius: 14px;
+    box-shadow: var(--shadow-e1);
   }
 
   /* Inputs */

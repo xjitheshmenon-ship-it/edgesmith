@@ -13,9 +13,10 @@
           history.replaceState(null, null, redirect);
         }
       })();
-      // Apply persisted theme before paint to prevent flash
+      // Apply persisted theme before paint to prevent flash.
+      // Light "control room" is the default; only an explicit opt-in to dark sticks.
       (function(){
-        var t = localStorage.getItem('es-theme') || 'lapis';
+        var t = localStorage.getItem('es-theme') === 'lapis' ? 'lapis' : 'daylight';
         document.documentElement.setAttribute('data-theme', t);
       })();
     </script>

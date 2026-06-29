@@ -120,17 +120,17 @@ function ShiftPanel() {
   if ((queueData as any[]).length === 0) return null
 
   return (
-    <div style={{ margin: '8px 12px 0', borderRadius: 10, background: 'var(--surface-2)', border: '1px solid var(--line)', overflow: 'hidden' }}>
+    <div style={{ margin: '8px 12px 0', borderRadius: 10, background: 'var(--chrome-hover)', border: '1px solid var(--chrome-line)', overflow: 'hidden' }}>
       {/* Panel header */}
-      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--chrome-line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Zap size={12} style={{ color: 'var(--accent)' }} />
-          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '.12em', color: 'var(--ink-2)', fontWeight: 600 }}>
+          <Zap size={12} style={{ color: 'var(--brand-dot)' }} />
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '.12em', color: 'var(--chrome-muted)', fontWeight: 600 }}>
             {PERIOD_LABEL[period].toUpperCase()} QUEUE
           </span>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
-          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, color: 'var(--accent)' }}>{totalQueued}</span>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 700, color: 'var(--brand-dot)' }}>{totalQueued}</span>
           {totalReady > 0 && (
             <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: '#22a06b' }}>+{totalReady}</span>
           )}
@@ -143,20 +143,20 @@ function ShiftPanel() {
           <Link
             key={ws.assignment_id}
             to="/shifts"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--line)', textDecoration: 'none', transition: 'background .1s' }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--chrome-line)', textDecoration: 'none', transition: 'background .1s' }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--chrome-hover)'}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
           >
-            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, color: 'var(--accent)', minWidth: 40, flexShrink: 0 }}>{ws.workstation_code}</span>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, color: 'var(--brand-dot)', minWidth: 40, flexShrink: 0 }}>{ws.workstation_code}</span>
             <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ fontSize: 11, color: 'var(--ink)', fontWeight: 500 }}>{ws.operator_name?.split(' ')[0]}</span>
+              <span style={{ fontSize: 11, color: 'var(--chrome-ink)', fontWeight: 500 }}>{ws.operator_name?.split(' ')[0]}</span>
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               {ws.queue?.slice(0, 3).map((j: any) => (
-                <span key={j.id} style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[j.uid_status] || 'var(--ink-3)', flexShrink: 0 }} />
+                <span key={j.id} style={{ width: 7, height: 7, borderRadius: '50%', background: STATUS_COLOR[j.uid_status] || 'var(--chrome-muted)', flexShrink: 0 }} />
               ))}
               {(ws.queue?.length ?? 0) > 3 && (
-                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: 'var(--ink-3)' }}>+{ws.queue.length - 3}</span>
+                <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: 'var(--chrome-muted)' }}>+{ws.queue.length - 3}</span>
               )}
               {ws.ready_count > 0 && (
                 <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, color: '#22a06b', marginLeft: 2 }}>({ws.ready_count}↑)</span>
@@ -165,7 +165,7 @@ function ShiftPanel() {
           </Link>
         ))}
         {wsWithWork.length === 0 && (queueData as any[]).length > 0 && (
-          <div style={{ padding: '10px 12px', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)' }}>
+          <div style={{ padding: '10px 12px', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--chrome-muted)' }}>
             {(queueData as any[]).length} stations assigned, queues empty
           </div>
         )}
@@ -176,8 +176,8 @@ function ShiftPanel() {
         onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'rgba(212,238,203,.14)'}
         onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'rgba(212,238,203,.07)'}
       >
-        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--accent)', fontWeight: 600 }}>Manage shifts</span>
-        <ChevronRight size={11} style={{ color: 'var(--accent)' }} />
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--brand-dot)', fontWeight: 600 }}>Manage shifts</span>
+        <ChevronRight size={11} style={{ color: 'var(--brand-dot)' }} />
       </Link>
     </div>
   )
@@ -212,12 +212,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: 'var(--bg)', color: 'var(--ink)' }}>
 
-      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
+      {/* ── Sidebar (navy chrome) ───────────────────────────────────────── */}
       <aside style={{
         width: 248,
         flex: '0 0 248px',
-        background: 'var(--surface)',
-        borderRight: '1px solid var(--line)',
+        background: 'var(--chrome)',
+        borderRight: '1px solid var(--chrome-line)',
         display: 'flex',
         flexDirection: 'column',
         zIndex: 5,
@@ -233,18 +233,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           flexDirection: 'column',
           justifyContent: 'center',
           padding: '0 20px',
-          borderBottom: '1px solid var(--line)',
+          borderBottom: '1px solid var(--chrome-line)',
         }}>
-          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 21, letterSpacing: '-0.035em', lineHeight: 1, color: 'var(--ink)' }}>
-            edgesmith<span style={{ color: 'var(--accent)' }}>.</span>
+          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 21, letterSpacing: '-0.035em', lineHeight: 1, color: 'var(--chrome-ink)' }}>
+            edgesmith<span style={{ color: 'var(--brand-dot)' }}>.</span>
           </div>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: '0.1em', color: 'var(--ink-2)', marginTop: 5 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, letterSpacing: '0.1em', color: 'var(--chrome-muted)', marginTop: 5 }}>
             INNOVATE. ENGINEER. EXCEL.
           </div>
         </div>
 
         {/* Section label */}
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--ink-2)', padding: '16px 20px 8px' }}>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--chrome-muted)', padding: '16px 20px 8px' }}>
           MANUFACTURING
         </div>
 
@@ -262,14 +262,15 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   display: 'flex', alignItems: 'center', gap: 10,
                   padding: '8px 10px', borderRadius: 9, textDecoration: 'none',
                   fontSize: 13, fontWeight: active ? 600 : 400,
-                  color: active ? 'var(--accent)' : 'var(--ink)',
-                  background: active ? 'rgba(212,238,203,.12)' : 'transparent',
+                  color: active ? 'var(--chrome-ink)' : 'var(--chrome-ink-2)',
+                  background: active ? 'var(--chrome-active)' : 'transparent',
+                  borderLeft: active ? '2px solid var(--brand-dot)' : '2px solid transparent',
                   transition: 'background 0.12s, color 0.12s',
                 }}
-                onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)' }}
+                onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--chrome-hover)' }}
                 onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
               >
-                <span style={{ opacity: active ? 1 : 0.55, flexShrink: 0 }}>{item.icon}</span>
+                <span style={{ opacity: active ? 1 : 0.7, flexShrink: 0 }}>{item.icon}</span>
                 {item.label}
               </Link>
             )
@@ -279,12 +280,12 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         {/* ── Job Queue panel (supervisor+) ─── */}
         {isSupervisorPlus && (
           <>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--ink-2)', padding: '16px 20px 6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--chrome-muted)', padding: '16px 20px 6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               JOB QUEUE
               <button
                 onClick={() => setShowAssign(true)}
                 title="Assign operator"
-                style={{ background: 'rgba(212,238,203,.14)', border: '1px solid rgba(212,238,203,.22)', borderRadius: 6, cursor: 'pointer', color: 'var(--accent)', display: 'flex', alignItems: 'center', padding: '2px 6px', gap: 4, marginRight: 4 }}
+                style={{ background: 'rgba(212,238,203,.14)', border: '1px solid rgba(212,238,203,.22)', borderRadius: 6, cursor: 'pointer', color: 'var(--brand-dot)', display: 'flex', alignItems: 'center', padding: '2px 6px', gap: 4, marginRight: 4 }}
               >
                 <Plus size={11} />
                 <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.08em' }}>ASSIGN</span>
@@ -300,38 +301,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* APPEARANCE section */}
         <div style={{ padding: '0 12px 10px' }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--ink-2)', padding: '8px 8px 6px' }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--chrome-muted)', padding: '8px 8px 6px' }}>
             APPEARANCE
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
-              onClick={() => { if (theme !== 'lapis') toggleTheme() }}
-              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 0', borderRadius: 8, border: `1px solid ${theme === 'lapis' ? 'var(--accent)' : 'var(--line)'}`, background: theme === 'lapis' ? 'var(--accent-dim)' : 'transparent', color: theme === 'lapis' ? 'var(--accent)' : 'var(--ink-3)', cursor: 'pointer', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', transition: 'all 180ms cubic-bezier(.2,.8,.2,1)' }}
-            >
-              <Moon size={11} /> LAPIS
-            </button>
-            <button
               onClick={() => { if (theme !== 'daylight') toggleTheme() }}
-              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 0', borderRadius: 8, border: `1px solid ${theme === 'daylight' ? 'var(--accent)' : 'var(--line)'}`, background: theme === 'daylight' ? 'var(--accent-dim)' : 'transparent', color: theme === 'daylight' ? 'var(--accent)' : 'var(--ink-3)', cursor: 'pointer', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', transition: 'all 180ms cubic-bezier(.2,.8,.2,1)' }}
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 0', borderRadius: 8, border: `1px solid ${theme === 'daylight' ? 'var(--brand-dot)' : 'var(--chrome-line)'}`, background: theme === 'daylight' ? 'var(--chrome-active)' : 'transparent', color: theme === 'daylight' ? 'var(--brand-dot)' : 'var(--chrome-muted)', cursor: 'pointer', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', transition: 'all 180ms cubic-bezier(.2,.8,.2,1)' }}
             >
               <Sun size={11} /> DAYLIGHT
+            </button>
+            <button
+              onClick={() => { if (theme !== 'lapis') toggleTheme() }}
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '6px 0', borderRadius: 8, border: `1px solid ${theme === 'lapis' ? 'var(--brand-dot)' : 'var(--chrome-line)'}`, background: theme === 'lapis' ? 'var(--chrome-active)' : 'transparent', color: theme === 'lapis' ? 'var(--brand-dot)' : 'var(--chrome-muted)', cursor: 'pointer', fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', transition: 'all 180ms cubic-bezier(.2,.8,.2,1)' }}
+            >
+              <Moon size={11} /> LAPIS
             </button>
           </div>
         </div>
 
         {/* User footer */}
-        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--accent)', color: 'var(--accent-ink)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 11, flexShrink: 0 }}>
+        <div style={{ padding: '14px 20px', borderTop: '1px solid var(--chrome-line)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-dot)', color: '#11305f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 11, flexShrink: 0 }}>
             {initials}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.full_name || user?.username}</div>
-            <div style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)', marginTop: 1 }}>{user?.role}</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--chrome-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.full_name || user?.username}</div>
+            <div style={{ fontSize: 10.5, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--chrome-muted)', marginTop: 1 }}>{user?.role}</div>
           </div>
           <button
             onClick={() => { authStore.clearAuth(); window.location.href = import.meta.env.BASE_URL }}
             title="Sign out"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center' }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--chrome-muted)', padding: 4, borderRadius: 6, display: 'flex', alignItems: 'center' }}
           >
             <LogOut size={15} />
           </button>
@@ -341,25 +342,25 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* ── Main area ───────────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
 
-        {/* Top header */}
-        <header style={{ height: 64, flex: '0 0 64px', display: 'flex', alignItems: 'center', gap: 16, padding: '0 28px', background: 'var(--surface)', borderBottom: '1px solid var(--line)' }}>
+        {/* Top header (navy chrome) */}
+        <header style={{ height: 64, flex: '0 0 64px', display: 'flex', alignItems: 'center', gap: 16, padding: '0 28px', background: 'var(--chrome)', borderBottom: '1px solid var(--chrome-line)' }}>
           <div>
-            <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 19, letterSpacing: '-0.02em', lineHeight: 1, whiteSpace: 'nowrap', color: 'var(--ink)' }}>
+            <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 19, letterSpacing: '-0.02em', lineHeight: 1, whiteSpace: 'nowrap', color: 'var(--chrome-ink)' }}>
               {currentPage?.label || ''}
             </div>
           </div>
           <div style={{ flex: 1 }} />
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: 9, padding: '0 12px', width: 260, height: 36 }}>
-            <Search size={15} style={{ color: 'var(--ink-2)', flexShrink: 0 }} />
-            <input placeholder="Search orders, products…" style={{ border: 'none', background: 'none', outline: 'none', flex: 1, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink)' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--chrome-2)', border: '1px solid var(--chrome-line)', borderRadius: 9, padding: '0 12px', width: 260, height: 36 }}>
+            <Search size={15} style={{ color: 'var(--chrome-muted)', flexShrink: 0 }} />
+            <input placeholder="Search orders, products…" style={{ border: 'none', background: 'none', outline: 'none', flex: 1, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--chrome-ink)' }} />
           </div>
 
           {location.pathname.startsWith('/manufacturing') && (
             <button className="btn-primary"><Plus size={15} /> New Order</button>
           )}
 
-          <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--ink)', color: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, userSelect: 'none' }}>
+          <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--brand-dot)', color: '#11305f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, userSelect: 'none' }}>
             {initials}
           </div>
         </header>

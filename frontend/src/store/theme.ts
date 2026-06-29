@@ -1,15 +1,16 @@
 export type Theme = 'lapis' | 'daylight'
 
 const STORAGE_KEY = 'es-theme'
-const DEFAULT: Theme = 'lapis'
+// Light "control room" is the confirmed design; dark (lapis) is opt-in only.
+const DEFAULT: Theme = 'daylight'
 
 function applyTheme(t: Theme) {
   document.documentElement.setAttribute('data-theme', t)
 }
 
 function getStored(): Theme {
-  const v = localStorage.getItem(STORAGE_KEY)
-  return v === 'daylight' ? 'daylight' : DEFAULT
+  // Only an explicit opt-in to dark sticks; everything else uses the light default.
+  return localStorage.getItem(STORAGE_KEY) === 'lapis' ? 'lapis' : DEFAULT
 }
 
 export function toggleTheme(): Theme {
