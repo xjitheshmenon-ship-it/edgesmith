@@ -184,13 +184,11 @@ export default function Dashboard() {
     queryKey: ['dashboard'],
     queryFn: () => shopfloorApi.dashboard().then((r) => r.data),
     refetchInterval: 15_000,
-    retry: 1,
   })
   const { data: shopfloor, isLoading: shopfloorLoading, isError: shopfloorError } = useQuery<ShopfloorStatus[]>({
     queryKey: ['shopfloor'],
     queryFn: () => shopfloorApi.status().then((r) => r.data),
     refetchInterval: 15_000,
-    retry: 1,
   })
 
   return (

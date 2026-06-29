@@ -1,7 +1,11 @@
 import axios from 'axios'
 
 const API_BASE = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/api` : '/api'
-const api = axios.create({ baseURL: API_BASE })
+// Generous timeout: Render's free dyno can take ~30–50s to cold-start.
+const api = axios.create({ baseURL: API_BASE, timeout: 60_000 })
+
+// Fire-and-forget wake-up so the first data calls don't race the cold start.
+api.get('/v1/health').catch(() => {})
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
