@@ -87,6 +87,30 @@ GET `/` · POST `/` · PATCH `/:id` — all Admin only.
 | GET | `/status` | public | per-location workstation + storage counts (wall display) |
 | GET | `/dashboard` | any | summary incl. the 6 metric cards: Active UIDs, On Hold, Awaiting Design Confirmation, Furnace Batches Running, UIDs Dispatched Today, Faridabad Batches in Transit |
 
+## Workstation units, capacity & settings (`/api/master`)
+
+| Method | Path | Role | Notes |
+|--------|------|------|-------|
+| GET | `/master/workstation-units` | any | physical units pooled under a workstation (`workstation_id?`, `status?`) |
+| POST | `/master/workstation-units` | Admin | `{ unit_code, workstation_id, name?, factory_location_id?, status? }` |
+| PATCH | `/master/workstation-units/:id` | Admin | edit unit |
+| DELETE | `/master/workstation-units/:id` | Admin | archive unit |
+| GET | `/master/settings` | any | app settings (e.g. `bunch_grinding_bars_per_set`) |
+| PATCH | `/master/settings/:key` | Admin | `{ value }` |
+
+Per-step capacity: cycle steps now carry `capacity_per_unit`; the cycle response also
+returns `active_units` and `total_capacity` (= capacity_per_unit × active units of that
+workstation). Set capacity per step when creating a cycle version.
+
+## Grinding batches (`/api/grinding`)
+
+| Method | Path | Role | Notes |
+|--------|------|------|-------|
+| GET | `/grinding/machines` | any | grinding machines with `max_bar_length_mm` + active unit count |
+| POST | `/grinding/validate` | Supervisor+ | `{ workstation_id, lengths? | uid_ids? | items? }` → `{ valid, combined_length, machine_max, per_bar, reasons }` |
+| POST | `/grinding/suggest` | Supervisor+ | combined pairings that fit the machine bed |
+| POST | `/grinding/bunch-suggest` | Supervisor+ | bunch-grinding runs (same-length sets of `bars_per_set`, packed end-to-end into the bed) |
+
 ## Health
 
 `GET /health` and `GET /api/v1/health` (the latter also verifies the DB connection).
