@@ -15,6 +15,7 @@ import Faridabad from './pages/Faridabad'
 import Tempering from './pages/Tempering'
 import Placeholder from './pages/Placeholder'
 import ProductionFloor from './pages/ProductionFloor'
+import Receiving from './pages/Receiving'
 
 function ProtectedRoute({ children, roles }: { children: React.ReactNode; roles?: string[] }) {
   const { user, isAuthenticated } = useAuth()
@@ -48,7 +49,7 @@ export default function App() {
                   <Route path="/faridabad" element={<ProtectedRoute roles={['admin', 'manager']}><Faridabad /></ProtectedRoute>} />
                   <Route path="/tempering" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Tempering /></ProtectedRoute>} />
                   <Route path="/production" element={<ProductionFloor />} />
-                  <Route path="/receiving" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Placeholder title="Receiving" /></ProtectedRoute>} />
+                  <Route path="/receiving" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Receiving /></ProtectedRoute>} />
                   <Route path="/qc" element={<Placeholder title="Quality Control" />} />
                   <Route path="/reports" element={<ProtectedRoute roles={['admin', 'manager', 'supervisor']}><Placeholder title="Reports" /></ProtectedRoute>} />
                   <Route path="/employees" element={<ProtectedRoute roles={['admin', 'manager']}><Placeholder title="Employee Profiles & Badges" /></ProtectedRoute>} />
