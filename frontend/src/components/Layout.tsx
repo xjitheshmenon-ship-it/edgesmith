@@ -2,14 +2,14 @@ import { Link, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { authStore } from '../store/auth'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { shiftApi, factoryApi, userApi } from '../api/client'
+import { shiftApi, factoryApi, userApi, shopfloorApi } from '../api/client'
 import { format } from 'date-fns'
 import { useState, useEffect } from 'react'
 import {
-  LayoutDashboard, Package, Settings, Search,
-  ClipboardList, Monitor, Users, LogOut,
-  Hammer, CalendarClock, Factory, Plus, X,
-  Zap, ChevronRight, Sun, Moon,
+  LayoutDashboard, Package, Search, Monitor, Users, LogOut,
+  Plus, X, Zap, ChevronRight, Sun, Moon,
+  Inbox, Link2, Truck, Download, Tag, Factory, Layers, CheckCircle2,
+  FileText, Calendar, UserPlus, BarChart3, GitBranch, List, Thermometer, BadgeCheck, Lock,
 } from 'lucide-react'
 import { toggleTheme, getCurrentTheme, type Theme } from '../store/theme'
 
@@ -17,19 +17,47 @@ interface NavItem {
   label: string
   to: string
   icon: React.ReactNode
-  roles?: string[]
+  roles: string[]
 }
+interface NavSection { title: string; items: NavItem[] }
 
-const NAV: NavItem[] = [
-  { label: 'Dashboard',    to: '/',              icon: <LayoutDashboard size={16} /> },
-  { label: 'Shop Floor',   to: '/shopfloor',     icon: <Monitor size={16} /> },
-  { label: 'Job Queue',    to: '/queue',          icon: <ClipboardList size={16} />, roles: ['operator', 'supervisor'] },
-  { label: 'Shifts',       to: '/shifts',         icon: <CalendarClock size={16} />, roles: ['admin', 'manager', 'supervisor'] },
-  { label: 'UIDs',         to: '/uids',           icon: <Package size={16} />,       roles: ['admin', 'manager', 'supervisor'] },
-  { label: 'Mfg Orders',   to: '/manufacturing',  icon: <Hammer size={16} />,        roles: ['admin', 'manager'] },
-  { label: 'Faridabad',    to: '/faridabad',      icon: <Factory size={16} />,       roles: ['admin', 'manager'] },
-  { label: 'Config',       to: '/config',         icon: <Settings size={16} />,      roles: ['admin'] },
-  { label: 'Users',        to: '/users',          icon: <Users size={16} />,         roles: ['admin'] },
+const ALL = ['admin', 'manager', 'supervisor', 'operator', 'service', 'shopfloor']
+const sz = 16
+
+// Sidebar sections per the CPCMS page-instructions navigation structure.
+const SECTIONS: NavSection[] = [
+  { title: 'OVERVIEW', items: [
+    { label: 'Dashboard', to: '/', icon: <LayoutDashboard size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+  ]},
+  { title: 'FARIDABAD', items: [
+    { label: 'Raw Material Intake', to: '/faridabad', icon: <Inbox size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Joining Operation', to: '/faridabad', icon: <Link2 size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Contractor Dispatch', to: '/faridabad', icon: <Truck size={sz} />, roles: ['admin', 'manager'] },
+  ]},
+  { title: 'DHARMAPURI', items: [
+    { label: 'Receiving', to: '/receiving', icon: <Download size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+    { label: 'UID Creation', to: '/uids', icon: <Tag size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+    { label: 'Production Floor', to: '/queue', icon: <Factory size={sz} />, roles: ['admin', 'manager', 'supervisor', 'operator'] },
+    { label: 'Batch Management', to: '/tempering', icon: <Layers size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+    { label: 'QC', to: '/qc', icon: <CheckCircle2 size={sz} />, roles: ['admin', 'manager', 'supervisor', 'operator'] },
+  ]},
+  { title: 'MANAGEMENT', items: [
+    { label: 'MO Linking', to: '/manufacturing', icon: <FileText size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Shift Management', to: '/shifts', icon: <Calendar size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+    { label: 'Job Assignment', to: '/shifts', icon: <UserPlus size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+    { label: 'Reports', to: '/reports', icon: <BarChart3 size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
+    { label: 'Service Lookup', to: '/uid-lookup', icon: <Search size={sz} />, roles: ['admin', 'manager', 'supervisor', 'service'] },
+  ]},
+  { title: 'CONFIGURATION', items: [
+    { label: 'Cycle Builder', to: '/config', icon: <GitBranch size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Master Lists', to: '/config', icon: <List size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Tempering Parameters', to: '/config', icon: <Thermometer size={sz} />, roles: ['admin'] },
+    { label: 'Employee Profiles', to: '/employees', icon: <BadgeCheck size={sz} />, roles: ['admin', 'manager'] },
+    { label: 'Users and Roles', to: '/users', icon: <Lock size={sz} />, roles: ['admin'] },
+  ]},
+  { title: 'DISPLAY', items: [
+    { label: 'Shopfloor Display', to: '/shopfloor', icon: <Monitor size={sz} />, roles: ALL },
+  ]},
 ]
 
 const STATUS_COLOR: Record<string, string> = {
@@ -189,25 +217,38 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const [showAssign, setShowAssign] = useState(false)
   const [theme, setTheme] = useState<Theme>(getCurrentTheme)
+  const [now, setNow] = useState(new Date())
 
   useEffect(() => {
     const handler = (e: Event) => setTheme((e as CustomEvent<Theme>).detail)
     window.addEventListener('es-theme-change', handler)
-    return () => window.removeEventListener('es-theme-change', handler)
+    const t = setInterval(() => setNow(new Date()), 1000)
+    return () => { window.removeEventListener('es-theme-change', handler); clearInterval(t) }
   }, [])
 
-  const visibleNav = NAV.filter(item =>
-    !item.roles || (user && item.roles.includes(user.role))
-  )
+  // Live cross-location summary for the status bar.
+  const { data: summary } = useQuery<any>({
+    queryKey: ['dashboard'],
+    queryFn: () => shopfloorApi.dashboard().then(r => r.data),
+    refetchInterval: 30_000,
+  })
+  const canSwitchLocation = ['admin', 'manager'].includes(user?.role || '')
+  const [loc, setLoc] = useState<'F1' | 'F2' | 'both'>('both')
 
-  const isSupervisorPlus = user?.role && ['admin', 'manager', 'supervisor'].includes(user.role)
+  const role = user?.role || ''
+  const visibleSections = SECTIONS
+    .map(s => ({ ...s, items: s.items.filter(it => it.roles.includes(role)) }))
+    .filter(s => s.items.length > 0)
+  const allVisibleItems = visibleSections.flatMap(s => s.items)
+
+  const isSupervisorPlus = ['admin', 'manager', 'supervisor'].includes(role)
 
   const initials = user?.full_name
     ? user.full_name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
     : user?.username?.slice(0, 2).toUpperCase() ?? '??'
 
-  const currentPage = NAV.find(n => n.to !== '/' && location.pathname.startsWith(n.to))
-    || (location.pathname === '/' ? NAV[0] : null)
+  const currentPage = allVisibleItems.find(n => n.to !== '/' && location.pathname.startsWith(n.to))
+    || (location.pathname === '/' ? allVisibleItems.find(n => n.to === '/') : null)
 
   return (
     <div style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', background: 'var(--bg)', color: 'var(--ink)' }}>
@@ -243,38 +284,40 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
 
-        {/* Section label */}
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.16em', color: 'var(--chrome-muted)', padding: '16px 20px 8px' }}>
-          MANUFACTURING
-        </div>
-
-        {/* Nav */}
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '0 12px' }}>
-          {visibleNav.map(item => {
-            const active = item.to === '/'
-              ? location.pathname === '/'
-              : location.pathname.startsWith(item.to)
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 10px', borderRadius: 9, textDecoration: 'none',
-                  fontSize: 13, fontWeight: active ? 600 : 400,
-                  color: active ? 'var(--chrome-ink)' : 'var(--chrome-ink-2)',
-                  background: active ? 'var(--chrome-active)' : 'transparent',
-                  borderLeft: active ? '2px solid var(--brand-dot)' : '2px solid transparent',
-                  transition: 'background 0.12s, color 0.12s',
-                }}
-                onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--chrome-hover)' }}
-                onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
-              >
-                <span style={{ opacity: active ? 1 : 0.7, flexShrink: 0 }}>{item.icon}</span>
-                {item.label}
-              </Link>
-            )
-          })}
+        {/* Sectioned nav */}
+        <nav style={{ display: 'flex', flexDirection: 'column', padding: '8px 12px 0' }}>
+          {visibleSections.map(section => (
+            <div key={section.title} style={{ marginBottom: 6 }}>
+              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9, fontWeight: 700, letterSpacing: '0.16em', color: 'var(--chrome-muted)', padding: '12px 8px 6px' }}>
+                {section.title}
+              </div>
+              {section.items.map((item, i) => {
+                const active = item.to === '/'
+                  ? location.pathname === '/'
+                  : location.pathname === item.to || location.pathname.startsWith(item.to + '/')
+                return (
+                  <Link
+                    key={item.label + i}
+                    to={item.to}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '7px 10px', borderRadius: 9, textDecoration: 'none',
+                      fontSize: 13, fontWeight: active ? 600 : 400,
+                      color: active ? 'var(--chrome-ink)' : 'var(--chrome-ink-2)',
+                      background: active ? 'var(--chrome-active)' : 'transparent',
+                      borderLeft: active ? '2px solid var(--brand-dot)' : '2px solid transparent',
+                      transition: 'background 0.12s, color 0.12s',
+                    }}
+                    onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'var(--chrome-hover)' }}
+                    onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                  >
+                    <span style={{ opacity: active ? 1 : 0.7, flexShrink: 0, display: 'flex' }}>{item.icon}</span>
+                    {item.label}
+                  </Link>
+                )
+              })}
+            </div>
+          ))}
         </nav>
 
         {/* ── Job Queue panel (supervisor+) ─── */}
@@ -351,14 +394,40 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           </div>
           <div style={{ flex: 1 }} />
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--chrome-2)', border: '1px solid var(--chrome-line)', borderRadius: 9, padding: '0 12px', width: 260, height: 36 }}>
+          {/* Location toggle */}
+          {(() => {
+            const PILLS: { key: 'F1' | 'F2' | 'both'; label: string; color: string }[] = [
+              { key: 'F1', label: 'Dharmapuri', color: '#3b82f6' },
+              { key: 'F2', label: 'Faridabad', color: '#d97a2b' },
+              { key: 'both', label: 'Both', color: '#5d7fae' },
+            ]
+            return (
+              <div style={{ display: 'flex', gap: 3, background: 'var(--chrome-2)', borderRadius: 9, padding: 3 }}>
+                {PILLS.map(p => {
+                  const on = loc === p.key
+                  return (
+                    <button key={p.key} disabled={!canSwitchLocation}
+                      onClick={() => canSwitchLocation && setLoc(p.key)}
+                      style={{ border: 'none', borderRadius: 7, padding: '5px 11px', cursor: canSwitchLocation ? 'pointer' : 'default',
+                        background: on ? p.color : 'transparent', color: on ? '#fff' : 'var(--chrome-muted)',
+                        fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em' }}>
+                      {p.label}
+                    </button>
+                  )
+                })}
+              </div>
+            )
+          })()}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--chrome-2)', border: '1px solid var(--chrome-line)', borderRadius: 9, padding: '0 12px', width: 220, height: 36 }}>
             <Search size={15} style={{ color: 'var(--chrome-muted)', flexShrink: 0 }} />
-            <input placeholder="Search orders, products…" style={{ border: 'none', background: 'none', outline: 'none', flex: 1, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--chrome-ink)' }} />
+            <input placeholder="Search…" style={{ border: 'none', background: 'none', outline: 'none', flex: 1, fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--chrome-ink)' }} />
           </div>
 
-          {location.pathname.startsWith('/manufacturing') && (
-            <button className="btn-primary"><Plus size={15} /> New Order</button>
-          )}
+          {/* Live clock */}
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 13, fontWeight: 500, color: 'var(--chrome-muted)', width: 74, textAlign: 'right', flexShrink: 0 }}>
+            {format(now, 'HH:mm:ss')}
+          </div>
 
           <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--brand-dot)', color: '#11305f', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0, userSelect: 'none' }}>
             {initials}
@@ -369,6 +438,16 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
           {children}
         </main>
+
+        {/* ── Status bar (navy chrome) ───────────────────────────────────── */}
+        <footer style={{ height: 30, flex: '0 0 30px', display: 'flex', alignItems: 'center', gap: 18, padding: '0 20px', background: 'var(--chrome)', borderTop: '1px solid var(--chrome-line)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--chrome-muted)' }}>
+          <span>Active UIDs <b style={{ color: 'var(--chrome-ink-2)' }}>{summary?.uid_active ?? '—'}</b></span>
+          <span>On hold <b style={{ color: (summary?.uid_on_hold ?? 0) > 0 ? '#ff9b9b' : 'var(--chrome-ink-2)' }}>{summary?.uid_on_hold ?? '—'}</b></span>
+          <span>In furnace <b style={{ color: '#f0c674' }}>{summary?.furnace_batches_running ?? '—'}</b></span>
+          <div style={{ flex: 1 }} />
+          <span>Updated {format(now, 'HH:mm:ss')}</span>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: summary ? '#22a06b' : '#e5484d', display: 'inline-block' }} />
+        </footer>
       </div>
     </div>
   )
