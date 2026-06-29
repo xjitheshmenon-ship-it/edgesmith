@@ -1,760 +1,897 @@
-import { useState } from 'react'
+import { useMemo, useState, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { factoryApi, productApi, cycleApi, faridabadApi, temperingApi } from '../api/client'
-import type { Workstation, StorageLocation, Size, Design, FactoryLocation, CycleType, CycleStep } from '../types'
-import { Plus, Download, Upload, ChevronRight } from 'lucide-react'
+import { cycleApi, uidApi } from '../api/client'
+import type { CycleType, CycleVersion, CycleStep, UID } from '../types'
+import {
+  Layers,
+  Flame,
+  Scissors,
+  Download,
+  Upload,
+  History,
+  RotateCcw,
+  AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
+  Ruler,
+  Lock,
+  X,
+  Plus,
+  Loader2,
+} from 'lucide-react'
 import { format } from 'date-fns'
 
-type Tab = 'locations' | 'workstations' | 'storage' | 'sizes' | 'designs' | 'cycles' | 'products' | 'contractors' | 'tempering_params'
+const MONO = "'IBM Plex Mono', monospace"
+const SANS = "'IBM Plex Sans', sans-serif"
+const ARCHIVO = "'Archivo', sans-serif"
 
-const TH: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--ink-2)', fontWeight: 500, background: 'var(--surface-2)', borderBottom: '1px solid var(--line)' }
-const TD: React.CSSProperties = { padding: '11px 16px', fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }
+const cardStyle: React.CSSProperties = {
+  background: 'var(--surface)',
+  border: '1px solid var(--line)',
+  borderRadius: 14,
+  boxShadow: 'var(--shadow-e1)',
+}
+
+// ── Cycle-type accent badge ──────────────────────────────────────────────────
+const CYCLE_BADGE: Record<string, string> = {
+  EAT: 'badge-blue',
+  SWAN: 'badge-green',
+  OVEN: 'badge-orange',
+}
+function cycleBadgeClass(name?: string | null) {
+  return CYCLE_BADGE[(name ?? '').toUpperCase()] ?? 'badge-blue'
+}
+
+// ── Step classification (per spec) ───────────────────────────────────────────
+const FURNACE_BASE_CAP: Record<string, number> = { HT70: 6, HT80: 6, HT90: 80 }
+const isFurnaceWs = (code: string) => /^HT(70|80|90)/i.test(code)
+const isGrindingWs = (code: string) =>
+  /^(SG-DLT|AG-ALP|AG-BTA|AG-GMM)/i.test(code)
+const BUNCH_GRIND_STEP = '4' // SG-DLT bunch grinding
+const isSplitStep = (s: CycleStep) =>
+  s.is_converting_step ||
+  s.is_child_marking_step ||
+  s.step_number === '16' ||
+  s.step_number === '16B'
+
+const SectionLabel = ({ children }: { children: React.ReactNode }) => (
+  <div
+    style={{
+      fontFamily: MONO,
+      fontSize: 10,
+      fontWeight: 600,
+      letterSpacing: '0.1em',
+      textTransform: 'uppercase',
+      color: 'var(--ink-3)',
+    }}
+  >
+    {children}
+  </div>
+)
+
+const miniHr: React.CSSProperties = {
+  height: 1,
+  background: 'var(--line)',
+  margin: '8px 0',
+}
+
+function CapRow({
+  k,
+  v,
+  editable,
+  muted,
+}: {
+  k: string
+  v: string
+  editable?: boolean
+  muted?: boolean
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '3px 0' }}>
+      <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--ink-3)' }}>{k}</span>
+      <span
+        style={{
+          fontFamily: SANS,
+          fontSize: 12,
+          fontWeight: editable ? 600 : 500,
+          color: muted ? 'var(--ink-3)' : 'var(--ink)',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+        }}
+      >
+        {v}
+        {editable && <span className="badge-gray" style={{ fontSize: 9 }}>EDIT</span>}
+        {muted && <Lock size={10} style={{ color: 'var(--ink-3)' }} />}
+      </span>
+    </div>
+  )
+}
+
+function CapPopover({
+  label,
+  icon,
+  open,
+  setOpen,
+  children,
+}: {
+  label: string
+  icon?: React.ReactNode
+  open: boolean
+  setOpen: (b: boolean) => void
+  children: React.ReactNode
+}) {
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(!open)}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 5,
+          background: open ? 'var(--accent-dim)' : 'var(--surface-2)',
+          border: `1px solid ${open ? 'var(--accent)' : 'var(--line)'}`,
+          borderRadius: 7,
+          padding: '4px 9px',
+          cursor: 'pointer',
+          fontFamily: MONO,
+          fontSize: 11,
+          fontWeight: 600,
+          color: 'var(--ink)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {icon}
+        {label}
+      </button>
+      {open && (
+        <div
+          className="animate-es"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            zIndex: 30,
+            width: 280,
+            background: 'var(--surface)',
+            border: '1px solid var(--line)',
+            borderRadius: 12,
+            boxShadow: 'var(--shadow-e3)',
+            padding: 14,
+          }}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── CAP cell — display rules differ by workstation type (spec lines 1044-1082)
+function CapCell({ step }: { step: CycleStep }) {
+  const [open, setOpen] = useState(false)
+  const ws = step.workstation_code ?? ''
+  const furnace = isFurnaceWs(ws)
+  const grinding = isGrindingWs(ws)
+  const bunch = step.step_number === BUNCH_GRIND_STEP && /^SG-DLT/i.test(ws)
+
+  // Bunch grinding (Step 4) — bars/set + length-based.
+  if (bunch) {
+    const barsPerSet = 5
+    return (
+      <CapPopover label="5 bars / set · Length-based" open={open} setOpen={setOpen}>
+        <CapRow k="Bars per set" v={`${barsPerSet}`} editable />
+        <CapRow k="Machine bed" v="3000 mm (fixed)" />
+        <div style={miniHr} />
+        <CapRow k="1500 mm" v={`2 sets × ${barsPerSet} = ${2 * barsPerSet} bars / run`} />
+        <CapRow k="1424 mm" v={`2 sets × ${barsPerSet} = ${2 * barsPerSet} bars / run`} />
+        <CapRow k="2750 mm" v={`1 set × ${barsPerSet} = ${barsPerSet} bars / run`} />
+      </CapPopover>
+    )
+  }
+
+  // Grinding (length-based) — governed by machine limits, no number to edit.
+  if (grinding) {
+    return (
+      <CapPopover label="Length-based" icon={<Ruler size={11} />} open={open} setOpen={setOpen}>
+        <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }}>
+          Capacity governed by machine physical limits (max length &amp; pairing
+          rules). No fixed slot count.
+        </div>
+        <div style={miniHr} />
+        <CapRow k="Machine" v={ws} />
+        <CapRow k="Rule" v="Length-based — see grinding rules" />
+      </CapPopover>
+    )
+  }
+
+  // Furnace — base capacity at 1500mm, auto-derived for other sizes.
+  if (furnace) {
+    const key = (ws.match(/^HT(70|80|90)/i)?.[0] ?? '').toUpperCase()
+    const base = FURNACE_BASE_CAP[key] ?? 6
+    const c1424 = Math.floor((base * 1500) / 1424)
+    const c2750 = Math.floor((base * 1500) / 2750)
+    return (
+      <CapPopover
+        label={`${base}`}
+        icon={<Flame size={11} style={{ color: 'var(--warning)' }} />}
+        open={open}
+        setOpen={setOpen}
+      >
+        <CapRow k="Base capacity (1500 mm)" v={`${base} bars`} editable />
+        <div style={miniHr} />
+        <CapRow k="1424 mm" v={`${c1424} bars (auto)`} muted />
+        <CapRow k="2750 mm" v={`${c2750} bars (auto)`} muted />
+        <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--ink-3)', marginTop: 8 }}>
+          Other sizes auto-calculated from the 1500 mm base — read-only.
+        </div>
+      </CapPopover>
+    )
+  }
+
+  // Fixed-capacity (most steps) — single number.
+  return (
+    <CapPopover label="1" open={open} setOpen={setOpen}>
+      <CapRow k="Capacity" v="1 at a time" editable />
+      <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--ink-3)', marginTop: 8 }}>
+        Fixed-capacity step. Set the number of bars processed simultaneously.
+      </div>
+    </CapPopover>
+  )
+}
+
+// ── Step type tag(s) ─────────────────────────────────────────────────────────
+function StepTags({ step }: { step: CycleStep }) {
+  const ws = step.workstation_code ?? ''
+  const tags: React.ReactNode[] = []
+  if (isFurnaceWs(ws))
+    tags.push(
+      <span key="t" className="badge-orange" style={{ fontSize: 9.5 }}>
+        <Flame size={10} /> Tempering
+      </span>
+    )
+  if (isSplitStep(step))
+    tags.push(
+      <span key="s" className="badge-yellow" style={{ fontSize: 9.5 }}>
+        <Scissors size={10} /> Split
+      </span>
+    )
+  if (step.is_qc_step)
+    tags.push(
+      <span key="q" className="badge-blue" style={{ fontSize: 9.5 }}>
+        QC
+      </span>
+    )
+  if (tags.length === 0) return null
+  return <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap' }}>{tags}</div>
+}
 
 export default function Config() {
-  const [tab, setTab] = useState<Tab>('workstations')
-
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'locations', label: 'Locations' },
-    { key: 'workstations', label: 'Workstations' },
-    { key: 'storage', label: 'Storage' },
-    { key: 'sizes', label: 'Sizes' },
-    { key: 'designs', label: 'Designs' },
-    { key: 'products', label: 'Products' },
-    { key: 'contractors', label: 'Contractors' },
-    { key: 'cycles', label: 'Cycles' },
-    { key: 'tempering_params', label: 'Tempering Params' },
-  ]
-
-  return (
-    <div style={{ padding: '24px 28px 60px' }}>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 22, letterSpacing: '-0.02em', color: 'var(--ink)' }}>System Configuration</div>
-      </div>
-
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--line)', marginBottom: 20 }}>
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            style={{
-              padding: '10px 20px',
-              fontSize: 13,
-              fontWeight: 500,
-              background: 'none',
-              border: 'none',
-              borderBottom: tab === t.key ? '2px solid var(--accent)' : '2px solid transparent',
-              color: tab === t.key ? 'var(--accent)' : 'var(--ink-2)',
-              cursor: 'pointer',
-              marginBottom: -1,
-              transition: 'color 0.12s',
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'locations' && <LocationsConfig />}
-      {tab === 'workstations' && <WorkstationsConfig />}
-      {tab === 'storage' && <StorageConfig />}
-      {tab === 'sizes' && <SizesConfig />}
-      {tab === 'designs' && <DesignsConfig />}
-      {tab === 'products' && <ProductsConfig />}
-      {tab === 'contractors' && <ContractorsConfig />}
-      {tab === 'cycles' && <CyclesConfig />}
-      {tab === 'tempering_params' && <TemperingParamsConfig />}
-    </div>
-  )
-}
-
-function Modal({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 16 }}>
-      <div className="card" style={{ width: '100%', maxWidth: 440, padding: '24px 24px 20px' }}>
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function LocationsConfig() {
   const qc = useQueryClient()
-  const [editId, setEditId] = useState<number | null>(null)
-  const [editName, setEditName] = useState('')
-  const { data: locs = [] } = useQuery<FactoryLocation[]>({ queryKey: ['locations'], queryFn: () => factoryApi.locations().then((r) => r.data) })
+  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [showVersions, setShowVersions] = useState(false)
+  const [importPreview, setImportPreview] = useState<{ name: string; steps: number; raw: unknown } | null>(null)
+  const [banner, setBanner] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
-  const update = useMutation({
-    mutationFn: ({ id, name }: { id: number; name: string }) => factoryApi.updateLocation(id, { name }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['locations'] }); setEditId(null) },
-  })
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr>
-              <th style={TH}>Code</th>
-              <th style={TH}>Name</th>
-              <th style={{ ...TH, textAlign: 'right' }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {locs.map((l) => (
-              <tr key={l.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
-              >
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{l.code}</td>
-                <td style={TD}>{l.name}</td>
-                <td style={{ ...TD, textAlign: 'right' }}>
-                  <button style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}
-                    onClick={() => { setEditId(l.id); setEditName(l.name) }}>Rename</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {editId !== null && (
-        <Modal>
-          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Rename Location</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div><label className="label">Name</label><input className="input" value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus /></div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button className="btn-secondary" onClick={() => setEditId(null)}>Cancel</button>
-              <button className="btn-primary" disabled={update.isPending} onClick={() => update.mutate({ id: editId, name: editName })}>Save</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
-  )
-}
-
-function WorkstationsConfig() {
-  const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({ code: '', name: '', category: 'Other', factory_location_id: '' })
-  const { data: ws = [] } = useQuery<Workstation[]>({ queryKey: ['workstations'], queryFn: () => factoryApi.workstations().then((r) => r.data) })
-  const { data: locs = [] } = useQuery<FactoryLocation[]>({ queryKey: ['locations'], queryFn: () => factoryApi.locations().then((r) => r.data) })
-
-  const create = useMutation({
-    mutationFn: (data: Record<string, unknown>) => factoryApi.createWorkstation(data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['workstations'] }); setShowCreate(false); setForm({ code: '', name: '', category: 'Other', factory_location_id: '' }) },
-  })
-  const archive = useMutation({
-    mutationFn: (id: number) => factoryApi.updateWorkstation(id, { is_active: false }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['workstations'] }),
-  })
-
-  const CATEGORIES = ['Cutting', 'Heat Treatment', 'Machining', 'Grinding', 'Coating', 'QC', 'Packing', 'Other']
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Workstation</button>
-      </div>
-      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr>
-              <th style={TH}>Code</th>
-              <th style={TH}>Name</th>
-              <th style={TH}>Category</th>
-              <th style={TH}>Location</th>
-              <th style={{ ...TH, textAlign: 'right' }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {ws.map((w) => (
-              <tr key={w.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
-              >
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{w.code}</td>
-                <td style={TD}>{w.name}</td>
-                <td style={TD}><span className="badge-blue">{w.category}</span></td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{w.factory_location_id ? (locs.find(l => l.id === w.factory_location_id)?.name ?? `Location ${w.factory_location_id}`) : 'All locations'}</td>
-                <td style={{ ...TD, textAlign: 'right' }}>
-                  <button style={{ fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => archive.mutate(w.id)}>Archive</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {showCreate && (
-        <Modal>
-          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Add Workstation</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div><label className="label">Code</label><input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
-            <div><label className="label">Name</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-            <div><label className="label">Category</label><select className="input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{CATEGORIES.map((c) => <option key={c}>{c}</option>)}</select></div>
-            <div><label className="label">Location (blank = both)</label><select className="input" value={form.factory_location_id} onChange={(e) => setForm({ ...form, factory_location_id: e.target.value })}><option value="">All locations</option>{locs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
-              <button className="btn-primary" disabled={create.isPending} onClick={() => create.mutate({ ...form, factory_location_id: form.factory_location_id ? Number(form.factory_location_id) : null })}>Add</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
-  )
-}
-
-function StorageConfig() {
-  const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({ code: '', name: '', factory_location_id: '' })
-  const { data: storage = [] } = useQuery<StorageLocation[]>({ queryKey: ['storage'], queryFn: () => factoryApi.storage().then((r) => r.data) })
-  const { data: locs = [] } = useQuery<FactoryLocation[]>({ queryKey: ['locations'], queryFn: () => factoryApi.locations().then((r) => r.data) })
-  const create = useMutation({
-    mutationFn: (data: Record<string, unknown>) => factoryApi.createStorage(data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['storage'] }); setShowCreate(false) },
-  })
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Storage Location</button>
-      </div>
-      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr>
-              <th style={TH}>Code</th>
-              <th style={TH}>Name</th>
-              <th style={TH}>Location</th>
-            </tr>
-          </thead>
-          <tbody>
-            {storage.map((s) => (
-              <tr key={s.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
-              >
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.code}</td>
-                <td style={TD}>{s.name}</td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{s.factory_location_id ? (locs.find(l => l.id === s.factory_location_id)?.name ?? `Location ${s.factory_location_id}`) : 'All'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {showCreate && (
-        <Modal>
-          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Add Storage Location</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div><label className="label">Code</label><input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
-            <div><label className="label">Name</label><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-            <div><label className="label">Factory Location</label><select className="input" value={form.factory_location_id} onChange={(e) => setForm({ ...form, factory_location_id: e.target.value })}><option value="">All</option>{locs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
-              <button className="btn-primary" onClick={() => create.mutate({ ...form, factory_location_id: form.factory_location_id ? Number(form.factory_location_id) : null })}>Add</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
-  )
-}
-
-function SizesConfig() {
-  const qc = useQueryClient()
-  const [value, setValue] = useState('')
-  const { data: sizes = [] } = useQuery<Size[]>({ queryKey: ['sizes'], queryFn: () => productApi.sizes().then((r) => r.data) })
-  const create = useMutation({
-    mutationFn: (data: Record<string, unknown>) => productApi.createSize(data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sizes'] }); setValue('') },
-  })
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 360 }}>
-      <div style={{ display: 'flex', gap: 10 }}>
-        <input className="input" placeholder="Size in mm" type="number" value={value} onChange={(e) => setValue(e.target.value)} />
-        <button className="btn-primary" onClick={() => create.mutate({ value_mm: Number(value) })}><Plus size={15} /> Add</button>
-      </div>
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        {sizes.map((s) => (
-          <div key={s.id} style={{ padding: '11px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, borderBottom: '1px solid var(--line)' }}>
-            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--ink)' }}>{s.value_mm}mm</span>
-            <span className="badge-green">active</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function CycleVersionHistory({ cycleId }: { cycleId: number }) {
-  const { data: versions = [] } = useQuery({
-    queryKey: ['cycle-versions', cycleId],
-    queryFn: () => cycleApi.versions(cycleId).then((r) => r.data),
-  })
-  if (versions.length <= 1) return null
-  return (
-    <div style={{ padding: '14px 18px', borderTop: '1px solid var(--line)' }}>
-      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 10 }}>Version History</div>
-      {versions.map((v: any) => (
-        <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, marginBottom: 5 }}>
-          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--ink)', minWidth: 36 }}>v{v.version_number}</span>
-          {v.is_current && <span className="badge-green" style={{ fontSize: 11 }}>Current</span>}
-          <span style={{ color: 'var(--ink-2)', fontSize: 12 }}>{v.steps.length} steps</span>
-          <span style={{ color: 'var(--ink-3)', fontSize: 12 }}>{format(new Date(v.created_at), 'dd MMM yyyy')}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-function CyclesConfig() {
-  const [selected, setSelected] = useState<CycleType | null>(null)
-  const { data: cycles = [] } = useQuery<CycleType[]>({
-    queryKey: ['cycles'],
+  // ── Cycle list ─────────────────────────────────────────────────────────────
+  const {
+    data: cycles = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery<CycleType[]>({
+    queryKey: ['config-cycles'],
     queryFn: () => cycleApi.list().then((r) => r.data),
   })
 
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 20 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <label className="btn-secondary" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, justifyContent: 'center' }}>
-          <Upload size={14} /> Import Cycle
-          <input type="file" style={{ display: 'none' }} accept=".json" onChange={(e) => {
-            const file = e.target.files?.[0]
-            if (!file) return
-            const reader = new FileReader()
-            reader.onload = async (ev) => {
-              try { await cycleApi.import({ data: JSON.parse(ev.target?.result as string), update_existing: false }); alert('Imported') }
-              catch { alert('Import failed') }
-            }
-            reader.readAsText(file)
-          }} />
-        </label>
-        {cycles.map((c) => (
-          <button key={c.id} onClick={() => setSelected(c)} style={{
-            width: '100%', textAlign: 'left', cursor: 'pointer', padding: '11px 14px', borderRadius: 10,
-            background: selected?.id === c.id ? 'var(--surface-2)' : 'var(--surface)',
-            border: `1px solid ${selected?.id === c.id ? 'var(--accent)' : 'var(--line)'}`,
-            display: 'flex', alignItems: 'center', gap: 10, transition: 'all .12s',
-          }}
-            onMouseEnter={e => { if (selected?.id !== c.id) (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)' }}
-            onMouseLeave={e => { if (selected?.id !== c.id) (e.currentTarget as HTMLElement).style.background = 'var(--surface)' }}
-          >
-            <span style={{ width: 30, height: 30, background: 'var(--accent-dim)', color: 'var(--accent)', borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{c.letter_prefix}</span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{c.name}</div>
-              <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-2)', marginTop: 1 }}>{c.current_version?.steps.length ?? 0} steps · v{c.version_count}</div>
-            </div>
-            <ChevronRight size={14} style={{ color: 'var(--ink-3)', flexShrink: 0 }} />
-          </button>
-        ))}
-      </div>
+  // Auto-select the first cycle once loaded.
+  const selected = useMemo<CycleType | null>(() => {
+    if (cycles.length === 0) return null
+    return cycles.find((c) => c.id === selectedId) ?? cycles[0]
+  }, [cycles, selectedId])
 
-      {selected?.current_version ? (
-        <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
-          <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--line)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)' }}>{selected.name} — v{selected.current_version.version_number}</div>
-              {selected.current_version.change_notes && <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)', marginTop: 2 }}>{selected.current_version.change_notes}</div>}
-            </div>
-            <button className="btn-secondary" style={{ fontSize: 12 }} onClick={async () => {
-              const { data } = await cycleApi.export(selected.id)
-              const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-              const url = URL.createObjectURL(blob)
-              const a = document.createElement('a'); a.href = url; a.download = `cycle_${selected.name}_v${selected.current_version!.version_number}.json`; a.click()
-            }}><Download size={14} /> Export JSON</button>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead><tr>
-                <th style={TH}>Step</th><th style={TH}>Operation</th><th style={TH}>Workstation</th>
-                <th style={TH}>From</th><th style={TH}>To</th><th style={TH}>Flags</th>
-              </tr></thead>
-              <tbody>
-                {selected.current_version.steps.map((s: CycleStep) => (
-                  <tr key={s.id} style={{ background: s.is_converting_step ? 'rgba(251,146,60,.1)' : s.is_qc_step ? 'rgba(34,160,107,.08)' : '' }}>
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.step_number}</td>
-                    <td style={TD}>{s.operation_name}</td>
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>{s.workstation_code}</td>
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.from_storage_code ?? '—'}</td>
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.to_storage_code ?? '—'}</td>
-                    <td style={{ ...TD, display: 'flex', gap: 4 }}>
-                      {s.is_converting_step && <span className="badge-orange">Convert</span>}
-                      {s.is_child_marking_step && <span className="badge-blue">Child Mark</span>}
-                      {s.is_qc_step && <span className="badge-green">QC</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <CycleVersionHistory cycleId={selected.id} />
-        </div>
-      ) : (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>
-          Select a cycle to view steps
-        </div>
-      )}
-    </div>
-  )
-}
-
-function DesignsConfig() {
-  const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({ code: '', description: '', valid_size_ids: [] as number[] })
-  const { data: designs = [] } = useQuery<Design[]>({ queryKey: ['designs'], queryFn: () => productApi.designs().then((r) => r.data) })
-  const { data: sizes = [] } = useQuery<Size[]>({ queryKey: ['sizes'], queryFn: () => productApi.sizes().then((r) => r.data) })
-  const create = useMutation({
-    mutationFn: (data: Record<string, unknown>) => productApi.createDesign(data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['designs'] }); setShowCreate(false) },
+  // ── Versions of the selected cycle ───────────────────────────────────────────
+  const { data: versions = [] } = useQuery<CycleVersion[]>({
+    queryKey: ['config-cycle-versions', selected?.id],
+    queryFn: () => cycleApi.versions(selected!.id).then((r) => r.data),
+    enabled: !!selected,
   })
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Design</button>
-      </div>
-      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead>
-            <tr>
-              <th style={TH}>Code</th>
-              <th style={TH}>Description</th>
-              <th style={TH}>Valid Sizes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {designs.map((d) => (
-              <tr key={d.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
-              >
-                <td style={{ ...TD, fontWeight: 600 }}>{d.code}</td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{d.description}</td>
-                <td style={TD}>{d.valid_sizes_mm.join('mm, ')}mm</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {showCreate && (
-        <Modal>
-          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Add Design</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div><label className="label">Code / Drawing Number</label><input className="input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} /></div>
-            <div><label className="label">Description</label><input className="input" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
-            <div>
-              <label className="label">Valid Sizes</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
-                {sizes.map((s) => (
-                  <label key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink)', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={form.valid_size_ids.includes(s.id)} onChange={(e) => setForm({ ...form, valid_size_ids: e.target.checked ? [...form.valid_size_ids, s.id] : form.valid_size_ids.filter((id) => id !== s.id) })} />
-                    {s.value_mm}mm
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
-              <button className="btn-primary" disabled={create.isPending} onClick={() => create.mutate(form)}>Add Design</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
-  )
-}
-
-// ── Products Config ────────────────────────────────────────────────────────────
-
-function ProductsConfig() {
-  const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({ code: '', name: '', valid_cycle_type_ids: [] as number[], default_cycle_type_id: '' })
-  const { data: products = [] } = useQuery({ queryKey: ['product-types'], queryFn: () => productApi.types().then(r => r.data) })
-  const { data: cycles = [] } = useQuery<CycleType[]>({ queryKey: ['cycles'], queryFn: () => cycleApi.list().then(r => r.data) })
-
-  const create = useMutation({
-    mutationFn: () => productApi.createType({
-      code: form.code,
-      name: form.name,
-      valid_cycle_type_ids: form.valid_cycle_type_ids,
-      default_cycle_type_id: form.default_cycle_type_id ? Number(form.default_cycle_type_id) : null,
-    }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['product-types'] }); setShowCreate(false); setForm({ code: '', name: '', valid_cycle_type_ids: [], default_cycle_type_id: '' }) },
-  })
-  const archive = useMutation({
-    mutationFn: (id: number) => productApi.archiveType(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['product-types'] }),
+  // ── Active UIDs — used to compute "UIDs currently at step" (delete-block) ────
+  const { data: activeUids = [] } = useQuery<UID[]>({
+    queryKey: ['config-active-uids'],
+    queryFn: () => uidApi.list({ status: 'active' }).then((r) => r.data.items ?? []),
   })
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Product</button>
-      </div>
-      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead><tr>
-            <th style={TH}>Code</th>
-            <th style={TH}>Name</th>
-            <th style={TH}>Valid Cycles</th>
-            <th style={TH}>Default Cycle</th>
-            <th style={{ ...TH, textAlign: 'right' }}></th>
-          </tr></thead>
-          <tbody>
-            {(products as any[]).map((p: any) => (
-              <tr key={p.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
-              >
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{p.code}</td>
-                <td style={TD}>{p.name}</td>
-                <td style={TD}>{p.valid_cycle_type_ids.length} cycle{p.valid_cycle_type_ids.length !== 1 ? 's' : ''}</td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>
-                  {p.default_cycle_type_id ? (cycles as CycleType[]).find(c => c.id === p.default_cycle_type_id)?.name ?? '—' : '—'}
-                </td>
-                <td style={{ ...TD, textAlign: 'right' }}>
-                  <button style={{ fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => archive.mutate(p.id)}>Archive</button>
-                </td>
-              </tr>
-            ))}
-            {(products as any[]).length === 0 && (
-              <tr><td colSpan={5} style={{ ...TD, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No products configured</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+  const uidAtStep = useMemo(() => {
+    const m = new Map<number, number>()
+    for (const u of activeUids) {
+      if (u.current_step_id != null) m.set(u.current_step_id, (m.get(u.current_step_id) ?? 0) + 1)
+    }
+    return m
+  }, [activeUids])
 
-      {showCreate && (
-        <Modal>
-          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Add Product</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div><label className="label">Code</label><input className="input" value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} placeholder="e.g. PROD-A" /></div>
-            <div><label className="label">Name</label><input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-            <div>
-              <label className="label">Valid Cycle Types</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
-                {(cycles as CycleType[]).map(c => (
-                  <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink)', cursor: 'pointer' }}>
-                    <input type="checkbox"
-                      checked={form.valid_cycle_type_ids.includes(c.id)}
-                      onChange={e => setForm({ ...form, valid_cycle_type_ids: e.target.checked ? [...form.valid_cycle_type_ids, c.id] : form.valid_cycle_type_ids.filter(id => id !== c.id) })}
-                    />
-                    {c.name}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="label">Default Cycle</label>
-              <select className="input" value={form.default_cycle_type_id} onChange={e => setForm({ ...form, default_cycle_type_id: e.target.value })}>
-                <option value="">None</option>
-                {(cycles as CycleType[]).filter(c => form.valid_cycle_type_ids.includes(c.id)).map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
-              <button className="btn-primary" disabled={create.isPending || !form.code || !form.name} onClick={() => create.mutate()}>Add Product</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
-  )
-}
+  const steps = useMemo<CycleStep[]>(() => {
+    const s = selected?.current_version?.steps ?? []
+    return [...s].sort((a, b) => a.step_order - b.step_order)
+  }, [selected])
 
-// ── Contractors Config ─────────────────────────────────────────────────────────
-
-function ContractorsConfig() {
-  const qc = useQueryClient()
-  const [showCreate, setShowCreate] = useState(false)
-  const [form, setForm] = useState({ name: '', contact_info: '' })
-  const { data: contractors = [] } = useQuery({ queryKey: ['contractors'], queryFn: () => faridabadApi.contractors().then(r => r.data) })
-
-  const create = useMutation({
-    mutationFn: () => faridabadApi.createContractor({ name: form.name, contact_info: form.contact_info || null }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['contractors'] }); setShowCreate(false); setForm({ name: '', contact_info: '' }) },
-  })
-  const archive = useMutation({
-    mutationFn: (id: number) => faridabadApi.archiveContractor(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['contractors'] }),
-  })
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)' }}>Rolling contractors used in Faridabad dispatches</div>
-        <button className="btn-primary" onClick={() => setShowCreate(true)}><Plus size={15} /> Add Contractor</button>
-      </div>
-      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead><tr>
-            <th style={TH}>Name</th>
-            <th style={TH}>Contact</th>
-            <th style={{ ...TH, textAlign: 'right' }}></th>
-          </tr></thead>
-          <tbody>
-            {(contractors as any[]).map((c: any) => (
-              <tr key={c.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
-              >
-                <td style={{ ...TD, fontWeight: 600 }}>{c.name}</td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{c.contact_info || '—'}</td>
-                <td style={{ ...TD, textAlign: 'right' }}>
-                  <button style={{ fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => archive.mutate(c.id)}>Archive</button>
-                </td>
-              </tr>
-            ))}
-            {(contractors as any[]).length === 0 && (
-              <tr><td colSpan={3} style={{ ...TD, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No contractors added yet</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      {showCreate && (
-        <Modal>
-          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)', marginBottom: 16 }}>Add Rolling Contractor</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div><label className="label">Contractor Name</label><input className="input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-            <div><label className="label">Contact Info (optional)</label><input className="input" value={form.contact_info} onChange={e => setForm({ ...form, contact_info: e.target.value })} placeholder="Phone / email / address" /></div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
-              <button className="btn-secondary" onClick={() => setShowCreate(false)}>Cancel</button>
-              <button className="btn-primary" disabled={create.isPending || !form.name} onClick={() => create.mutate()}>Add</button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
-  )
-}
-
-// ── Tempering Parameters Config ────────────────────────────────────────────────
-
-function TemperingParamsConfig() {
-  const qc = useQueryClient()
-  const [showForm, setShowForm] = useState(false)
-  const [cycleId, setCycleId] = useState('')
-  const [stepId, setStepId] = useState('')
-  const [targetTemp, setTargetTemp] = useState('')
-  const [targetSoak, setTargetSoak] = useState('')
-  const [tolTemp, setTolTemp] = useState('5')
-  const [tolSoak, setTolSoak] = useState('5')
-
-  const { data: cycles = [] } = useQuery<CycleType[]>({ queryKey: ['cycles'], queryFn: () => cycleApi.list().then(r => r.data) })
-  const { data: params = [] } = useQuery({ queryKey: ['tempering-params'], queryFn: () => temperingApi.parameters().then(r => r.data) })
-
-  const selectedCycle = (cycles as CycleType[]).find(c => c.id === parseInt(cycleId))
-  const temperingSteps = (selectedCycle?.current_version?.steps || []).filter((s: CycleStep) =>
-    s.workstation_code === 'HT90' || s.operation_name?.toLowerCase().includes('temper')
-  )
-
-  const save = useMutation({
-    mutationFn: () => temperingApi.upsertParameter({
-      cycle_type_id: parseInt(cycleId),
-      cycle_step_id: parseInt(stepId),
-      target_temp_c: parseFloat(targetTemp),
-      target_soak_minutes: parseInt(targetSoak),
-      tolerance_temp_c: parseFloat(tolTemp),
-      tolerance_soak_minutes: parseInt(tolSoak),
-    }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tempering-params'] })
-      setShowForm(false)
-      setCycleId(''); setStepId(''); setTargetTemp(''); setTargetSoak(''); setTolTemp('5'); setTolSoak('5')
+  // ── Mutations (degrade gracefully if endpoints are limited) ──────────────────
+  const exportMut = useMutation({
+    mutationFn: (id: number) => cycleApi.export(id).then((r) => r.data),
+    onSuccess: (data, id) => {
+      const name = cycles.find((c) => c.id === id)?.name ?? 'cycle'
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${name.toLowerCase()}-cycle.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      setBanner({ kind: 'ok', msg: `Exported ${name} cycle definition.` })
     },
+    onError: () => setBanner({ kind: 'err', msg: 'Export failed. Please try again.' }),
   })
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)' }}>Target temp and soak per tempering step per cycle type — Admin only</div>
-        <button className="btn-primary" onClick={() => setShowForm(s => !s)}><Plus size={15} /> Set Parameter</button>
-      </div>
+  const importMut = useMutation({
+    mutationFn: (raw: unknown) => cycleApi.import(raw as Record<string, unknown>).then((r) => r.data),
+    onSuccess: () => {
+      setImportPreview(null)
+      setBanner({ kind: 'ok', msg: 'Import complete — cycle definition created.' })
+      qc.invalidateQueries({ queryKey: ['config-cycles'] })
+    },
+    onError: () =>
+      setBanner({ kind: 'err', msg: 'Import failed — definition was not accepted by the server.' }),
+  })
 
-      {showForm && (
-        <div className="card" style={{ padding: 20 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-            <div>
-              <label className="label">Cycle Type</label>
-              <select className="input" value={cycleId} onChange={e => { setCycleId(e.target.value); setStepId('') }}>
-                <option value="">Select cycle…</option>
-                {(cycles as CycleType[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Tempering Step</label>
-              <select className="input" value={stepId} onChange={e => setStepId(e.target.value)} disabled={!cycleId}>
-                <option value="">Select step…</option>
-                {temperingSteps.map((s: CycleStep) => <option key={s.id} value={s.id}>Step {s.step_number} — {s.operation_name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Target Temperature (°C)</label>
-              <input className="input" type="number" value={targetTemp} onChange={e => setTargetTemp(e.target.value)} placeholder="e.g. 180" />
-            </div>
-            <div>
-              <label className="label">Target Soak Time (min)</label>
-              <input className="input" type="number" value={targetSoak} onChange={e => setTargetSoak(e.target.value)} placeholder="e.g. 90" />
-            </div>
-            <div>
-              <label className="label">Temp Tolerance (±°C)</label>
-              <input className="input" type="number" value={tolTemp} onChange={e => setTolTemp(e.target.value)} />
-            </div>
-            <div>
-              <label className="label">Soak Tolerance (±min)</label>
-              <input className="input" type="number" value={tolSoak} onChange={e => setTolSoak(e.target.value)} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn-secondary" onClick={() => setShowForm(false)}>Cancel</button>
-            <button className="btn-primary" disabled={save.isPending || !cycleId || !stepId || !targetTemp || !targetSoak} onClick={() => save.mutate()}>
-              {save.isPending ? 'Saving…' : 'Save Parameters'}
+  const rollbackMut = useMutation({
+    mutationFn: ({ cycleId, version }: { cycleId: number; version: CycleVersion }) =>
+      cycleApi
+        .createVersion(cycleId, {
+          steps: version.steps,
+          change_notes: `Rollback to v${version.version_number}`,
+        })
+        .then((r) => r.data),
+    onSuccess: () => {
+      setBanner({ kind: 'ok', msg: 'Rolled back — a new version was created from the selected one.' })
+      qc.invalidateQueries({ queryKey: ['config-cycles'] })
+      qc.invalidateQueries({ queryKey: ['config-cycle-versions'] })
+    },
+    onError: () =>
+      setBanner({ kind: 'err', msg: 'Rollback unavailable — version endpoint declined the request.' }),
+  })
+
+  // ── Import file handling ─────────────────────────────────────────────────────
+  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result)) as any
+        const stepCount =
+          parsed?.current_version?.steps?.length ?? parsed?.steps?.length ?? 0
+        setImportPreview({
+          name: parsed?.name ?? 'Unknown',
+          steps: stepCount,
+          raw: parsed,
+        })
+        setBanner(null)
+      } catch {
+        setBanner({ kind: 'err', msg: 'Invalid JSON file — could not parse.' })
+      }
+    }
+    reader.readAsText(file)
+    e.target.value = ''
+  }
+
+  // ── States ───────────────────────────────────────────────────────────────────
+  if (isLoading) {
+    return (
+      <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
+        <Header />
+        <div
+          style={{
+            ...cardStyle,
+            padding: 40,
+            textAlign: 'center',
+            fontFamily: SANS,
+            fontSize: 14,
+            color: 'var(--ink-2)',
+          }}
+        >
+          Loading cycle definitions…
+        </div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
+        <Header />
+        <div
+          style={{
+            ...cardStyle,
+            padding: 32,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            color: 'var(--error)',
+            fontFamily: SANS,
+            fontSize: 14,
+          }}
+        >
+          <AlertTriangle size={17} /> Failed to load cycles.
+          <button className="btn-secondary" style={{ marginLeft: 'auto' }} onClick={() => refetch()}>
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="animate-es" style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
+      <Header />
+
+      {banner && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '10px 14px',
+            borderRadius: 10,
+            marginBottom: 16,
+            fontFamily: SANS,
+            fontSize: 13,
+            background: banner.kind === 'ok' ? 'rgba(34,160,107,.10)' : 'rgba(229,72,77,.10)',
+            border: `1px solid ${banner.kind === 'ok' ? 'rgba(34,160,107,.25)' : 'rgba(229,72,77,.25)'}`,
+            color: banner.kind === 'ok' ? '#1c7a52' : '#c0392b',
+          }}
+        >
+          {banner.kind === 'ok' ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+          {banner.msg}
+          <button
+            onClick={() => setBanner(null)}
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', display: 'flex' }}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 20, alignItems: 'start' }}>
+        {/* ── LEFT: cycle list ──────────────────────────────────────────────── */}
+        <div style={{ ...cardStyle, padding: 14, position: 'sticky', top: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <SectionLabel>Cycle Types ({cycles.length})</SectionLabel>
+            <button
+              className="btn-secondary"
+              style={{ height: 28, padding: '0 10px', fontSize: 12 }}
+              title="Adding cycles uses the create endpoint; configure steps after creation."
+              onClick={() =>
+                setBanner({
+                  kind: 'err',
+                  msg: 'New-cycle creation is not wired in this view — use Import to add a cycle from a definition file.',
+                })
+              }
+            >
+              <Plus size={14} /> Add
             </button>
           </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {cycles.map((c) => {
+              const on = selected?.id === c.id
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => {
+                    setSelectedId(c.id)
+                    setShowVersions(false)
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    textAlign: 'left',
+                    padding: '10px 12px',
+                    borderRadius: 10,
+                    cursor: 'pointer',
+                    border: `1px solid ${on ? 'var(--accent)' : 'var(--line)'}`,
+                    background: on ? 'var(--accent-dim)' : 'var(--surface-2)',
+                    width: '100%',
+                  }}
+                >
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span className={cycleBadgeClass(c.name)}>{c.name}</span>
+                      {c.is_archived && <span className="badge-gray" style={{ fontSize: 9.5 }}>Archived</span>}
+                    </span>
+                    <span
+                      style={{
+                        display: 'block',
+                        fontFamily: MONO,
+                        fontSize: 10.5,
+                        color: 'var(--ink-3)',
+                        marginTop: 6,
+                      }}
+                    >
+                      {c.current_version?.steps?.length ?? 0} steps · v
+                      {c.current_version?.version_number ?? '—'}
+                      {c.version_count > 1 ? ` · ${c.version_count} versions` : ''}
+                    </span>
+                  </span>
+                  <ChevronRight size={15} style={{ color: on ? 'var(--accent)' : 'var(--ink-3)', flexShrink: 0 }} />
+                </button>
+              )
+            })}
+            {cycles.length === 0 && (
+              <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink-3)', padding: 8 }}>
+                No cycle types defined.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── RIGHT: step editor ────────────────────────────────────────────── */}
+        {selected ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Toolbar */}
+            <div style={{ ...cardStyle, padding: 18 }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 26, letterSpacing: '-0.03em', color: 'var(--ink)', lineHeight: 1 }}>
+                      {selected.name}
+                    </div>
+                    <span className={cycleBadgeClass(selected.name)}>{selected.letter_prefix}</span>
+                    {selected.is_active ? (
+                      <span className="badge-green" style={{ fontSize: 9.5 }}>Active</span>
+                    ) : (
+                      <span className="badge-gray" style={{ fontSize: 9.5 }}>Inactive</span>
+                    )}
+                  </div>
+                  <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-2)', marginTop: 6 }}>
+                    {selected.description ?? 'Production cycle definition.'}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 10, fontFamily: MONO, fontSize: 10.5, color: 'var(--ink-3)', flexWrap: 'wrap' }}>
+                    <span>{steps.length} STEPS</span>
+                    <span>
+                      CURRENT VERSION v{selected.current_version?.version_number ?? '—'}
+                    </span>
+                    {selected.current_version?.created_at && (
+                      <span>
+                        {format(new Date(selected.current_version.created_at), 'dd MMM yyyy')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    className="btn-secondary"
+                    onClick={() => setShowVersions((v) => !v)}
+                  >
+                    <History size={15} /> Versions
+                    {selected.version_count > 0 && (
+                      <span style={{ fontFamily: MONO, fontSize: 11 }}>({selected.version_count})</span>
+                    )}
+                  </button>
+                  <button className="btn-secondary" onClick={() => fileRef.current?.click()}>
+                    <Upload size={15} /> Import
+                  </button>
+                  <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={onFile} />
+                  <button
+                    className="btn-primary"
+                    disabled={exportMut.isPending}
+                    onClick={() => exportMut.mutate(selected.id)}
+                  >
+                    {exportMut.isPending ? <Loader2 size={15} className="spin" /> : <Download size={15} />}
+                    Export
+                  </button>
+                </div>
+              </div>
+
+              <div
+                style={{
+                  marginTop: 14,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '9px 12px',
+                  borderRadius: 9,
+                  background: 'var(--surface-2)',
+                  border: '1px solid var(--line)',
+                  fontFamily: SANS,
+                  fontSize: 12,
+                  color: 'var(--ink-2)',
+                }}
+              >
+                <AlertTriangle size={14} style={{ color: 'var(--warning)', flexShrink: 0 }} />
+                Saving step changes creates a new version automatically. In-progress
+                UIDs keep the version they were created under; new UIDs adopt the
+                latest. Inline step edits and drag-reorder are read-only in this build.
+              </div>
+            </div>
+
+            {/* Version history (collapsible) */}
+            {showVersions && (
+              <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '16px 20px 12px' }}>
+                  <SectionLabel>Version History ({versions.length || selected.version_count})</SectionLabel>
+                </div>
+                {versions.length === 0 ? (
+                  <div style={{ padding: '0 20px 20px', fontFamily: SANS, fontSize: 13, color: 'var(--ink-3)' }}>
+                    No version history available.
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="es-table">
+                      <thead>
+                        <tr>
+                          <th>Version</th>
+                          <th>Date</th>
+                          <th>Steps</th>
+                          <th>Changes</th>
+                          <th style={{ textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...versions]
+                          .sort((a, b) => b.version_number - a.version_number)
+                          .map((v) => (
+                            <tr key={v.id}>
+                              <td style={{ fontFamily: MONO, fontWeight: 600 }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                                  v{v.version_number}
+                                  {v.is_current && <span className="badge-green" style={{ fontSize: 9 }}>Current</span>}
+                                </span>
+                              </td>
+                              <td style={{ fontFamily: MONO, fontSize: 12, whiteSpace: 'nowrap' }}>
+                                {format(new Date(v.created_at), 'dd MMM yyyy, HH:mm')}
+                              </td>
+                              <td style={{ fontFamily: MONO }}>{v.steps?.length ?? 0}</td>
+                              <td style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--ink-2)' }}>
+                                {v.change_notes ?? '—'}
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                {v.is_current ? (
+                                  <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink-3)' }}>—</span>
+                                ) : (
+                                  <button
+                                    className="btn-secondary"
+                                    style={{ height: 28, padding: '0 10px', fontSize: 12 }}
+                                    disabled={rollbackMut.isPending}
+                                    onClick={() => rollbackMut.mutate({ cycleId: selected.id, version: v })}
+                                  >
+                                    <RotateCcw size={13} /> Rollback
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step editor table */}
+            <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <SectionLabel>Step Sequence</SectionLabel>
+                <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--ink-3)' }}>
+                  {steps.length} steps in order
+                </span>
+              </div>
+              {steps.length === 0 ? (
+                <div style={{ padding: '0 20px 24px', fontFamily: SANS, fontSize: 13, color: 'var(--ink-3)' }}>
+                  This cycle version has no defined steps.
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="es-table">
+                    <thead>
+                      <tr>
+                        <th>Step</th>
+                        <th>Operation</th>
+                        <th>Workstation</th>
+                        <th>Source</th>
+                        <th>Destination</th>
+                        <th>Cap</th>
+                        <th>At Step</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {steps.map((s) => {
+                        const atStep = uidAtStep.get(s.id) ?? 0
+                        const furnace = isFurnaceWs(s.workstation_code ?? '')
+                        const split = isSplitStep(s)
+                        return (
+                          <tr key={s.id}>
+                            <td style={{ fontFamily: MONO, fontWeight: 700 }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                {furnace && <Flame size={12} style={{ color: 'var(--warning)' }} />}
+                                {split && !furnace && <Scissors size={12} style={{ color: '#d97a2b' }} />}
+                                {s.step_number}
+                              </span>
+                            </td>
+                            <td>
+                              <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink)', fontWeight: 500 }}>
+                                {s.operation_name}
+                              </div>
+                              <div style={{ marginTop: 5 }}>
+                                <StepTags step={s} />
+                              </div>
+                            </td>
+                            <td>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  fontFamily: MONO,
+                                  fontSize: 12,
+                                  color: 'var(--ink)',
+                                  background: 'var(--surface-2)',
+                                  border: '1px solid var(--line)',
+                                  borderRadius: 7,
+                                  padding: '4px 9px',
+                                }}
+                                title={s.workstation_name}
+                              >
+                                {s.workstation_code}
+                              </span>
+                            </td>
+                            <td style={{ fontFamily: MONO, fontSize: 12, color: s.from_storage_code ? 'var(--ink)' : 'var(--ink-3)' }}>
+                              {s.from_storage_code ?? '—'}
+                            </td>
+                            <td style={{ fontFamily: MONO, fontSize: 12, color: s.to_storage_code ? 'var(--ink)' : 'var(--ink-3)' }}>
+                              {s.to_storage_code ?? '—'}
+                            </td>
+                            <td>
+                              <CapCell step={s} />
+                            </td>
+                            <td>
+                              {atStep > 0 ? (
+                                <span
+                                  className="badge-yellow"
+                                  style={{ fontSize: 10 }}
+                                  title={`${atStep} UID${atStep === 1 ? '' : 's'} currently here — delete blocked`}
+                                >
+                                  {atStep} UID{atStep === 1 ? '' : 's'}
+                                </span>
+                              ) : (
+                                <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink-3)' }}>0</span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div
+                style={{
+                  padding: '12px 20px',
+                  borderTop: '1px solid var(--line)',
+                  fontFamily: MONO,
+                  fontSize: 10.5,
+                  color: 'var(--ink-3)',
+                  display: 'flex',
+                  gap: 18,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Flame size={12} style={{ color: 'var(--warning)' }} /> Tempering (furnace)
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Scissors size={12} style={{ color: '#d97a2b' }} /> Split / converting
+                </span>
+                <span>Cap field shows per-workstation capacity rules — click to inspect.</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              ...cardStyle,
+              padding: 48,
+              textAlign: 'center',
+              fontFamily: SANS,
+              fontSize: 14,
+              color: 'var(--ink-3)',
+            }}
+          >
+            <Layers size={28} style={{ color: 'var(--ink-3)', marginBottom: 10 }} />
+            <div>Select a cycle to view and edit its step sequence.</div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Import preview modal ─────────────────────────────────────────────── */}
+      {importPreview && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(21,54,106,.32)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+            padding: 20,
+          }}
+          onClick={() => setImportPreview(null)}
+        >
+          <div
+            className="animate-es"
+            style={{ ...cardStyle, width: 440, maxWidth: '100%', padding: 24, boxShadow: 'var(--shadow-e4)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 20, letterSpacing: '-0.02em', color: 'var(--ink)' }}>
+                Import Cycle
+              </div>
+              <button
+                onClick={() => setImportPreview(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)', display: 'flex' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ ...cardStyle, background: 'var(--surface-2)', padding: 16, marginBottom: 16 }}>
+              <CapRow k="Cycle name" v={importPreview.name} />
+              <CapRow k="Steps in file" v={`${importPreview.steps}`} />
+            </div>
+
+            <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--ink-2)', marginBottom: 18, lineHeight: 1.5 }}>
+              This creates a new cycle or a new version of an existing cycle. Existing
+              history is never overwritten. Confirm to proceed.
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button className="btn-secondary" onClick={() => setImportPreview(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn-primary"
+                disabled={importMut.isPending || importPreview.steps === 0}
+                onClick={() => importMut.mutate(importPreview.raw)}
+              >
+                {importMut.isPending ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />}
+                Confirm Import
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
-      <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-          <thead><tr>
-            <th style={TH}>Cycle</th>
-            <th style={TH}>Step</th>
-            <th style={TH}>Operation</th>
-            <th style={TH}>Target Temp</th>
-            <th style={TH}>Target Soak</th>
-            <th style={TH}>Temp Tol</th>
-            <th style={TH}>Soak Tol</th>
-            <th style={TH}>Updated</th>
-          </tr></thead>
-          <tbody>
-            {(params as any[]).map((p: any) => (
-              <tr key={p.id}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
-              >
-                <td style={TD}>{p.cycle_type_name}</td>
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace" }}>Step {p.step_number}</td>
-                <td style={TD}>{p.operation_name}</td>
-                <td style={{ ...TD, color: '#fcd34d', fontFamily: "'IBM Plex Mono', monospace" }}>{p.target_temp_c}°C</td>
-                <td style={{ ...TD, color: '#fcd34d', fontFamily: "'IBM Plex Mono', monospace" }}>{p.target_soak_minutes} min</td>
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>±{p.tolerance_temp_c}°C</td>
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>±{p.tolerance_soak_minutes} min</td>
-                <td style={{ ...TD, color: 'var(--ink-3)', fontSize: 12 }}>{p.updated_at ? format(new Date(p.updated_at), 'dd MMM yyyy') : '—'}</td>
-              </tr>
-            ))}
-            {(params as any[]).length === 0 && (
-              <tr><td colSpan={8} style={{ ...TD, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No parameters configured yet</td></tr>
-            )}
-          </tbody>
-        </table>
+      <style>{`.spin{animation:spin 0.8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  )
+}
+
+// ── Page header ──────────────────────────────────────────────────────────────
+function Header() {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: 'var(--ink)' }}>
+          Cycle Builder
+        </div>
+        <span className="badge-gray" style={{ fontSize: 9.5 }}>Admin</span>
+      </div>
+      <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>
+        Define and manage production cycle types — step sequences, capacities, and versions.
       </div>
     </div>
   )
