@@ -118,7 +118,7 @@ function WorkstationsConfig() {
                 <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{w.code}</td>
                 <td style={TD}>{w.name}</td>
                 <td style={TD}><span className="badge-blue">{w.category}</span></td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{w.factory_location_id ? `Location ${w.factory_location_id}` : 'All locations'}</td>
+                <td style={{ ...TD, color: 'var(--ink-2)' }}>{w.factory_location_id ? (locs.find(l => l.id === w.factory_location_id)?.name ?? `Location ${w.factory_location_id}`) : 'All locations'}</td>
                 <td style={{ ...TD, textAlign: 'right' }}>
                   <button style={{ fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => archive.mutate(w.id)}>Archive</button>
                 </td>
@@ -180,7 +180,7 @@ function StorageConfig() {
               >
                 <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.code}</td>
                 <td style={TD}>{s.name}</td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{s.factory_location_id ? `Location ${s.factory_location_id}` : 'All'}</td>
+                <td style={{ ...TD, color: 'var(--ink-2)' }}>{s.factory_location_id ? (locs.find(l => l.id === s.factory_location_id)?.name ?? `Location ${s.factory_location_id}`) : 'All'}</td>
               </tr>
             ))}
           </tbody>
