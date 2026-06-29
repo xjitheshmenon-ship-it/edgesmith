@@ -99,11 +99,49 @@ async function seedExtraUsers() {
   if (added) console.log(`[seed] Added ${added} extra users.`);
 }
 
+// Idempotent: grinding machine length limits, example per-step capacities, and
+// one active unit per workstation. Safe to run on every boot. Only present if the
+// 002 migration (workstation_units / capacity_per_unit / max_bar_length_mm) ran.
+async function seedCapacityGrinding() {
+  const hasCol = await one(
+    "SELECT 1 FROM information_schema.columns WHERE table_name='workstations' AND column_name='max_bar_length_mm'"
+  );
+  if (!hasCol) return;
+
+  // Grinding machine maximum bed lengths (mm).
+  await query("UPDATE workstations SET max_bar_length_mm = 3000 WHERE code IN ('SG-DLT','AG-GMM') AND max_bar_length_mm IS NULL");
+  await query("UPDATE workstations SET max_bar_length_mm = 1500 WHERE code IN ('AG-BTA','AG-ALP') AND max_bar_length_mm IS NULL");
+
+  // Example EAT per-step capacities (Admin can change in the Cycle Builder).
+  const caps = { 4: 10, 5: 1, 6: 40, 12: 6 };
+  for (const [stepNum, cap] of Object.entries(caps)) {
+    await query(
+      `UPDATE cycle_steps cs SET capacity_per_unit = $1
+         WHERE cs.step_number = $2 AND cs.capacity_per_unit IS NULL
+           AND cs.cycle_version_id IN (
+             SELECT v.id FROM cycle_versions v JOIN cycle_types ct ON ct.id = v.cycle_type_id
+              WHERE ct.name = 'EAT' AND v.is_current = TRUE)`,
+      [cap, stepNum]
+    );
+  }
+
+  // One active unit per workstation at Dharmapuri (so cap × units math works).
+  const loc1 = await one("SELECT id FROM factory_locations WHERE code = 'F1'");
+  await query(
+    `INSERT INTO workstation_units (unit_code, workstation_id, name, factory_location_id, status)
+       SELECT w.code || '-1', w.id, w.name || ' #1', $1, 'active'
+       FROM workstations w WHERE w.is_active = TRUE
+     ON CONFLICT (unit_code) DO NOTHING`,
+    [loc1 ? loc1.id : null]
+  );
+}
+
 export async function seed() {
   const admin = await one("SELECT id FROM users WHERE username = 'admin'");
   if (admin) {
     console.log('[seed] Database already seeded.');
     await seedExtraUsers();
+    await seedCapacityGrinding();
     return;
   }
 
@@ -219,6 +257,7 @@ export async function seed() {
 
   console.log('[seed] Seeding complete.');
   await seedExtraUsers();
+  await seedCapacityGrinding();
 }
 
 // Allow running directly: `npm run seed`

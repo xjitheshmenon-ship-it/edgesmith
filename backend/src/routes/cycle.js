@@ -12,7 +12,10 @@ async function stepsForVersion(versionId) {
             cs.workstation_id, w.code AS workstation_code, w.name AS workstation_name,
             cs.from_storage_id, fs.code AS from_storage_code,
             cs.to_storage_id, ts.code AS to_storage_code,
-            cs.is_converting_step, cs.is_child_marking_step, cs.is_qc_step
+            cs.is_converting_step, cs.is_child_marking_step, cs.is_qc_step,
+            cs.capacity_per_unit,
+            (SELECT COUNT(*)::int FROM workstation_units wu
+              WHERE wu.workstation_id = cs.workstation_id AND wu.status = 'active') AS active_units
        FROM cycle_steps cs
        LEFT JOIN workstations w ON w.id = cs.workstation_id
        LEFT JOIN storage_locations fs ON fs.id = cs.from_storage_id
@@ -21,7 +24,10 @@ async function stepsForVersion(versionId) {
       ORDER BY cs.step_order`,
     [versionId]
   );
-  return rows;
+  return rows.map((r) => ({
+    ...r,
+    total_capacity: r.capacity_per_unit != null ? r.capacity_per_unit * r.active_units : null,
+  }));
 }
 
 async function versionOut(v) {

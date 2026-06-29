@@ -29,8 +29,8 @@ export async function createNewVersion(cycleTypeId, stepsData, createdById, chan
       await c.query(
         `INSERT INTO cycle_steps
            (cycle_version_id, step_number, step_order, operation_name, workstation_id,
-            from_storage_id, to_storage_id, is_converting_step, is_child_marking_step, is_qc_step)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            from_storage_id, to_storage_id, is_converting_step, is_child_marking_step, is_qc_step, capacity_per_unit)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           version.id,
           s.step_number,
@@ -42,6 +42,7 @@ export async function createNewVersion(cycleTypeId, stepsData, createdById, chan
           !!s.is_converting_step,
           !!s.is_child_marking_step,
           !!s.is_qc_step,
+          s.capacity_per_unit ?? null,
         ]
       );
     }
@@ -62,7 +63,7 @@ export async function exportCycle(cycleTypeId, versionId = null) {
   const steps = await query(
     `SELECT cs.step_number, cs.step_order, cs.operation_name,
             w.code AS workstation_code, fs.code AS from_storage_code, ts.code AS to_storage_code,
-            cs.is_converting_step, cs.is_child_marking_step, cs.is_qc_step
+            cs.is_converting_step, cs.is_child_marking_step, cs.is_qc_step, cs.capacity_per_unit
        FROM cycle_steps cs
        LEFT JOIN workstations w ON w.id = cs.workstation_id
        LEFT JOIN storage_locations fs ON fs.id = cs.from_storage_id

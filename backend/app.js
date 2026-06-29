@@ -25,6 +25,8 @@ import shopfloorRoutes from './src/routes/shopfloor.js';
 import shiftsRoutes from './src/routes/shifts.js';
 import faridabadRoutes from './src/routes/faridabad.js';
 import temperingRoutes from './src/routes/tempering.js';
+import masterRoutes from './src/routes/master.js';
+import grindingRoutes from './src/routes/grinding.js';
 
 const app = express();
 
@@ -64,6 +66,8 @@ app.use('/api/shopfloor', shopfloorRoutes);
 app.use('/api/shifts', shiftsRoutes);
 app.use('/api/faridabad', faridabadRoutes);
 app.use('/api/tempering', temperingRoutes);
+app.use('/api/master', masterRoutes);
+app.use('/api/grinding', grindingRoutes);
 
 app.use(notFound);
 app.use(errorHandler);
