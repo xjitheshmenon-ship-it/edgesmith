@@ -10,7 +10,7 @@ import {
   Plus, X, Zap, ChevronRight, ChevronDown, Sun, Moon,
   Inbox, Link2, Truck, Download, Tag, Factory, Layers, CheckCircle2,
   FileText, Calendar, UserPlus, BarChart3, GitBranch, List, Thermometer, BadgeCheck, Lock,
-  Bell, Clock, KeyRound, UserCircle, Hammer,
+  Bell, Clock, KeyRound, UserCircle, Hammer, ArrowLeftRight,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { toggleTheme, getCurrentTheme, type Theme } from '../store/theme'
@@ -278,16 +278,33 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     const remMin = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 60000))
     const hh = Math.floor(remMin / 60), mm = remMin % 60
     const color = remMin > 120 ? '#3fbf86' : remMin > 30 ? '#f0c674' : '#ff9b9b'
-    return { n, remLabel: `${hh}:${String(mm).padStart(2, '0')}`, color }
+    return { n, remMin, remLabel: `${hh}:${String(mm).padStart(2, '0')}`, color }
   })()
 
-  // Derive topbar alerts from the live cross-location summary.
+  // Supervisor on duty sees a handover button that turns red + pulses within 30 min of shift end.
+  const handoverDue = role === 'supervisor' && shiftInfo.remMin <= 30
+
+  // Topbar alert dropdown — the seven categories from the spec, in priority order
+  // (critical → warning → info). Each is driven by available live data and is
+  // simply omitted when its condition can't be evaluated or is zero.
   const alerts = (() => {
     const out: { sev: 'critical' | 'warning' | 'info'; text: string; sub: string; to: string }[] = []
     const onHold = summary?.uid_on_hold ?? 0
+    const furnaceDev = summary?.furnace_batches_deviation ?? 0
+    const designMissing = summary?.uid_awaiting_design ?? 0
+    const badgeExpiring = summary?.badges_expiring ?? 0
+    const qcBorderline = summary?.qc_borderline_pending ?? 0
+    const consignments = summary?.consignments_pending ?? 0
+    // 🔴 critical
     if (onHold > 0) out.push({ sev: 'critical', text: `${onHold} UID${onHold > 1 ? 's' : ''} on hold`, sub: 'Production Floor', to: '/production' })
-    const running = summary?.furnace_batches_running ?? 0
-    if (running > 0) out.push({ sev: 'info', text: `${running} furnace batch${running > 1 ? 'es' : ''} running`, sub: 'Batch Management', to: '/tempering' })
+    if (furnaceDev > 0) out.push({ sev: 'critical', text: `${furnaceDev} furnace batch${furnaceDev > 1 ? 'es' : ''} with deviation`, sub: 'Batch Management', to: '/batches' })
+    if (handoverDue) out.push({ sev: 'critical', text: 'Shift handover due — submit before shift ends', sub: 'Shift Management', to: '/shifts' })
+    // 🟠 warning
+    if (designMissing > 0) out.push({ sev: 'warning', text: `${designMissing} UID${designMissing > 1 ? 's' : ''} awaiting design (Step 15)`, sub: 'UID Creation', to: '/uids' })
+    if (badgeExpiring > 0) out.push({ sev: 'warning', text: `${badgeExpiring} operator badge${badgeExpiring > 1 ? 's' : ''} expiring within 30 days`, sub: 'Employee Profiles', to: '/employees' })
+    // 🟡 info
+    if (qcBorderline > 0) out.push({ sev: 'info', text: `${qcBorderline} borderline QC result${qcBorderline > 1 ? 's' : ''} pending review`, sub: 'QC', to: '/qc' })
+    if (consignments > 0) out.push({ sev: 'info', text: `${consignments} expected consignment${consignments > 1 ? 's' : ''} not yet received`, sub: 'Receiving', to: '/receiving' })
     return out
   })()
   const alertCount = alerts.length
@@ -363,6 +380,21 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             Shift {shiftInfo.n} · <span style={{ color: shiftInfo.color }}>{shiftInfo.remLabel}</span>
           </span>
         </button>
+
+        {/* Right — handover button (supervisor on duty, red + pulsing within 30 min of shift end) */}
+        {handoverDue && (
+          <button
+            onClick={() => navigate('/shifts')}
+            title="Shift handover due"
+            className="animate-pulse-red"
+            style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#e5484d', border: 'none', borderRadius: 9, padding: '0 12px', height: 36, cursor: 'pointer', flexShrink: 0, marginLeft: 10 }}
+          >
+            <ArrowLeftRight size={14} style={{ color: '#fff' }} />
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', letterSpacing: '0.04em' }}>
+              HANDOVER
+            </span>
+          </button>
+        )}
 
         {/* Right — alert bell */}
         <div style={{ position: 'relative', marginLeft: 10, flexShrink: 0 }}>

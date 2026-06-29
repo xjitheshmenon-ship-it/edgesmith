@@ -14,6 +14,8 @@ import {
   AlertTriangle,
   Ruler,
   Info,
+  Factory,
+  Download,
 } from 'lucide-react'
 import { formatDistanceToNowStrict, format } from 'date-fns'
 
@@ -141,6 +143,20 @@ export default function QC() {
       }
     }
     return s
+  }, [cycles])
+
+  // Workstation lookup per cycle-step id (for the pending sign-off rows; the
+  // UID payload carries no current-workstation field of its own).
+  const stepWorkstation = useMemo(() => {
+    const m = new Map<number, string>()
+    for (const ct of cycles) {
+      for (const step of ct.current_version?.steps ?? []) {
+        if (step.workstation_code || step.workstation_name) {
+          m.set(step.id, step.workstation_code ?? step.workstation_name)
+        }
+      }
+    }
+    return m
   }, [cycles])
 
   // ── Pending sign-offs: active UIDs whose current step is a QC step ──────────
@@ -282,14 +298,18 @@ export default function QC() {
                       <span style={{ fontFamily: MONO, color: C.ink3 }}>Step {u.current_step_number ?? '—'}</span>
                       <span>{u.current_step_name ?? '—'}</span>
                     </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <Factory size={11} />
+                        {workstationFor(u, stepWorkstation)}
+                      </span>
+                      {u.current_storage_code && <span>· {u.current_storage_code}</span>}
+                    </div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 7 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
                         <Clock size={11} />
                         waiting {waiting(u.created_at)}
                       </span>
-                      {u.current_storage_code && (
-                        <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>{u.current_storage_code}</span>
-                      )}
                     </div>
 
                     {/* Inline action panel for the selected pending item */}
@@ -366,24 +386,36 @@ export default function QC() {
         <SectionLabel
           icon={<ClipboardList size={13} style={{ color: C.ink3 }} />}
           right={
-            <div style={{ display: 'flex', gap: 3, background: C.surface3, borderRadius: 9, padding: 3 }}>
-              {(['all', 'pass', 'fail', 'borderline'] as const).map((k) => {
-                const on = resultFilter === k
-                return (
-                  <button
-                    key={k}
-                    onClick={() => setResultFilter(k)}
-                    style={{
-                      border: 'none', borderRadius: 7, padding: '5px 11px', cursor: 'pointer',
-                      background: on ? C.surface : 'transparent', color: on ? C.ink : C.ink2,
-                      boxShadow: on ? 'var(--shadow-e1)' : 'none',
-                      fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
-                    }}
-                  >
-                    {k}
-                  </button>
-                )
-              })}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 3, background: C.surface3, borderRadius: 9, padding: 3 }}>
+                {(['all', 'pass', 'fail', 'borderline'] as const).map((k) => {
+                  const on = resultFilter === k
+                  return (
+                    <button
+                      key={k}
+                      onClick={() => setResultFilter(k)}
+                      style={{
+                        border: 'none', borderRadius: 7, padding: '5px 11px', cursor: 'pointer',
+                        background: on ? C.surface : 'transparent', color: on ? C.ink : C.ink2,
+                        boxShadow: on ? 'var(--shadow-e1)' : 'none',
+                        fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
+                      }}
+                    >
+                      {k}
+                    </button>
+                  )
+                })}
+              </div>
+              <button
+                className="btn-secondary"
+                style={{ height: 30, fontSize: 11 }}
+                disabled={filteredRecords.length === 0}
+                onClick={() => exportCsv(filteredRecords)}
+                title="Export the filtered QC history to CSV"
+              >
+                <Download size={13} />
+                CSV
+              </button>
             </div>
           }
         >QC History Log</SectionLabel>
@@ -409,6 +441,7 @@ export default function QC() {
                   <th>Measured</th>
                   <th>Result</th>
                   <th>Logged By</th>
+                  <th>Supervisor Sign-off</th>
                   <th>Notes</th>
                 </tr>
               </thead>
@@ -428,6 +461,7 @@ export default function QC() {
                       <td style={{ fontFamily: MONO, color: measured === '—' ? C.ink3 : C.ink }}>{measured}</td>
                       <td><span style={resultStyle(h.qc_result)}>{(h.qc_result ?? '—').toUpperCase()}</span></td>
                       <td style={{ color: C.ink2 }}>{h.performed_by ?? '—'}</td>
+                      <td style={{ color: C.ink2, fontFamily: MONO, fontSize: 11 }}>{signOffLabel(h.qc_result)}</td>
                       <td style={{ color: C.ink2, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {h.notes ?? '—'}
                       </td>
@@ -454,6 +488,65 @@ function waiting(iso: string) {
 }
 function fmtDate(iso: string) {
   try { return format(new Date(iso), 'dd MMM HH:mm') } catch { return '—' }
+}
+/* CSV export of the (filtered) QC history — spec PAGE 10 "Exportable to CSV". */
+function exportCsv(records: QcRecord[]) {
+  const headers = [
+    'Date', 'UID', 'Step', 'Operation', 'Check Type',
+    'Measured', 'Result', 'Logged By', 'Supervisor Sign-off', 'Notes',
+  ]
+  const esc = (v: unknown) => {
+    const s = v == null ? '' : String(v)
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const rows = records.map((r) => {
+    const h = r.history
+    return [
+      fmtDate(h.performed_at),
+      r.uid.code,
+      h.step_number,
+      h.operation_name,
+      inferCheckType(h.operation_name),
+      formatMeasured(h.qc_values),
+      (h.qc_result ?? '').toUpperCase(),
+      h.performed_by ?? '',
+      signOffLabel(h.qc_result),
+      h.notes ?? '',
+    ].map(esc).join(',')
+  })
+  const csv = [headers.join(','), ...rows].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `qc-history-${format(new Date(), 'yyyyMMdd-HHmm')}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+/* Supervisor sign-off state derived from the QC result. A recorded pass on a
+   QC step advanced the UID (so it was signed off); fail/borderline reflect their
+   review state. No dedicated sign-off field exists on the step-history payload. */
+function signOffLabel(result?: string | null): string {
+  switch ((result ?? '').toLowerCase()) {
+    case 'pass': return 'Signed off'
+    case 'fail': return 'Held — review'
+    case 'borderline': return 'Awaiting review'
+    default: return 'Pending'
+  }
+}
+/* Best-effort workstation for a pending UID: cycle-step map first, else the
+   most recent step-history workstation, else em-dash. */
+function workstationFor(u: UID, stepWorkstation: Map<number, string>): string {
+  if (u.current_step_id != null && stepWorkstation.has(u.current_step_id)) {
+    return stepWorkstation.get(u.current_step_id)!
+  }
+  const ws = (u.step_history ?? [])
+    .slice()
+    .sort((a, b) => new Date(b.performed_at).getTime() - new Date(a.performed_at).getTime())
+    .find((h) => h.workstation_code)?.workstation_code
+  return ws ?? '—'
 }
 function formatMeasured(values?: Record<string, unknown> | null): string {
   if (!values || typeof values !== 'object') return '—'
@@ -585,6 +678,18 @@ function LogMeasurementForm({ selected, loggedBy }: { selected: UID | null; logg
               )
             })}
           </div>
+          {result === 'Fail' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, fontFamily: MONO, fontSize: 9.5, color: C.redText, letterSpacing: '0.03em' }}>
+              <AlertTriangle size={11} />
+              On save, the UID is placed on hold automatically and the supervisor is alerted.
+            </div>
+          )}
+          {result === 'Borderline' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, fontFamily: MONO, fontSize: 9.5, color: C.orange, letterSpacing: '0.03em' }}>
+              <Info size={11} />
+              Flagged for supervisor review — not held automatically.
+            </div>
+          )}
         </div>
 
         <div>

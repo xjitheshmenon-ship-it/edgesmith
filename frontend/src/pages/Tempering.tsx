@@ -46,6 +46,16 @@ interface TempStep {
   cycle_step_id: number
   step_number: string
   operation_name: string
+  workstation_code: string
+}
+
+/* Canonical tempering steps per spec PAGE 17 (Step 9 / 10 / 14 / 23-SR, all HT90).
+   Used to label columns even when a cycle's operation_name lacks the phrase. */
+const TEMPER_STEP_LABEL: Record<string, { label: string; sr?: boolean }> = {
+  '9': { label: 'Tempering 1' },
+  '10': { label: 'Tempering 2' },
+  '14': { label: 'Tempering 3' },
+  '23': { label: 'Tempering 4', sr: true },
 }
 
 /* Identify HT-furnace tempering steps within a cycle version. */
@@ -164,6 +174,12 @@ function ParamCell({
   }
 
   const empty = !param || param.target_temp_c == null
+  /* Per-parameter version provenance — timestamp + changed-by of the active
+     version (spec PAGE 17 version note). Shown on hover. */
+  const provenance =
+    param?.updated_at
+      ? `Active version since ${format(new Date(param.updated_at), 'dd MMM yyyy HH:mm')}${param.updated_by_name ? ` · changed by ${param.updated_by_name}` : ''}`
+      : null
   return (
     <td
       style={{
@@ -173,7 +189,7 @@ function ParamCell({
       }}
       className={editable ? 'row-hover' : undefined}
       onClick={begin}
-      title={editable ? 'Click to edit' : undefined}
+      title={editable ? 'Click to edit — saving creates a new version' : provenance ?? undefined}
     >
       {empty ? (
         <span style={{ fontFamily: MONO, fontSize: 12, color: C.ink3 }}>
@@ -251,6 +267,7 @@ export default function Tempering() {
             cycle_step_id: s.id,
             step_number: s.step_number,
             operation_name: s.operation_name,
+            workstation_code: s.workstation_code ?? '',
             order: s.step_order,
           })
         }
@@ -277,10 +294,15 @@ export default function Tempering() {
     return m
   }, [params])
 
-  const lastUpdated = useMemo(() => {
-    const stamps = params.map((p) => p.updated_at).filter(Boolean) as string[]
-    if (!stamps.length) return null
-    return stamps.sort().slice(-1)[0]
+  /* Most recently versioned parameter — surfaces the timestamp AND changed-by
+     for the active version (spec PAGE 17 version note). */
+  const lastChange = useMemo(() => {
+    const withStamp = params.filter((p) => p.updated_at)
+    if (!withStamp.length) return null
+    const latest = withStamp.reduce((a, b) =>
+      (b.updated_at as string) > (a.updated_at as string) ? b : a
+    )
+    return { at: latest.updated_at as string, by: latest.updated_by_name ?? null }
   }, [params])
 
   const loading = cyclesQ.isLoading || paramsQ.isLoading
@@ -317,9 +339,10 @@ export default function Tempering() {
         <SectionLabel
           icon={<Thermometer size={13} style={{ color: C.ink3 }} />}
           right={
-            lastUpdated ? (
+            lastChange ? (
               <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <History size={11} /> Updated {format(new Date(lastUpdated), 'dd MMM yyyy HH:mm')}
+                <History size={11} /> Updated {format(new Date(lastChange.at), 'dd MMM yyyy HH:mm')}
+                {lastChange.by ? ` · by ${lastChange.by}` : ''}
               </span>
             ) : undefined
           }
@@ -341,17 +364,25 @@ export default function Tempering() {
               <thead>
                 <tr>
                   <th style={{ ...headTh, minWidth: 130 }}>Cycle</th>
-                  {stepColumns.map((st, i) => (
-                    <th key={st.step_number} style={{ ...headTh, borderLeft: `1px solid var(--surface-2)` }}>
-                      <div style={{ color: C.ink, fontWeight: 700, fontSize: 11, letterSpacing: '0.06em' }}>
-                        Tempering {i + 1}
-                      </div>
-                      <div style={{ color: C.ink3, marginTop: 3 }}>
-                        Step {st.step_number}
-                        {/stress relief/i.test(st.operation_name) ? ' · SR' : ''}
-                      </div>
-                    </th>
-                  ))}
+                  {stepColumns.map((st, i) => {
+                    const canon = TEMPER_STEP_LABEL[st.step_number]
+                    const label = canon?.label ?? `Tempering ${i + 1}`
+                    const isSr = canon?.sr || /stress relief/i.test(st.operation_name)
+                    const ws = st.workstation_code || 'HT90'
+                    return (
+                      <th key={st.step_number} style={{ ...headTh, borderLeft: `1px solid var(--surface-2)` }}>
+                        <div style={{ color: C.ink, fontWeight: 700, fontSize: 11, letterSpacing: '0.06em' }}>
+                          {label}
+                          {isSr ? ' · SR' : ''}
+                        </div>
+                        <div style={{ color: C.ink3, marginTop: 3 }}>
+                          Step {st.step_number}
+                          {isSr ? ' · Stress Relief' : ''}
+                        </div>
+                        <div style={{ color: C.ink3, marginTop: 2, fontSize: 9.5 }}>{ws}</div>
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody>

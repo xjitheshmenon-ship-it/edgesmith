@@ -591,18 +591,19 @@ function StoragePanel() {
       <div className="card" style={{ overflow: 'hidden', padding: 0 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead><tr>
-            <th style={TH}>Code</th><th style={TH}>Name</th><th style={TH}>Location</th>
+            <th style={TH}>Code</th><th style={TH}>Name</th><th style={TH}>Location</th><th style={{ ...TH, textAlign: 'right' }}>Status</th>
           </tr></thead>
           <tbody>
             {storageQ.isLoading ? (
-              <EmptyRow colSpan={3}>Loading storage locations…</EmptyRow>
+              <EmptyRow colSpan={4}>Loading storage locations…</EmptyRow>
             ) : rows.length === 0 ? (
-              <EmptyRow colSpan={3}>{search ? 'No storage locations match your search.' : 'No storage locations configured.'}</EmptyRow>
+              <EmptyRow colSpan={4}>{search ? 'No storage locations match your search.' : 'No storage locations configured.'}</EmptyRow>
             ) : rows.map((s: any) => (
               <tr key={s.id} className="row-hover">
                 <td style={MONO_CELL}>{s.code}</td>
                 <td style={TD}>{s.name}</td>
                 <td style={{ ...TD, color: C.ink2 }}>{locName(s.factory_location_id)}</td>
+                <td style={{ ...TD, textAlign: 'right' }}>{s.is_active === false ? <span className="badge-gray">inactive</span> : <span className="badge-green">active</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -740,7 +741,7 @@ export default function MasterLists() {
           <div style={{ marginTop: 8, padding: '10px 12px', borderTop: `1px solid ${C.line}`, display: 'flex', alignItems: 'flex-start', gap: 7 }}>
             <Lock size={11} style={{ color: C.ink3, marginTop: 2, flexShrink: 0 }} />
             <span style={{ fontFamily: MONO, fontSize: 9.5, lineHeight: 1.5, color: C.ink3, letterSpacing: '0.03em' }}>
-              Suppliers & conversion patterns need dedicated endpoints (not yet available).
+              Suppliers have no endpoint yet. Conversion patterns are managed on the Conversion page.
             </span>
           </div>
         </div>

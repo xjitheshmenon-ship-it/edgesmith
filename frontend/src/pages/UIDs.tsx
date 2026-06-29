@@ -145,6 +145,13 @@ export default function UIDs() {
   const selectedReceiving = receivings.find((r: any) => String(r.id) === receivingId)
   const qty = Math.max(0, Math.min(500, Number(quantity) || 0))
 
+  // Map receiving-event id → human batch reference for the recent-UIDs table.
+  const receivingRefById = useMemo(() => {
+    const m = new Map<number, string>()
+    receivings.forEach((r: any) => { if (r?.id != null) m.set(Number(r.id), r.batch_reference || `#${r.id}`) })
+    return m
+  }, [receivings])
+
   // Designs valid for the chosen size (per product design/size constraints).
   const validDesigns = useMemo(() => {
     if (!sizeId) return designs
@@ -224,7 +231,17 @@ export default function UIDs() {
           <SectionLabel icon={<Hammer size={13} style={{ color: 'var(--ink-3)' }} />}>Generate UIDs from raw material</SectionLabel>
 
           {created ? (
-            <CreatedResult uids={created} onReset={resetForm} />
+            <CreatedResult
+              uids={created}
+              onReset={resetForm}
+              meta={{
+                cycle: selectedCycle?.name ?? null,
+                size: selectedSize ? `${selectedSize.value_mm} mm` : null,
+                design: selectedDesign?.code ?? null,
+                priority: priority.charAt(0).toUpperCase() + priority.slice(1),
+                batch: selectedReceiving?.batch_reference ?? null,
+              }}
+            />
           ) : (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -362,17 +379,20 @@ export default function UIDs() {
             {selectedReceiving ? (
               <div style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: 10, padding: '11px 13px', display: 'flex', flexDirection: 'column', gap: 5 }}>
                 {[
-                  ['Batch', selectedReceiving.batch_reference],
-                  ['Contractor', selectedReceiving.rolling_contractor_name],
-                  ['Received', selectedReceiving.date_received],
+                  ['Batch ref', selectedReceiving.batch_reference],
+                  ['Rolling contractor', selectedReceiving.rolling_contractor_name],
+                  ['Date received', selectedReceiving.date_received ? format(new Date(selectedReceiving.date_received), 'dd MMM yyyy') : null],
+                  ['Billets received', selectedReceiving.num_billets_received != null ? String(selectedReceiving.num_billets_received) : null],
+                  ['Condition', selectedReceiving.condition],
                 ].map(([k, v]) => v ? (
                   <div key={k as string} style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
                     <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>{k}</span>
-                    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink)' }}>{String(v)}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink)', textAlign: 'right' }}>{String(v)}</span>
                   </div>
                 ) : null)}
-                <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--ink-2)', marginTop: 2 }}>
-                  Alloy & MS heat numbers are carried automatically onto each UID.
+                <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--ink-2)', marginTop: 2, lineHeight: 1.45 }}>
+                  Faridabad batch, alloy/MS heat numbers and grades are traced through this receiving event. Full
+                  material linkage onto each UID is finalised when the receiving-link endpoint is available.
                 </div>
               </div>
             ) : (
@@ -455,7 +475,9 @@ export default function UIDs() {
                   </td>
                   <td style={{ ...TD, fontFamily: MONO, color: 'var(--ink-2)' }}>{u.mo_number ?? '—'}</td>
                   <td style={{ ...TD, fontFamily: MONO, color: 'var(--ink-2)' }}>
-                    {u.receiving_event_id ? `#${u.receiving_event_id}` : '—'}
+                    {u.receiving_event_id
+                      ? (receivingRefById.get(Number(u.receiving_event_id)) ?? u.rolling_contractor ?? `#${u.receiving_event_id}`)
+                      : '—'}
                   </td>
                   <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, fontSize: 12, color: 'var(--ink-2)' }}>
                     {u.created_at ? format(new Date(u.created_at), 'HH:mm · dd MMM') : '—'}
@@ -474,12 +496,41 @@ export default function UIDs() {
 }
 
 /* ── Result panel after a successful generation ────────────────────────────── */
-function CreatedResult({ uids, onReset }: { uids: { id: number; code: string }[]; onReset: () => void }) {
+type CreatedMeta = {
+  cycle: string | null
+  size: string | null
+  design: string | null
+  priority: string | null
+  batch: string | null
+}
+function CreatedResult({ uids, onReset, meta }: { uids: { id: number; code: string }[]; onReset: () => void; meta: CreatedMeta }) {
   const handlePrint = () => {
-    const w = window.open('', '_blank', 'width=420,height=600')
+    const w = window.open('', '_blank', 'width=480,height=640')
     if (!w) return
-    const rows = uids.map((u) => `<div style="font-family:'IBM Plex Mono',monospace;font-size:14px;padding:6px 0;border-bottom:1px solid #ddd">${u.code}</div>`).join('')
-    w.document.write(`<html><head><title>UID Tagging List</title></head><body style="padding:24px"><h2 style="font-family:Arial">UID Tagging List · BSW-01</h2><div>${rows}</div></body></html>`)
+    const esc = (s: string) => s.replace(/[&<>]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch] as string))
+    const stamp = new Date().toLocaleString()
+    const metaRows = ([
+      ['Cycle', meta.cycle],
+      ['Size', meta.size],
+      ['Design', meta.design ?? 'Pending'],
+      ['Priority', meta.priority],
+      ['Receiving batch', meta.batch],
+    ] as [string, string | null][])
+      .filter(([, v]) => v)
+      .map(([k, v]) => `<tr><td style="padding:2px 14px 2px 0;color:#666">${k}</td><td>${esc(String(v))}</td></tr>`)
+      .join('')
+    const rows = uids
+      .map((u) => `<div style="font-family:'IBM Plex Mono',monospace;font-size:15px;padding:7px 0;border-bottom:1px solid #ddd">☐&nbsp;&nbsp;${esc(u.code)}</div>`)
+      .join('')
+    w.document.write(
+      `<html><head><title>UID Tagging List · BSW-01</title></head>` +
+      `<body style="padding:24px;font-family:Arial">` +
+      `<h2 style="margin:0 0 2px">UID Tagging List · BSW-01 · Dharmapuri</h2>` +
+      `<div style="color:#666;font-size:12px;margin-bottom:12px">${uids.length} UID${uids.length === 1 ? '' : 's'} · generated ${stamp} · stamp at Step 2 (RCV-01)</div>` +
+      (metaRows ? `<table style="font-size:12px;margin-bottom:14px;border-collapse:collapse">${metaRows}</table>` : '') +
+      `<div>${rows}</div>` +
+      `</body></html>`
+    )
     w.document.close()
     w.print()
   }

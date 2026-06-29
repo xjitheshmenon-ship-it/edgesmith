@@ -14,6 +14,7 @@ import {
   History,
   Layers,
   ScanLine,
+  Lock,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { uidApi } from '../api/client'
@@ -115,6 +116,12 @@ function ResultCard({ uid }: { uid: UID }) {
     return withQc ?? null
   }, [history])
 
+  // Every step that logged a QC result during production — the intermediate QC trail.
+  const intermediateQc = useMemo<StepHistory[]>(
+    () => history.filter((h) => h.qc_result && h !== finalQc),
+    [history, finalQc]
+  )
+
   const hasOrigin =
     uid.alloy_supplier ||
     uid.alloy_grade ||
@@ -126,6 +133,14 @@ function ResultCard({ uid }: { uid: UID }) {
     uid.faridabad_dispatch_id != null
 
   const dispatched = uid.status === 'dispatched'
+
+  // No explicit dispatch-date field on the UID record; the dispatch step's timestamp
+  // is the closest available signal (last step performed once status is dispatched).
+  const dispatchedAt = dispatched && history.length > 0 ? history[history.length - 1].performed_at : null
+
+  // Customer name lives on the linked MO, not on the UID payload — surface the MO
+  // number as the available reference until an MO-customer field is exposed here.
+  const customerName: string | null = null
 
   return (
     <div className="animate-es" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -159,6 +174,10 @@ function ResultCard({ uid }: { uid: UID }) {
         <div style={{ height: 1, background: 'var(--line)', margin: '18px 0' }} />
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 18 }}>
+          <Attr
+            label="PRODUCT TYPE"
+            value={uid.product_type_id != null ? `Type #${uid.product_type_id}` : '—'}
+          />
           <Attr label="SIZE" value={uid.size_mm ? `${uid.size_mm} mm` : '—'} />
           <Attr
             label="DESIGN"
@@ -186,9 +205,20 @@ function ResultCard({ uid }: { uid: UID }) {
             }
           />
           <Attr
+            label="DATE OF DISPATCH"
+            value={
+              dispatched
+                ? dispatchedAt
+                  ? format(new Date(dispatchedAt), 'dd MMM yyyy, HH:mm')
+                  : 'Dispatched'
+                : 'Not dispatched'
+            }
+          />
+          <Attr
             label="MO NUMBER"
             value={uid.mo_number ? <span style={{ fontFamily: MONO }}>{uid.mo_number}</span> : '—'}
           />
+          <Attr label="CUSTOMER" value={customerName ?? '—'} />
           <Attr label="CREATED" value={format(new Date(uid.created_at), 'dd MMM yyyy, HH:mm')} />
         </div>
       </div>
@@ -215,6 +245,8 @@ function ResultCard({ uid }: { uid: UID }) {
             <Attr label="MS GRADE" value={uid.ms_grade ?? '—'} />
             <Attr label="MS HEAT NUMBER" value={<span style={{ fontFamily: MONO }}>{uid.ms_heat_number ?? '—'}</span>} />
             <Attr label="ROLLING CONTRACTOR" value={uid.rolling_contractor ?? '—'} />
+            <Attr label="FARIDABAD DISPATCH DATE" value="—" />
+            <Attr label="RECEIVED AT DHARMAPURI" value={uid.receiving_event_id != null ? `Event #${uid.receiving_event_id}` : '—'} />
           </div>
         ) : (
           <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-3)' }}>No material origin recorded for this UID.</div>
@@ -236,6 +268,36 @@ function ResultCard({ uid }: { uid: UID }) {
           ) : (
             <span style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-3)' }}>Not yet recorded.</span>
           )}
+        </div>
+
+        {/* Intermediate QC measurements logged during production */}
+        <div style={{ height: 1, background: 'var(--line)', margin: '16px 0' }} />
+        <div style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--ink-3)', marginBottom: 10 }}>
+          INTERMEDIATE QC ({intermediateQc.length})
+        </div>
+        {intermediateQc.length === 0 ? (
+          <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-3)' }}>No intermediate QC measurements logged.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {intermediateQc.map((h) => {
+              const vals = fmtQcValues(h.qc_values)
+              return (
+                <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink-3)', minWidth: 56 }}>
+                    Step {h.step_number}
+                  </span>
+                  <QcChip result={h.qc_result} />
+                  <span style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--ink-2)' }}>
+                    {h.operation_name}
+                    {vals ? ` · ${vals}` : ''}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+        <div style={{ marginTop: 14, fontFamily: MONO, fontSize: 9.5, color: 'var(--ink-3)', letterSpacing: '0.06em' }}>
+          Furnace-batch deviation flags require dedicated tempering-batch endpoints (not yet available).
         </div>
       </div>
 
@@ -414,13 +476,23 @@ export default function UIDLookup() {
   return (
     <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
       {/* ── HEADER ─────────────────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 22 }}>
-        <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: 'var(--ink)' }}>
-          Service Call Lookup
+      <div style={{ marginBottom: 22, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: 'var(--ink)' }}>
+            Service Call Lookup
+          </div>
+          <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>
+            Enter a UID stamped on a product to retrieve its full manufacturing and material history. One field, one search.
+          </div>
         </div>
-        <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>
-          Enter a UID stamped on a product to retrieve its full manufacturing and material history. One field, one search.
-        </div>
+        <span
+          className="badge-gray"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}
+          title="This record is read-only. Nothing can be modified from this page."
+        >
+          <Lock size={11} />
+          Read-only
+        </span>
       </div>
 
       {/* ── SEARCH BAR ─────────────────────────────────────────────────────── */}

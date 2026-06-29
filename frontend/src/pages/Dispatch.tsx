@@ -18,8 +18,19 @@ interface Dispatch {
   expected_delivery_date?: string | null
   dispatch_reference?: string | null
   joining_operation_id?: number | null
+  joining_operation_ids?: number[] | null
   billet_dimensions_mm?: string | null
   notes?: string | null
+}
+
+// Joining batch reference(s) for a dispatch — supports single or multi-batch.
+function joiningRefs(d: Dispatch): string {
+  const ids = d.joining_operation_ids && d.joining_operation_ids.length
+    ? d.joining_operation_ids
+    : d.joining_operation_id != null
+      ? [d.joining_operation_id]
+      : []
+  return ids.length ? ids.map((id) => `#${id}`).join(', ') : '—'
 }
 
 interface Joining {
@@ -222,7 +233,7 @@ export default function Dispatch() {
               <TH>DATE DISPATCHED</TH>
               <TH>BATCH REF</TH>
               <TH>CONTRACTOR</TH>
-              <TH>JOINING BATCH</TH>
+              <TH>JOINING BATCH REFS</TH>
               <TH>BILLETS</TH>
               <TH>EXPECTED AT DHARMAPURI</TH>
               <TH>RECEIVED STATUS</TH>
@@ -251,7 +262,7 @@ export default function Dispatch() {
                       <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{d.batch_reference || `#${d.id}`}</span>
                     </TD>
                     <TD>{d.rolling_contractor_name || '—'}</TD>
-                    <TD>{d.joining_operation_id != null ? `#${d.joining_operation_id}` : '—'}</TD>
+                    <TD>{joiningRefs(d)}</TD>
                     <TD>{d.num_billets_dispatched}</TD>
                     <TD>{d.expected_delivery_date ? fmtDate(d.expected_delivery_date) : '—'}</TD>
                     <TD>
@@ -286,8 +297,11 @@ function DispatchForm({ joinings, onDone }: { joinings: Joining[]; onDone: () =>
   })
   const contractors = contractorsQ.data || []
 
+  // Multi-select joining batches per spec (one or more batches per dispatch).
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [billetsTouched, setBilletsTouched] = useState(false)
+
   const [form, setForm] = useState({
-    joining_operation_id: '',
     rolling_contractor_name: '',
     num_billets_dispatched: '',
     date_dispatched: new Date().toISOString().slice(0, 10),
@@ -297,27 +311,41 @@ function DispatchForm({ joinings, onDone }: { joinings: Joining[]; onDone: () =>
     notes: '',
   })
 
-  const selected = joinings.find((j) => String(j.id) === form.joining_operation_id)
+  const selectedBatches = joinings.filter((j) => selectedIds.includes(j.id))
+  // Total billets available across the selected joining batches.
+  const available = selectedBatches.length
+    ? selectedBatches.reduce((sum, j) => sum + (j.num_billets_produced ?? 0), 0)
+    : null
 
-  const set = (key: string, value: string) =>
-    setForm((f) => {
-      const next = { ...f, [key]: value }
-      // Auto-fill billet count + dimensions from the selected joining batch.
-      if (key === 'joining_operation_id') {
-        const j = joinings.find((x) => String(x.id) === value)
-        if (j) {
-          if (!f.num_billets_dispatched) next.num_billets_dispatched = String(j.num_billets_produced)
-          if (!f.billet_dimensions_mm && j.output_billet_dimensions_mm)
-            next.billet_dimensions_mm = j.output_billet_dimensions_mm
+  const set = (key: string, value: string) => setForm((f) => ({ ...f, [key]: value }))
+
+  // Toggle a joining batch in/out of the selection, auto-filling billet count
+  // (sum across batches) and dimensions until the user edits them by hand.
+  const toggleBatch = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      const batches = joinings.filter((j) => next.includes(j.id))
+      const total = batches.reduce((sum, j) => sum + (j.num_billets_produced ?? 0), 0)
+      setForm((f) => {
+        const upd = { ...f }
+        if (!billetsTouched) upd.num_billets_dispatched = next.length ? String(total) : ''
+        if (!f.billet_dimensions_mm) {
+          const dim = batches.find((j) => j.output_billet_dimensions_mm)?.output_billet_dimensions_mm
+          if (dim) upd.billet_dimensions_mm = dim
         }
-      }
+        return upd
+      })
       return next
     })
+  }
 
   const mut = useMutation({
     mutationFn: () =>
       faridabadApi.createDispatch({
-        joining_operation_id: parseInt(form.joining_operation_id),
+        // Send both the array (spec: multi-batch) and a primary id for backend
+        // shapes that key off a single joining_operation_id.
+        joining_operation_ids: selectedIds,
+        joining_operation_id: selectedIds[0],
         rolling_contractor_name: form.rolling_contractor_name,
         num_billets_dispatched: parseInt(form.num_billets_dispatched),
         date_dispatched: form.date_dispatched,
@@ -331,11 +359,10 @@ function DispatchForm({ joinings, onDone }: { joinings: Joining[]; onDone: () =>
   })
 
   const billets = parseInt(form.num_billets_dispatched || '0')
-  const available = selected ? selected.num_billets_produced : null
   const partial = available != null && billets > 0 && billets < available
 
   const valid =
-    !!form.joining_operation_id &&
+    selectedIds.length > 0 &&
     !!form.rolling_contractor_name &&
     !!form.num_billets_dispatched &&
     billets > 0 &&
@@ -346,24 +373,60 @@ function DispatchForm({ joinings, onDone }: { joinings: Joining[]; onDone: () =>
       <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink-2)', marginBottom: 16, letterSpacing: '0.06em' }}>
         NEW DISPATCH TO ROLLING CONTRACTOR
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-        {/* Joining batch */}
-        <div>
-          <label style={labelStyle}>JOINING BATCH *</label>
-          <select
-            className="input"
-            value={form.joining_operation_id}
-            onChange={(e) => set('joining_operation_id', e.target.value)}
-          >
-            <option value="">Select…</option>
-            {joinings.map((j) => (
-              <option key={j.id} value={j.id}>
-                #{j.id} — {j.date_joined} ({j.num_billets_produced} billets)
-              </option>
-            ))}
-          </select>
+      {/* Joining batches — multi-select (one or more per dispatch) */}
+      <div style={{ marginBottom: 12 }}>
+        <label style={labelStyle}>
+          JOINING BATCH(ES) *
+          {selectedIds.length > 0 && (
+            <span style={{ color: 'var(--ink-3)', marginLeft: 6 }}>({selectedIds.length} selected)</span>
+          )}
+        </label>
+        <div
+          style={{
+            border: '1px solid var(--line)',
+            borderRadius: 6,
+            maxHeight: 168,
+            overflowY: 'auto',
+            background: 'var(--surface)',
+          }}
+        >
+          {joinings.length === 0 && (
+            <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink-3)', padding: '10px 12px' }}>
+              No joining batches available
+            </div>
+          )}
+          {joinings.map((j) => {
+            const checked = selectedIds.includes(j.id)
+            return (
+              <label
+                key={j.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '7px 12px',
+                  borderBottom: '1px solid var(--line)',
+                  cursor: 'pointer',
+                  fontFamily: MONO,
+                  fontSize: 12,
+                  color: 'var(--ink)',
+                  background: checked ? 'var(--surface-3)' : 'transparent',
+                }}
+              >
+                <input type="checkbox" checked={checked} onChange={() => toggleBatch(j.id)} />
+                <span style={{ color: 'var(--accent)', fontWeight: 700 }}>#{j.id}</span>
+                <span>{fmtDate(j.date_joined)}</span>
+                <span style={{ color: 'var(--ink-3)' }}>· {j.num_billets_produced} billets</span>
+                {j.output_billet_dimensions_mm && (
+                  <span style={{ color: 'var(--ink-3)' }}>· {j.output_billet_dimensions_mm}mm</span>
+                )}
+              </label>
+            )
+          })}
         </div>
+      </div>
 
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
         {/* Contractor */}
         <div>
           <label style={labelStyle}>ROLLING CONTRACTOR *</label>
@@ -401,7 +464,10 @@ function DispatchForm({ joinings, onDone }: { joinings: Joining[]; onDone: () =>
             type="number"
             min={1}
             value={form.num_billets_dispatched}
-            onChange={(e) => set('num_billets_dispatched', e.target.value)}
+            onChange={(e) => {
+              setBilletsTouched(true)
+              set('num_billets_dispatched', e.target.value)
+            }}
           />
         </div>
 
@@ -463,12 +529,14 @@ function DispatchForm({ joinings, onDone }: { joinings: Joining[]; onDone: () =>
 
       {partial && (
         <div style={{ fontFamily: SANS, color: 'var(--warning)', fontSize: 12, marginTop: 10 }}>
-          Partial dispatch: sending {billets} of {available} billets from batch #{selected!.id}.
+          Partial dispatch: sending {billets} of {available} billets available across the selected
+          {selectedIds.length === 1 ? ' batch' : ` ${selectedIds.length} batches`}.
         </div>
       )}
       {available != null && billets > available && (
         <div style={{ fontFamily: SANS, color: 'var(--warning)', fontSize: 12, marginTop: 10 }}>
-          Heads up: {billets} exceeds the {available} billets produced in batch #{selected!.id}.
+          Heads up: {billets} exceeds the {available} billets available across the selected
+          {selectedIds.length === 1 ? ' batch' : ` ${selectedIds.length} batches`}.
         </div>
       )}
 

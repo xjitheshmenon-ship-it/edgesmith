@@ -5,6 +5,7 @@ import type { DashboardSummary, ShopfloorStatus, UID, ManufacturingOrder } from 
 import {
   BarChart3, Boxes, Flame, Truck, ClipboardList, ShieldCheck, Search,
   AlertTriangle, CheckCircle, Clock, TrendingUp, PackageSearch,
+  Users, Gauge,
 } from 'lucide-react'
 import { differenceInCalendarDays, format, parseISO } from 'date-fns'
 
@@ -31,6 +32,19 @@ const SANS = "'IBM Plex Sans', sans-serif"
 const ARCHIVO = "'Archivo', sans-serif"
 
 const STORAGE_ORDER = ['RM', 'RM-Q', 'RM-D', 'HT-Q', 'HT-D', 'MC-Q', 'MC-D', 'QC-Q', 'QC-D', 'FG']
+
+/* Furnace base capacity (bars per batch) @ the 1500mm reference bar size —
+   mirrors BatchManagement. Used by the Capacity Utilisation report (Report 9). */
+const FURNACE_CAPACITY: Record<string, number> = { HT70: 6, HT80: 6, HT90: 80 }
+const furnaceCapacityFor = (wsCode?: string | null): number => {
+  if (!wsCode) return 0
+  return FURNACE_CAPACITY[wsCode.slice(0, 4).toUpperCase()] ?? 0
+}
+const isFurnaceWsCode = (code?: string | null) => /^HT(70|80|90)/i.test(code ?? '')
+
+/* Bar sizes the furnace capacity is quoted against (updated spec — Report 9).
+   1500mm is the base reference; 1424 / 2750 are the other physical bar lengths. */
+const BAR_SIZES_MM = [1500, 1424, 2750]
 
 /* ─── small primitives ─────────────────────────────────────────────────────── */
 function SectionLabel({ icon, children, right }: { icon?: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
@@ -341,6 +355,55 @@ export default function Reports() {
       return hay.includes(term)
     }).slice(0, 50)
   }, [uids, traceTerm])
+
+  /* ── Report 9: Capacity Utilisation — furnace capacity by bar size ── */
+  // Group in-range furnace batches by their furnace (workstation) and compare
+  // average bars/batch against the known max capacity (@1500mm reference).
+  const capacity = useMemo(() => {
+    const inRange = batches.filter((b: any) => {
+      if (!isFurnaceWsCode(b.workstation_code)) return false
+      const d = safeDate(b.started_at)
+      return !d || d >= cutoff
+    })
+    const byFurnace = new Map<string, { runs: number; bars: number; full: number; partial: number; max: number }>()
+    inRange.forEach((b: any) => {
+      const key = (b.workstation_code ?? '').slice(0, 4).toUpperCase() || '—'
+      const max = furnaceCapacityFor(b.workstation_code)
+      const bars = b.uid_count ?? 0
+      const cur = byFurnace.get(key) ?? { runs: 0, bars: 0, full: 0, partial: 0, max }
+      cur.runs += 1
+      cur.bars += bars
+      cur.max = max || cur.max
+      if (max > 0 && bars >= max) cur.full += 1
+      else cur.partial += 1
+      byFurnace.set(key, cur)
+    })
+    const rows = [...byFurnace.entries()].map(([furnace, v]) => {
+      const avgFill = v.runs > 0 ? v.bars / v.runs : 0
+      const util = v.max > 0 ? Math.round((avgFill / v.max) * 100) : 0
+      return { furnace, runs: v.runs, avgFill, max: v.max, util, full: v.full, partial: v.partial }
+    }).sort((a, b) => b.runs - a.runs)
+    return { rows, total: inRange.length }
+  }, [batches, cutoff])
+
+  /* ── Report 8: Shift Performance ── */
+  // No shift-tagged production data is exposed by the API (step_history lacks a
+  // shift field on the list endpoint), so we surface the few shift-adjacent
+  // signals we do have and degrade the rest gracefully.
+  const shift = useMemo(() => {
+    const furnaceBatches = batches.filter((b: any) => {
+      const d = safeDate(b.started_at)
+      return !d || d >= cutoff
+    })
+    const furnaceDeviations = furnaceBatches.filter((b: any) => b.deviation_flagged).length
+    return {
+      furnaceBatches: furnaceBatches.length,
+      furnaceDeviations,
+      compliance: furnaceBatches.length > 0
+        ? Math.round(((furnaceBatches.length - furnaceDeviations) / furnaceBatches.length) * 100)
+        : 0,
+    }
+  }, [batches, cutoff])
 
   const anyLoading = summaryQ.isLoading || shopfloorQ.isLoading || uidsQ.isLoading
   const dispatchTrendSource = summary?.uids_dispatched_today
@@ -664,6 +727,82 @@ export default function Reports() {
       <div style={{ marginTop: 16 }}>
         <ReportCard icon={<Truck size={18} />} title="Scrap & Yield" subtitle="Material utilisation from Converting (Step 16)">
           <NoSource text="Scrap and yield reporting (input vs output length, scrap by reason, yield % per conversion pattern) requires converting-step output data, which is not yet exposed by the API. Conversion patterns define expected kerf/scrap but per-run actuals are not available." />
+        </ReportCard>
+      </div>
+
+      {/* ─── Report 8: Shift Performance ─── */}
+      <div style={{ marginTop: 16 }}>
+        <ReportCard
+          icon={<Users size={18} />} title="Shift Performance" subtitle="Production & activity by shift, supervisor and operator"
+          right={shift.furnaceBatches > 0
+            ? <span style={{ ...pill, background: 'rgba(34,160,107,.14)', color: C.greenText }}>{shift.compliance}% furnace compliance</span>
+            : undefined}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10, marginBottom: 14 }}>
+            <MiniMetric label={`Furnace Batches (${rangeDays}d)`} value={shift.furnaceBatches} color={C.blue} />
+            <MiniMetric label="Parameter Deviations" value={shift.furnaceDeviations} color={shift.furnaceDeviations ? C.red : undefined} />
+            <MiniMetric label="On Hold (current)" value={holdRows.length} color={holdRows.length ? C.red : undefined} />
+          </div>
+          <NoSource text="Per-shift breakdown — UIDs & steps per shift, jobs per operator, idle time, handover completion rate and QC pass rate per shift — requires shift-tagged step history and handover records, which the API does not yet expose on the reporting endpoints. Furnace batch volume and parameter compliance are shown above as the available shift-adjacent signals; filter by date range using the controls at the top of the page." />
+        </ReportCard>
+      </div>
+
+      {/* ─── Report 9: Capacity Utilisation (furnace by bar size) ─── */}
+      <div style={{ marginTop: 16 }}>
+        <ReportCard
+          icon={<Gauge size={18} />} title="Capacity Utilisation" subtitle={`Furnace fill vs max capacity · bar sizes ${BAR_SIZES_MM.join(' / ')}mm`}
+          right={capacity.total > 0 ? <span style={{ ...pill, background: C.surface3, color: C.ink2 }}>{capacity.total} furnace runs</span> : undefined}
+        >
+          {batchesQ.isError ? (
+            <NoSource text="Furnace batch data source is not available right now." />
+          ) : capacity.rows.length === 0 ? (
+            <EmptyLine>No furnace batches in this period to compute utilisation.</EmptyLine>
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 11, marginBottom: 14 }}>
+                {capacity.rows.map((r) => (
+                  <div key={r.furnace} style={{ display: 'grid', gridTemplateColumns: '120px 1fr 120px', alignItems: 'center', gap: 12 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: C.ink }}>{r.furnace}</div>
+                      <div style={{ fontFamily: MONO, fontSize: 9, color: C.ink3, letterSpacing: '0.04em' }}>{r.runs} batches · max {r.max} bars</div>
+                    </div>
+                    <BarRow label={`${r.avgFill.toFixed(1)} avg`} value={Math.round(r.util)} max={100} color={r.util >= 90 ? C.green : r.util >= 60 ? C.accent : C.orange} suffix="%" />
+                    <div style={{ fontFamily: MONO, fontSize: 10, color: C.ink2, textAlign: 'right' }}>
+                      <span style={{ color: C.greenText }}>{r.full} full</span> · <span style={{ color: C.orange }}>{r.partial} partial</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ overflowX: 'auto', margin: '0 -8px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520 }}>
+                  <thead><tr>
+                    <th style={TH}>Furnace</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Batches</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Avg Fill</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Max (1500mm)</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Utilisation</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Full / Partial</th>
+                  </tr></thead>
+                  <tbody>
+                    {capacity.rows.map((r) => (
+                      <tr key={r.furnace}>
+                        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600, color: C.accent }}>{r.furnace}</td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: ARCHIVO, fontWeight: 700 }}>{r.runs}</td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: C.ink2 }}>{r.avgFill.toFixed(1)}</td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: C.ink2 }}>{r.max || '—'}</td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: r.util >= 90 ? C.greenText : r.util >= 60 ? C.ink : C.orange }}>{r.util}%</td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: C.ink2 }}>{r.full} / {r.partial}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ marginTop: 12, fontFamily: MONO, fontSize: 9, color: C.ink3, letterSpacing: '0.05em' }}>
+                Max capacity is the base @1500mm reference. Per-bar-size split ({BAR_SIZES_MM.join(' / ')}mm) and per-shift throughput
+                need a bar-size / shift tag on each batch, which the API does not yet expose.
+              </div>
+            </>
+          )}
         </ReportCard>
       </div>
 

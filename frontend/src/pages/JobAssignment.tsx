@@ -121,6 +121,16 @@ function initials(name?: string | null) {
 /* ── Page ─────────────────────────────────────────────────────────────────── */
 export default function JobAssignment() {
   const { user } = useAuth()
+
+  /* UPDATED access (spec line 1600): Operator = view own queue only (read-only).
+     Supervisors/Managers/Admins get the full assignment board. */
+  if (user?.role === 'operator') return <OperatorOwnQueue user={user} />
+
+  return <SupervisorBoard />
+}
+
+function SupervisorBoard() {
+  const { user } = useAuth()
   const qc = useQueryClient()
   const canEdit = !!user?.role && ['admin', 'manager', 'supervisor'].includes(user.role)
 
@@ -272,9 +282,18 @@ export default function JobAssignment() {
     [queueData],
   )
 
+  /* Furnace jobs must never be delegated to an operator (spec: always the
+     Supervisor on duty). Block the manual click-to-assign for those. */
+  const [furnaceBlock, setFurnaceBlock] = useState<string | null>(null)
+
   /* ── Manual assign: drop selected job onto a workstation/operator card ─── */
   function assignTo(ws: any) {
     if (!selectedJob || !canEdit) return
+    if (isFurnaceStep(selectedJob.current_step_name) && ws.operator_id != null) {
+      setFurnaceBlock(selectedJob.code)
+      return
+    }
+    setFurnaceBlock(null)
     createAllotment.mutate({
       uid_id: selectedJob.id,
       operator_id: ws.operator_id,
@@ -465,7 +484,11 @@ export default function JobAssignment() {
                 return (
                   <button
                     key={u.id}
-                    onClick={() => canEdit && setSelectedJob(selected ? null : u)}
+                    onClick={() => {
+                      if (!canEdit) return
+                      setFurnaceBlock(null)
+                      setSelectedJob(selected ? null : u)
+                    }}
                     style={{
                       textAlign: 'left',
                       width: '100%',
@@ -565,6 +588,18 @@ export default function JobAssignment() {
                   removing={removeAllotment.isPending}
                 />
               ))}
+            </div>
+          )}
+
+          {furnaceBlock && (
+            <div style={{ marginTop: 14, padding: '10px 14px', borderRadius: 10, background: 'rgba(217,122,43,.1)', border: '1px solid rgba(217,122,43,.28)', color: 'var(--warning)', fontFamily: SANS, fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Flame size={14} />
+              <span style={{ flex: 1 }}>
+                <strong style={{ fontFamily: MONO }}>{furnaceBlock}</strong> is a furnace step — it is reserved for the Supervisor on duty and cannot be delegated to an operator.
+              </span>
+              <button onClick={() => setFurnaceBlock(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--warning)', display: 'flex' }}>
+                <X size={14} />
+              </button>
             </div>
           )}
 
@@ -712,6 +747,110 @@ function OperatorCard({
           <ChevronRight size={13} />
         </button>
       )}
+    </div>
+  )
+}
+
+/* ── Operator self-service: read-only view of own assigned queue ──────────────
+   Spec (UPDATED access, line 1600): Operator = "view own queue". Operators do
+   NOT see the supervisor assignment board and cannot assign — they only see the
+   jobs allotted to them, ordered by priority, mirroring the Production Floor. */
+function OperatorOwnQueue({ user }: { user: { primary_location_id: number | null; full_name?: string } }) {
+  const { data: uids = [], isLoading, isError } = useQuery<any[]>({
+    queryKey: ['ja-own-queue', user.primary_location_id],
+    queryFn: () => uidApi.operatorQueue(user.primary_location_id ?? undefined).then((r) => r.data),
+    refetchInterval: 30_000,
+    retry: false,
+  })
+
+  const ordered = useMemo(
+    () =>
+      [...(uids as any[])].sort((a, b) => {
+        const pr = (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3)
+        if (pr !== 0) return pr
+        return new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()
+      }),
+    [uids],
+  )
+
+  return (
+    <div style={{ padding: '28px 28px 60px', maxWidth: 760 }}>
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '.16em', color: 'var(--ink-2)', marginBottom: 8 }}>
+          MANAGEMENT · SHIFTS
+        </div>
+        <h1 style={{ fontFamily: ARCH, fontWeight: 800, fontSize: 28, letterSpacing: '-.03em', color: 'var(--ink)', lineHeight: 1, margin: 0 }}>
+          My Job Queue
+        </h1>
+        <p style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-2)', marginTop: 5 }}>
+          Jobs assigned to you for this shift, highest priority first — read only. Mark steps complete on the Production Floor.
+        </p>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ListChecks size={13} style={{ color: 'var(--ink-3)' }} />
+          <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '.12em', color: 'var(--ink-3)', textTransform: 'uppercase' }}>
+            My Queue
+          </span>
+          <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: ordered.length ? 'var(--accent)' : 'var(--ink-3)' }}>
+            {ordered.length}
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column' }}>
+          {isLoading ? (
+            <div style={{ padding: '32px 0', textAlign: 'center', fontFamily: MONO, fontSize: 12, color: 'var(--ink-3)' }}>Loading your queue…</div>
+          ) : isError ? (
+            <div style={{ padding: '24px 0', textAlign: 'center', fontFamily: MONO, fontSize: 12, color: 'var(--error)' }}>
+              Could not load your queue — refresh in a moment.
+            </div>
+          ) : ordered.length === 0 ? (
+            <div style={{ padding: '36px 16px', textAlign: 'center' }}>
+              <CircleSlash size={22} style={{ color: 'var(--ink-3)', marginBottom: 10 }} />
+              <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--ink-2)' }}>No jobs assigned to you yet.</div>
+              <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>
+                Your supervisor allots jobs at shift start — new jobs appear as UIDs advance.
+              </div>
+            </div>
+          ) : (
+            ordered.map((u: any, i: number) => {
+              const furnace = isFurnaceStep(u.current_step_name)
+              return (
+                <div
+                  key={u.id ?? i}
+                  style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '12px 18px', borderBottom: '1px solid var(--line)' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)', width: 20, textAlign: 'right' }}>#{i + 1}</span>
+                    <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: 'var(--ink)' }}>{u.code}</span>
+                    <CyclePill name={u.cycle_type_name ?? null} />
+                    <PriorityPill priority={u.priority} />
+                    {furnace && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontFamily: MONO, fontSize: 9.5, fontWeight: 600, color: 'var(--warning)' }}>
+                        <Flame size={10} /> FURNACE
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: SANS, fontSize: 12, color: 'var(--ink-2)' }}>
+                      <span style={{ fontFamily: MONO, color: 'var(--ink-2)', marginRight: 5 }}>{u.current_step_number ?? '—'}</span>
+                      {u.current_step_name ?? '—'}
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)' }}>
+                      <Clock size={10} /> {waitLabel(u.created_at)} waiting
+                    </span>
+                  </div>
+                </div>
+              )
+            })
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 18, fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)', letterSpacing: '.06em' }}>
+        <Clock size={11} /> Read-only view · live data refreshes every 30s.
+      </div>
     </div>
   )
 }

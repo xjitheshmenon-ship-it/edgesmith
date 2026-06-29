@@ -33,6 +33,13 @@ const ARCHIVO = "'Archivo', sans-serif"
 const PRIORITIES = ['high', 'normal', 'low'] as const
 type Priority = (typeof PRIORITIES)[number]
 
+/* The MO list/detail endpoints may also return priority and a required
+   delivery date that aren't yet in the shared ManufacturingOrder type. */
+type Mo = ManufacturingOrder & {
+  priority?: string | null
+  required_delivery_date?: string | null
+}
+
 /* ─── derived fulfilment state ─────────────────────────────────────────────── */
 type Fulfil = 'open' | 'in_progress' | 'partial' | 'complete'
 interface MoStats {
@@ -98,7 +105,7 @@ function SectionLabel({ icon, children, right }: { icon?: React.ReactNode; child
 }
 
 /* compute fulfilment stats for an MO given its linked UIDs (if loaded) */
-function computeStats(mo: ManufacturingOrder, uids?: UID[]): MoStats {
+function computeStats(mo: Mo, uids?: UID[]): MoStats {
   const linked = uids ? uids.length : mo.uid_count ?? 0
   const dispatched = uids ? uids.filter((u) => u.status === 'dispatched').length : 0
   const remaining = Math.max((mo.quantity ?? 0) - dispatched, 0)
@@ -141,7 +148,7 @@ export default function Manufacturing() {
     isError,
     refetch,
     isFetching,
-  } = useQuery<ManufacturingOrder[]>({
+  } = useQuery<Mo[]>({
     queryKey: ['mo-orders', statusFilter],
     queryFn: () => manufacturingApi.orders(statusFilter || undefined).then((r) => r.data ?? []),
     refetchInterval: 30_000,
@@ -251,7 +258,7 @@ export default function Manufacturing() {
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 880 }}>
                 <thead>
                   <tr>
                     <th style={TH}>MO</th>
@@ -261,7 +268,9 @@ export default function Manufacturing() {
                     <th style={TH}>Design</th>
                     <th style={TH}>Priority</th>
                     <th style={TH}>Status</th>
-                    <th style={{ ...TH, textAlign: 'right' }}>Linked</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>UIDs linked</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Dispatched</th>
+                    <th style={{ ...TH, textAlign: 'right' }}>Remaining</th>
                     <th style={{ ...TH, minWidth: 130 }}>Fulfilment</th>
                   </tr>
                 </thead>
@@ -283,9 +292,15 @@ export default function Manufacturing() {
                         <td style={{ ...TD, textAlign: 'right', fontFamily: MONO }}>{mo.quantity ?? 0}</td>
                         <td style={{ ...TD, fontFamily: MONO, color: C.ink2 }}>{mo.size_mm != null ? `${mo.size_mm} mm` : '—'}</td>
                         <td style={{ ...TD, fontFamily: MONO, color: mo.design_code ? C.ink : C.ink3 }}>{mo.design_code ?? '—'}</td>
-                        <td style={TD}>{priorityPill((mo as any).priority) ?? <span style={{ color: C.ink3 }}>—</span>}</td>
+                        <td style={TD}>{priorityPill(mo.priority) ?? <span style={{ color: C.ink3 }}>—</span>}</td>
                         <td style={TD}><span className={meta.cls}>{meta.label}</span></td>
                         <td style={{ ...TD, textAlign: 'right', fontFamily: MONO }}>{stats.linked}</td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: stats.dispatched > 0 ? C.greenText : C.ink3 }}>
+                          {isSel ? stats.dispatched : '—'}
+                        </td>
+                        <td style={{ ...TD, textAlign: 'right', fontFamily: MONO, color: C.ink2 }}>
+                          {isSel ? stats.remaining : (mo.quantity ?? 0)}
+                        </td>
                         <td style={TD}>
                           <ProgressBar dispatched={stats.dispatched} quantity={mo.quantity ?? 0} fulfil={stats.fulfil} />
                         </td>
@@ -359,7 +374,7 @@ function StatTile({ value, label, color }: { value: number; label: string; color
 function MoDetail({
   mo, uids, loading, onClose, onLink,
 }: {
-  mo: ManufacturingOrder
+  mo: Mo
   uids: UID[]
   loading: boolean
   onClose: () => void
@@ -397,6 +412,11 @@ function MoDetail({
         <Field label="Status" value={<span className={meta.cls}>{meta.label}</span>} />
         <Field label="Size" value={mo.size_mm != null ? `${mo.size_mm} mm` : '—'} />
         <Field label="Design" value={mo.design_code ?? '—'} />
+        <Field label="Priority" value={priorityPill(mo.priority) ?? '—'} />
+        <Field
+          label="Required delivery"
+          value={mo.required_delivery_date ? new Date(mo.required_delivery_date).toLocaleDateString() : '—'}
+        />
       </div>
 
       {/* fulfilment tracker */}
@@ -618,13 +638,16 @@ function CreateMoDrawer({ onClose, onCreated }: { onClose: () => void; onCreated
 function LinkUidsDrawer({
   mo, linkedUids, onClose, onLinked,
 }: {
-  mo: ManufacturingOrder
+  mo: Mo
   linkedUids: UID[]
   onClose: () => void
   onLinked: () => void
 }) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('active')
+  const [cycleFilter, setCycleFilter] = useState('')
+  // Whether to restrict candidates to the MO's own size & design (spec filter).
+  const [matchSpec, setMatchSpec] = useState(true)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(0)
@@ -639,18 +662,33 @@ function LinkUidsDrawer({
   })
   const allUids: UID[] = result?.items ?? []
 
+  // Distinct cycle types among the loaded UID pool (spec: filter by cycle).
+  const cycleOptions = useMemo(() => {
+    const seen = new Map<number, string>()
+    for (const u of allUids) {
+      if (u.cycle_type_id != null && !seen.has(u.cycle_type_id)) {
+        seen.set(u.cycle_type_id, u.cycle_type_name ?? `Cycle ${u.cycle_type_id}`)
+      }
+    }
+    return [...seen.entries()].map(([id, name]) => ({ id, name }))
+  }, [allUids])
+
   const candidates = useMemo(() => {
     const term = search.trim().toLowerCase()
+    const cyId = cycleFilter ? Number(cycleFilter) : null
     return allUids.filter((u) => {
       if (linkedIds.has(u.id)) return false
       if (u.mo_id != null && u.mo_id !== mo.id) return false // already on another MO
       if (term && !u.code.toLowerCase().includes(term)) return false
-      // Match the MO's size / design when set (spec: filter by size/design).
-      if (mo.size_id != null && u.size_id != null && u.size_id !== mo.size_id) return false
-      if (mo.design_id != null && u.design_id != null && u.design_id !== mo.design_id) return false
+      if (cyId != null && u.cycle_type_id !== cyId) return false // filter by cycle
+      // Optionally match the MO's size / design (spec: filter by size/design).
+      if (matchSpec) {
+        if (mo.size_id != null && u.size_id != null && u.size_id !== mo.size_id) return false
+        if (mo.design_id != null && u.design_id != null && u.design_id !== mo.design_id) return false
+      }
       return true
     })
-  }, [allUids, search, linkedIds, mo.size_id, mo.design_id, mo.id])
+  }, [allUids, search, cycleFilter, matchSpec, linkedIds, mo.size_id, mo.design_id, mo.id])
 
   const toggle = (id: number) =>
     setSelected((prev) => {
@@ -702,11 +740,6 @@ function LinkUidsDrawer({
       }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        {(mo.size_mm != null || mo.design_code) && (
-          <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink2, background: C.surface2, borderRadius: 9, padding: '8px 11px' }}>
-            Candidates matched to MO spec: {mo.size_mm != null ? `${mo.size_mm} mm` : 'any size'} · {mo.design_code ?? 'any design'}
-          </div>
-        )}
         <div style={{ display: 'flex', gap: 10 }}>
           <div style={{ position: 'relative', flex: 1 }}>
             <Search size={14} style={{ position: 'absolute', left: 11, top: 11, color: C.ink3 }} />
@@ -720,6 +753,25 @@ function LinkUidsDrawer({
             <option value="dispatched">Dispatched</option>
           </select>
         </div>
+
+        {/* Cycle filter (spec: filter UIDs by cycle, size, design, status) */}
+        <select className="input" value={cycleFilter} onChange={(e) => setCycleFilter(e.target.value)}>
+          <option value="">All cycles</option>
+          {cycleOptions.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+
+        {/* Apply MO's size & design — yes/no spec toggle */}
+        {(mo.size_mm != null || mo.design_code) && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', fontFamily: SANS, fontSize: 12.5, color: C.ink2, background: C.surface2, borderRadius: 9, padding: '9px 11px' }}>
+            <input type="checkbox" checked={matchSpec} onChange={(e) => setMatchSpec(e.target.checked)} />
+            Only show UIDs matching this MO's size &amp; design
+            <span style={{ fontFamily: MONO, fontSize: 10, color: C.ink3, marginLeft: 'auto' }}>
+              {mo.size_mm != null ? `${mo.size_mm} mm` : 'any size'} · {mo.design_code ?? 'any design'}
+            </span>
+          </label>
+        )}
 
         {isLoading ? (
           <div style={{ fontFamily: MONO, fontSize: 12, color: C.ink3, padding: '24px 0', textAlign: 'center' }}>Loading UIDs…</div>
@@ -760,7 +812,7 @@ function LinkUidsDrawer({
         )}
 
         <div style={{ fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
-          Applying the MO's size and design to selected UIDs is not exposed by the current API; UIDs are linked with their existing attributes.
+          Linking writes the MO reference onto each selected UID. Overwriting a UID's size/design on link is not exposed by the current API, so UIDs keep their existing attributes — use the size &amp; design filter above to link matching UIDs.
         </div>
       </div>
     </Drawer>

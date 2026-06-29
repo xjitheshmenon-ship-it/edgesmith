@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { uidApi, factoryApi, cycleApi } from '../api/client'
-import type { UID, Workstation, CycleType, CycleStep } from '../types'
+import { uidApi, factoryApi, cycleApi, shiftApi } from '../api/client'
+import type { UID, Workstation, CycleType, CycleStep, FactoryLocation } from '../types'
 import PriorityBadge from '../components/PriorityBadge'
 import { useAuth } from '../hooks/useAuth'
 import {
@@ -13,8 +13,13 @@ import {
   Clock,
   ListChecks,
   X,
+  Eye,
+  Activity,
+  Bell,
+  Users,
+  RefreshCw,
 } from 'lucide-react'
-import { formatDistanceToNowStrict } from 'date-fns'
+import { format, formatDistanceToNowStrict } from 'date-fns'
 
 // ── Local job runtime state ──────────────────────────────────────────────────
 // NOTE: the spec describes a persisted START / PAUSE / RESUME / CLOSE timer.
@@ -62,6 +67,32 @@ const isTemperStep = (name?: string | null) => {
 }
 const isConvertingStep = (name?: string | null) =>
   (name ?? '').toLowerCase().includes('convert')
+const isChildMarkingStep = (name?: string | null) =>
+  (name ?? '').toLowerCase().includes('child') && (name ?? '').toLowerCase().includes('mark')
+const isQcInspectionStep = (name?: string | null) => {
+  const n = (name ?? '').toLowerCase()
+  return n.includes('qc') && (n.includes('inspect') || n.includes('inspection'))
+}
+
+// ── Floor-wide queue-view row shape (from shiftApi.queueView) ────────────────
+interface QueueViewAllotment {
+  uid_id: number
+  uid_code: string
+  priority: string
+  status: string
+}
+interface QueueViewRow {
+  assignment_id: number
+  workstation_id: number
+  workstation_code: string
+  workstation_name: string
+  operator_id: number | null
+  operator_name: string | null
+  confirmed: boolean
+  queue: QueueViewAllotment[]
+  ready_count: number
+  ready_uids: { id: number; code: string; status: string; priority: string }[]
+}
 
 // ── Time helpers ─────────────────────────────────────────────────────────────
 function hhmmss(ms: number): string {
@@ -173,7 +204,24 @@ function TimerCell({ value, label, sub, color }: { value: string; label: string;
 export default function JobExecution() {
   const { user } = useAuth()
   const qc = useQueryClient()
-  const locationId = user?.primary_location_id ?? undefined
+  const role = user?.role ?? 'operator'
+  // Supervisor / Manager / Admin get the floor-wide view; operators get the
+  // single-job active-card view. (Spec: "Who sees this page and what they see".)
+  const isFloorView = role === 'supervisor' || role === 'manager' || role === 'admin'
+  const isAdmin = role === 'admin'
+
+  // Admin can toggle between locations (Faridabad / Dharmapuri / Both).
+  const [adminLocation, setAdminLocation] = useState<number | 'all'>('all')
+  // Effective location scope for queries. Non-admins are pinned to their own.
+  const locationId = isAdmin
+    ? adminLocation === 'all'
+      ? undefined
+      : adminLocation
+    : user?.primary_location_id ?? undefined
+
+  // Pause-threshold (minutes). Admin-configured per spec; no endpoint exists,
+  // so this is a client-side control clearly marked "not yet wired".
+  const [pauseThresholdMin, setPauseThresholdMin] = useState(30)
 
   const [activeId, setActiveId] = useState<number | null>(null)
   const [runtime, setRuntime] = useState<Runtime | null>(null)
@@ -214,6 +262,42 @@ export default function JobExecution() {
     queryKey: ['jobexec-cycles'],
     queryFn: () => cycleApi.list().then((r) => r.data),
   })
+
+  // ── Floor-wide view data (supervisor / manager / admin) ───────────────────
+  // shiftApi.queueView gives per-workstation operator + queue + ready counts.
+  const today = format(new Date(), 'yyyy-MM-dd')
+  const [floorShift, setFloorShift] = useState('morning')
+  const {
+    data: floorRows = [],
+    isLoading: floorLoading,
+    isError: floorError,
+    refetch: refetchFloor,
+  } = useQuery<QueueViewRow[]>({
+    queryKey: ['jobexec-floor', today, floorShift],
+    queryFn: () => shiftApi.queueView(today, floorShift).then((r) => r.data),
+    enabled: isFloorView,
+    refetchInterval: 20_000,
+    retry: 1,
+  })
+
+  // Locations for the admin toggle.
+  const { data: locations = [] } = useQuery<FactoryLocation[]>({
+    queryKey: ['jobexec-locations'],
+    queryFn: () => factoryApi.locations().then((r) => r.data),
+    enabled: isAdmin,
+  })
+
+  // Scope floor rows to the selected location (admin) or own location.
+  const scopedFloorRows = useMemo(() => {
+    if (isAdmin && adminLocation === 'all') return floorRows
+    const wsById = new Map(workstations.map((w) => [w.id, w]))
+    const scopeLoc = isAdmin ? adminLocation : user?.primary_location_id
+    if (scopeLoc == null) return floorRows
+    return floorRows.filter((r) => {
+      const ws = wsById.get(r.workstation_id)
+      return ws?.factory_location_id == null || ws.factory_location_id === scopeLoc
+    })
+  }, [floorRows, workstations, isAdmin, adminLocation, user])
 
   const completeStep = useMutation({
     mutationFn: (data: Record<string, unknown>) => {
@@ -334,12 +418,19 @@ export default function JobExecution() {
   const pausedForMs = lastPause && lastPause.endedAt == null ? now - lastPause.startedAt : 0
 
   const temper = isTemperStep(active?.current_step_name)
-  const converting = isConvertingStep(active?.current_step_name)
+  const converting = isConvertingStep(active?.current_step_name) || !!currentStep?.is_converting_step
+  const childMarking = isChildMarkingStep(active?.current_step_name) || !!currentStep?.is_child_marking_step
+  const qcInspection = isQcInspectionStep(active?.current_step_name) || !!currentStep?.is_qc_step
+  // QC Inspection step (26): cannot close without an explicit Pass/Fail.
+  const qcInspectionSatisfied = !qcInspection || (qcCheck !== 'na' && (qcResult === 'pass' || qcResult === 'fail'))
   const canSubmitClose =
     !!selectedWS &&
     active?.status === 'active' &&
+    !converting &&
+    !childMarking &&
     (!temper || (actualTemp !== '' && actualTime !== '')) &&
-    (qcCheck === 'na' || qcValue.trim() !== '' || qcResult != null)
+    (qcCheck === 'na' || qcValue.trim() !== '' || qcResult != null) &&
+    qcInspectionSatisfied
 
   function confirmClose() {
     if (!active) return
@@ -365,28 +456,82 @@ export default function JobExecution() {
     phase === 'in_progress' ? 'var(--success)' : phase === 'paused' ? 'var(--warning)' : 'var(--ink-3)'
   const phaseLabel = phase === 'in_progress' ? 'IN PROGRESS' : phase === 'paused' ? 'PAUSED' : 'QUEUED'
 
+  // ── Manager / floor summary metrics (derived from queue-view) ────────────
+  const floorMetrics = useMemo(() => {
+    const totalQueued = scopedFloorRows.reduce((n, r) => n + r.queue.length, 0)
+    const totalReady = scopedFloorRows.reduce((n, r) => n + r.ready_count, 0)
+    const stationsStaffed = scopedFloorRows.filter((r) => r.operator_id != null).length
+    const idleOperators = scopedFloorRows.filter((r) => r.operator_id != null && r.queue.length === 0).length
+    return {
+      stations: scopedFloorRows.length,
+      stationsStaffed,
+      totalQueued,
+      totalReady,
+      idleOperators,
+    }
+  }, [scopedFloorRows])
+
   return (
-    <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
+    <div style={{ padding: '28px 28px 60px', maxWidth: isFloorView ? 1480 : 1280 }}>
       {/* ── Header ────────────────────────────────────────────────────────── */}
-      <div style={{ marginBottom: 20 }}>
-        <div
-          style={{
-            fontFamily: "'Archivo', sans-serif",
-            fontWeight: 800,
-            fontSize: 24,
-            letterSpacing: '-0.03em',
-            color: 'var(--ink)',
-          }}
-        >
-          Job Execution
+      <div style={{ marginBottom: 20, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <div
+            style={{
+              fontFamily: "'Archivo', sans-serif",
+              fontWeight: 800,
+              fontSize: 24,
+              letterSpacing: '-0.03em',
+              color: 'var(--ink)',
+            }}
+          >
+            Job Execution
+          </div>
+          <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>
+            {isFloorView
+              ? `Floor-wide view — all workstations at your location (${role})`
+              : `${ordered.length} job${ordered.length === 1 ? '' : 's'} in your queue — start, pause, and close work on the floor`}
+          </div>
         </div>
-        <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink-2)', marginTop: 3 }}>
-          {ordered.length} job{ordered.length === 1 ? '' : 's'} in your queue — start, pause, and close work on the floor
-        </div>
+
+        {/* Admin location toggle */}
+        {isAdmin && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-3)' }}>
+              Location
+            </span>
+            {[{ id: 'all' as const, label: 'Both' }, ...locations.map((l) => ({ id: l.id as number | 'all', label: l.code }))].map((opt) => {
+              const on = adminLocation === opt.id
+              return (
+                <button
+                  key={String(opt.id)}
+                  onClick={() => setAdminLocation(opt.id)}
+                  className={on ? 'btn-primary' : 'btn-secondary'}
+                  style={{ height: 34, padding: '0 14px', fontSize: 12.5 }}
+                >
+                  {opt.label}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
-      {/* ── Loading / error / empty ──────────────────────────────────────── */}
-      {isLoading ? (
+      {/* ════════════════ FLOOR-WIDE VIEW (supervisor / manager / admin) ═══ */}
+      {isFloorView ? (
+        <FloorView
+          rows={scopedFloorRows}
+          loading={floorLoading}
+          error={floorError}
+          onRetry={() => refetchFloor()}
+          floorShift={floorShift}
+          setFloorShift={setFloorShift}
+          role={role}
+          metrics={floorMetrics}
+          pauseThresholdMin={pauseThresholdMin}
+          setPauseThresholdMin={setPauseThresholdMin}
+        />
+      ) : isLoading ? (
         <div
           className="card"
           style={{ padding: 40, textAlign: 'center', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-3)' }}
@@ -751,6 +896,73 @@ export default function JobExecution() {
             />
           </div>
 
+          {/* Special close-flow notices (spec: converting / child-marking / QC) */}
+          {converting && (
+            <div
+              style={{
+                fontSize: 12.5,
+                color: 'var(--warning)',
+                background: 'rgba(217,122,43,.1)',
+                border: '1px solid rgba(217,122,43,.28)',
+                borderRadius: 9,
+                padding: '10px 12px',
+                marginBottom: 14,
+                display: 'flex',
+                gap: 8,
+              }}
+            >
+              <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>
+                <strong>Converting — Step 16.</strong> This step cannot be closed with a simple confirm. It opens the full
+                Converting workflow (child UID creation, pattern selection, scrap calculation) on the Converting page.
+                <em style={{ display: 'block', marginTop: 3, color: 'var(--ink-3)' }}>Conversion workflow not wired into this panel.</em>
+              </span>
+            </div>
+          )}
+          {childMarking && (
+            <div
+              style={{
+                fontSize: 12.5,
+                color: 'var(--warning)',
+                background: 'rgba(217,122,43,.1)',
+                border: '1px solid rgba(217,122,43,.28)',
+                borderRadius: 9,
+                padding: '10px 12px',
+                marginBottom: 14,
+                display: 'flex',
+                gap: 8,
+              }}
+            >
+              <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>
+                <strong>Step 16B — Child UID Marking.</strong> Each child UID requires physical marking confirmation before
+                closing.
+                <em style={{ display: 'block', marginTop: 3, color: 'var(--ink-3)' }}>Per-child confirmation not wired into this panel.</em>
+              </span>
+            </div>
+          )}
+          {qcInspection && (
+            <div
+              style={{
+                fontSize: 12.5,
+                color: 'var(--accent)',
+                background: 'var(--accent-dim)',
+                border: '1px solid var(--accent)',
+                borderRadius: 9,
+                padding: '10px 12px',
+                marginBottom: 14,
+                display: 'flex',
+                gap: 8,
+              }}
+            >
+              <AlertTriangle size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>
+                <strong>QC Inspection — Step 26.</strong> A Pass or Fail QC result is required — this job cannot be closed
+                without selecting one below.
+              </span>
+            </div>
+          )}
+
           {/* Workstation */}
           <label className="label">Workstation</label>
           <select className="input" style={{ marginBottom: 14 }} value={selectedWS ?? ''} onChange={(e) => setSelectedWS(Number(e.target.value))}>
@@ -900,6 +1112,227 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
       <span style={{ color: 'var(--ink-2)' }}>{label}</span>
       <span style={{ fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink)', fontWeight: 600 }}>{value}</span>
+    </div>
+  )
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// FLOOR-WIDE VIEW — Supervisor / Manager / Admin
+// Shows every workstation at the location with its operator and queue.
+// Live per-job timing and Start/Pause/Resume/Close-any-job require a server
+// job-state endpoint that does not exist; those controls are rendered disabled
+// and clearly marked "not yet wired".
+// ════════════════════════════════════════════════════════════════════════════
+const SHIFT_OPTS = [
+  { value: 'morning', label: 'Morning' },
+  { value: 'afternoon', label: 'Afternoon' },
+  { value: 'night', label: 'Night' },
+]
+
+function FloorView({
+  rows,
+  loading,
+  error,
+  onRetry,
+  floorShift,
+  setFloorShift,
+  role,
+  metrics,
+  pauseThresholdMin,
+  setPauseThresholdMin,
+}: {
+  rows: QueueViewRow[]
+  loading: boolean
+  error: boolean
+  onRetry: () => void
+  floorShift: string
+  setFloorShift: (v: string) => void
+  role: string
+  metrics: { stations: number; stationsStaffed: number; totalQueued: number; totalReady: number; idleOperators: number }
+  pauseThresholdMin: number
+  setPauseThresholdMin: (v: number) => void
+}) {
+  const isManagerPlus = role === 'manager' || role === 'admin'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {/* Controls: shift selector + pause-threshold config */}
+      <div className="card" style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-3)' }}>
+            Shift
+          </span>
+          {SHIFT_OPTS.map((s) => (
+            <button
+              key={s.value}
+              onClick={() => setFloorShift(s.value)}
+              className={floorShift === s.value ? 'btn-primary' : 'btn-secondary'}
+              style={{ height: 32, padding: '0 12px', fontSize: 12 }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        {/* Pause-threshold alert config — client-side, not yet wired */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }} title="No endpoint to persist this yet — local only.">
+          <Bell size={14} style={{ color: 'var(--ink-3)' }} />
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-3)' }}>
+            Pause alert threshold
+          </span>
+          <input
+            type="number"
+            min={1}
+            value={pauseThresholdMin}
+            onChange={(e) => setPauseThresholdMin(Math.max(1, Number(e.target.value) || 1))}
+            className="input"
+            style={{ width: 70, height: 32, padding: '0 8px' }}
+          />
+          <span style={{ fontSize: 12, color: 'var(--ink-2)' }}>min</span>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, color: 'var(--ink-3)' }}>not yet wired</span>
+        </div>
+
+        <button className="btn-secondary" style={{ height: 32, padding: '0 12px', fontSize: 12 }} onClick={onRetry}>
+          <RefreshCw size={13} /> Refresh
+        </button>
+      </div>
+
+      {/* Manager / Admin summary metrics */}
+      {isManagerPlus && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+          <MetricCard icon={<Activity size={15} />} label="Workstations staffed" value={`${metrics.stationsStaffed} / ${metrics.stations}`} />
+          <MetricCard icon={<ListChecks size={15} />} label="Jobs queued (allotted)" value={String(metrics.totalQueued)} />
+          <MetricCard icon={<Clock size={15} />} label="Ready, unassigned" value={String(metrics.totalReady)} />
+          <MetricCard icon={<Users size={15} />} label="Operators idle (no queue)" value={String(metrics.idleOperators)} accent={metrics.idleOperators > 0} />
+        </div>
+      )}
+
+      {isManagerPlus && (
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-3)' }}>
+          Live "running now / paused now / avg active time" metrics require a server job-state feed — not yet wired.
+        </div>
+      )}
+
+      {/* Workstation grid */}
+      {loading ? (
+        <div className="card" style={{ padding: 40, textAlign: 'center', fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink-3)' }}>
+          Loading floor…
+        </div>
+      ) : error ? (
+        <div className="card" style={{ padding: 28, display: 'flex', alignItems: 'center', gap: 12, color: 'var(--error)' }}>
+          <AlertTriangle size={18} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>Couldn't load the floor view.</div>
+            <div style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>No shift assignments for this shift, or the service is unavailable.</div>
+          </div>
+          <button className="btn-secondary" onClick={onRetry}>Retry</button>
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="card" style={{ padding: 48, textAlign: 'center' }}>
+          <ListChecks size={26} style={{ color: 'var(--ink-3)', marginBottom: 10 }} />
+          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)' }}>
+            No workstations assigned for this shift
+          </div>
+          <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, color: 'var(--ink-2)', marginTop: 4 }}>
+            Assign operators on the Job Assignment page, then they will appear here.
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14 }}>
+          {rows.map((r) => (
+            <WorkstationPanel key={r.assignment_id} row={r} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MetricCard({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="card" style={{ padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: accent ? 'var(--warning)' : 'var(--ink-3)', marginBottom: 6 }}>
+        {icon}
+        <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{label}</span>
+      </div>
+      <div
+        style={{
+          fontFamily: "'Archivo', sans-serif",
+          fontWeight: 800,
+          letterSpacing: '-0.03em',
+          fontSize: 26,
+          color: accent ? 'var(--warning)' : 'var(--ink)',
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function WorkstationPanel({ row }: { row: QueueViewRow }) {
+  const next = row.queue[0]
+  const staffed = row.operator_id != null
+  const hasWork = row.queue.length > 0
+  // No live job-state feed; classify by assignment + queue only.
+  const statusColor = !staffed ? 'var(--ink-3)' : hasWork ? 'var(--success)' : 'var(--warning)'
+  const statusLabel = !staffed ? 'UNASSIGNED' : hasWork ? 'HAS QUEUE' : 'IDLE'
+
+  return (
+    <div className="card" style={{ padding: 16, borderLeft: `4px solid ${statusColor}`, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 800, fontSize: 16, letterSpacing: '-0.02em', color: 'var(--ink)' }}>
+          {row.workstation_code}
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: statusColor }} />
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, fontWeight: 600, letterSpacing: '0.1em', color: statusColor }}>
+            {statusLabel}
+          </span>
+        </span>
+      </div>
+
+      <div style={{ fontSize: 12.5, color: 'var(--ink-2)' }}>{row.workstation_name}</div>
+
+      {/* Active / next job */}
+      {next ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 14, color: 'var(--ink)' }}>{next.uid_code}</span>
+          <PriorityBadge priority={(next.priority as UID['priority']) ?? 'normal'} />
+        </div>
+      ) : (
+        <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 12.5, color: 'var(--ink-3)' }}>No active job</div>
+      )}
+
+      {/* Operator */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--ink-2)' }}>
+        <Users size={13} style={{ color: 'var(--ink-3)' }} />
+        {row.operator_name ?? 'No operator assigned'}
+        {!row.confirmed && staffed && (
+          <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, color: 'var(--warning)', marginLeft: 4 }}>unconfirmed</span>
+        )}
+      </div>
+
+      {/* Counts */}
+      <div style={{ display: 'flex', gap: 14, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>
+        <span>Allotted: <strong style={{ color: 'var(--ink)' }}>{row.queue.length}</strong></span>
+        <span>Ready: <strong style={{ color: 'var(--ink)' }}>{row.ready_count}</strong></span>
+      </div>
+
+      {/* Act-on-any-job controls — require a job-state endpoint, not yet wired */}
+      <div style={{ display: 'flex', gap: 8, marginTop: 2 }} title="Acting on another operator's job requires a server job-state endpoint — not yet wired.">
+        <button className="btn-secondary" style={{ flex: 1, height: 40, fontSize: 12.5, justifyContent: 'center' }} disabled>
+          <Eye size={14} /> View
+        </button>
+        <button className="btn-secondary" style={{ flex: 1, height: 40, fontSize: 12.5, justifyContent: 'center' }} disabled>
+          <Pause size={14} /> Pause
+        </button>
+        <button className="btn-secondary" style={{ flex: 1, height: 40, fontSize: 12.5, justifyContent: 'center' }} disabled>
+          <CheckCircle size={14} /> Close
+        </button>
+      </div>
     </div>
   )
 }

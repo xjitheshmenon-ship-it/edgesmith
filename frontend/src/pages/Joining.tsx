@@ -380,8 +380,9 @@ function JoiningForm({
     !!form.output_billet_dimensions_mm.trim() &&
     !!form.operator_name.trim()
 
+  // Spec: dropdowns show supplier + heat number + dimensions.
   const intakeLabel = (i: any) =>
-    `${i.heat_number} — ${i.supplier_name}${intakeDims(i) ? ` · ${intakeDims(i)}` : ''}`
+    `${i.supplier_name} — ${i.heat_number}${intakeDims(i) ? ` · ${intakeDims(i)}` : ''}`
 
   return (
     <div>

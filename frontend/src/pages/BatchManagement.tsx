@@ -12,14 +12,24 @@ import {
   RefreshCw,
   Search,
   Clock,
+  Ruler,
+  Wrench,
+  Sparkles,
 } from 'lucide-react'
 import { formatDistanceToNowStrict } from 'date-fns'
 
-// ── Furnace step reference (per spec — base capacity @ 1500mm) ────────────────
-const FURNACE_CAPACITY: Record<string, number> = {
-  HT70: 6,
-  HT80: 6,
-  HT90: 80,
+// ── Furnace capacity model (per spec lines 538–557) ───────────────────────────
+// Base capacity is defined at 1500mm. Capacity for other bar lengths is derived
+// from the proportion of bed/rack length a longer bar consumes. The spec gives
+// explicit base (1500mm) and 2750mm figures; 1424mm shares the 1500mm slot count.
+//   Step      Furnace  1500mm   2750mm
+//   Hardening HT70     6        3
+//   Quenching HT80     6        3
+//   Tempering HT90     80       43
+const FURNACE_CAPACITY_BY_SIZE: Record<string, { 1500: number; 1424: number; 2750: number }> = {
+  HT70: { 1500: 6, 1424: 6, 2750: 3 },
+  HT80: { 1500: 6, 1424: 6, 2750: 3 },
+  HT90: { 1500: 80, 1424: 80, 2750: 43 },
 }
 const isFurnaceWsCode = (code?: string | null) => /^HT(70|80|90)/i.test(code ?? '')
 const isFurnaceStepName = (name?: string | null) => {
@@ -29,13 +39,62 @@ const isFurnaceStepName = (name?: string | null) => {
 // Grinding workstation prefixes (per spec — SG/AG machines).
 const isGrindingWsCode = (code?: string | null) => /^(SG|AG)/i.test(code ?? '')
 
+const furnaceKey = (wsCode?: string | null) => (wsCode ? wsCode.slice(0, 4).toUpperCase() : '')
+
+// Base capacity (1500mm) — used when bar size is unknown.
 const furnaceCapacityFor = (wsCode?: string | null) => {
-  if (!wsCode) return 0
-  const key = wsCode.slice(0, 4).toUpperCase()
-  return FURNACE_CAPACITY[key] ?? 0
+  const tier = FURNACE_CAPACITY_BY_SIZE[furnaceKey(wsCode)]
+  return tier ? tier[1500] : 0
 }
 
-type Tab = 'furnace' | 'production'
+// Size-aware capacity. 2750mm bars derive a smaller capacity; 1500/1424mm share base.
+const furnaceCapacityForSize = (wsCode: string | null | undefined, sizeMm?: number | null) => {
+  const tier = FURNACE_CAPACITY_BY_SIZE[furnaceKey(wsCode)]
+  if (!tier) return 0
+  if (sizeMm == null) return tier[1500]
+  if (sizeMm >= 2750) return tier[2750]
+  if (sizeMm >= 1424 && sizeMm < 1500) return tier[1424]
+  return tier[1500]
+}
+
+// ── Grinding machine rules (per spec lines 2279–2539) ─────────────────────────
+const MACHINE_BED_MM = 3000
+const BUNCH_BARS_PER_SET_DEFAULT = 5 // Admin-configurable via Master Lists
+
+interface GrindMachine {
+  unit: string // display name (Delta / Gamma / Beta / Alpha)
+  code: string // SG-DLT / AG-GMM / AG-BTA / AG-ALP
+  maxMm: number
+  maxBars: number
+}
+// Surface grinding (Steps 12, 20) — SG-DLT, single 3000mm bed, up to 2 bars.
+const SURFACE_MACHINE: GrindMachine = { unit: 'Delta', code: 'SG-DLT', maxMm: 3000, maxBars: 2 }
+// Bevel grinding (Step 22) — four-machine assignment board.
+const BEVEL_MACHINES: GrindMachine[] = [
+  { unit: 'Alpha', code: 'AG-ALP', maxMm: 1500, maxBars: 1 },
+  { unit: 'Beta', code: 'AG-BTA', maxMm: 1500, maxBars: 1 },
+  { unit: 'Gamma', code: 'AG-GMM', maxMm: 3000, maxBars: 2 },
+]
+// Valid surface/angle pairings illustrated in the spec.
+const PAIRING_RULES: { combo: string; total: number; ok: boolean }[] = [
+  { combo: '1500 + 1500', total: 3000, ok: true },
+  { combo: '1500 + 1424', total: 2924, ok: true },
+  { combo: '1424 + 1424', total: 2848, ok: true },
+  { combo: '2750 alone', total: 2750, ok: true },
+  { combo: '> 3000 combined', total: 3001, ok: false },
+]
+// Classify a grinding step from its number / operation name.
+type GrindKind = 'bunch' | 'surface' | 'bevel' | 'other'
+const grindKindFor = (step: { step_number?: string; operation_name?: string; workstation_code?: string }): GrindKind => {
+  const n = (step.operation_name ?? '').toLowerCase()
+  const sn = String(step.step_number ?? '')
+  if (n.includes('bunch') || sn === '4') return 'bunch'
+  if (n.includes('bevel') || n.includes('angle') || sn === '22' || /^AG/i.test(step.workstation_code ?? '')) return 'bevel'
+  if (n.includes('surface') || sn === '12' || sn === '20') return 'surface'
+  return 'other'
+}
+
+type Tab = 'furnace' | 'grinding' | 'production'
 
 // A flattened "furnace step" derived from cycle definitions: every step on an
 // HT-series workstation across all current cycle versions.
@@ -182,7 +241,7 @@ export default function BatchManagement() {
               textTransform: 'uppercase',
             }}
           >
-            FURNACE BATCHES · HT70 / HT80 / HT90 · BUILD · CAPACITY · DEVIATION CONTROL
+            FURNACE (HT70/80/90) · GRINDING (BUNCH/SURFACE/BEVEL) · CAPACITY · DEVIATION CONTROL
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -222,6 +281,7 @@ export default function BatchManagement() {
         {(
           [
             ['furnace', 'Furnace Batches'],
+            ['grinding', 'Grinding Batches'],
             ['production', 'Production Batches'],
           ] as [Tab, string][]
         ).map(([t, label]) => (
@@ -312,10 +372,20 @@ export default function BatchManagement() {
         </>
       )}
 
+      {/* ── Grinding tab body ───────────────────────────────────────────────── */}
+      {tab === 'grinding' && (
+        <GrindingBatches
+          steps={productionSteps.filter((s) => s.grinding)}
+          loading={cyclesQ.isLoading}
+          error={cyclesQ.isError}
+          onRetry={() => cyclesQ.refetch()}
+        />
+      )}
+
       {/* ── Production tab body ─────────────────────────────────────────────── */}
       {tab === 'production' && (
         <ProductionBatches
-          steps={productionSteps}
+          steps={productionSteps.filter((s) => !s.grinding)}
           loading={cyclesQ.isLoading}
           error={cyclesQ.isError}
           onRetry={() => cyclesQ.refetch()}
@@ -492,7 +562,11 @@ function CapacityBar({ used, total }: { used: number; total: number }) {
 
 // ── Active furnace batch card ───────────────────────────────────────────────────
 function FurnaceBatchCard({ batch, onOpen }: { batch: any; onOpen: () => void }) {
-  const capacity = furnaceCapacityFor(batch.workstation_code) || batch.uid_count || 1
+  // Bar size drives capacity (1500 base, 2750 derived). Infer from the batch's
+  // representative size or its member UIDs.
+  const barSize: number | null =
+    batch.size_mm ?? (batch.uids ?? []).find((u: any) => u.size_mm != null)?.size_mm ?? null
+  const capacity = furnaceCapacityForSize(batch.workstation_code, barSize) || batch.uid_count || 1
   const uidCodes: string[] = (batch.uids ?? []).map((u: any) => u.uid_code)
   return (
     <div
@@ -518,6 +592,7 @@ function FurnaceBatchCard({ batch, onOpen }: { batch: any; onOpen: () => void })
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
         <Metric label="Target" value={batch.target_temp_c ? `${batch.target_temp_c}°C / ${batch.target_soak_minutes}min` : '—'} />
         <Metric label="UIDs" value={String(batch.uid_count ?? uidCodes.length)} />
+        <Metric label="Bar size" value={barSize ? `${barSize}mm` : '—'} />
       </div>
 
       <CapacityBar used={batch.uid_count ?? uidCodes.length} total={capacity} />
@@ -669,7 +744,6 @@ function BuildBatchForm({
   const [selected, setSelected] = useState<Set<number>>(new Set())
 
   const step = steps.find((s) => String(s.cycle_step_id) === stepKey)
-  const capacity = step ? furnaceCapacityFor(step.workstation_code) : 0
   const matchingParam = step
     ? params.find(
         (p: any) => p.cycle_type_id === step.cycle_type_id && p.cycle_step_id === step.cycle_step_id
@@ -684,6 +758,18 @@ function BuildBatchForm({
 
   const availableUIDs: any[] = available ?? []
   const availableCount = availableUIDs.length
+
+  // ── Capacity depends on bar size (1500 base, 2750 derived) ──────────────────
+  // Determine the dominant bar size among the queued UIDs to size the furnace.
+  const sizes = availableUIDs.map((u: any) => u.size_mm).filter((v: any) => v != null) as number[]
+  const dominantSize = sizes.length
+    ? sizes.sort(
+        (a, b) =>
+          sizes.filter((v) => v === b).length - sizes.filter((v) => v === a).length
+      )[0]
+    : null
+  const mixedSizes = new Set(sizes).size > 1
+  const capacity = step ? furnaceCapacityForSize(step.workstation_code, dominantSize) : 0
   // Default to capacity-limited FIFO selection when nothing chosen yet.
   const effectiveCount = selected.size > 0 ? selected.size : Math.min(availableCount, capacity || availableCount)
   const overCapacity = capacity > 0 && selected.size > capacity
@@ -798,12 +884,24 @@ function BuildBatchForm({
             </div>
           )}
 
-          {/* Capacity readout */}
+          {/* Capacity readout — size-aware (1500mm base, 2750mm derived) */}
           <div style={{ marginBottom: 12 }}>
             <L>
-              Furnace Capacity ({step.workstation_code}){capacity ? ` — ${capacity} bars` : ''}
+              Furnace Capacity ({step.workstation_code})
+              {dominantSize ? ` @ ${dominantSize}mm` : ' @ 1500mm base'}
+              {capacity ? ` — ${capacity} bars` : ''}
             </L>
             <CapacityBar used={effectiveCount} total={capacity || Math.max(availableCount, 1)} />
+            {dominantSize === 2750 && (
+              <div style={{ color: 'var(--ink-3)', fontSize: 10.5, marginTop: 6, fontFamily: "'IBM Plex Mono', monospace" }}>
+                2750mm bars — reduced capacity vs 1500mm base.
+              </div>
+            )}
+            {mixedSizes && (
+              <div style={{ color: 'var(--warning)', fontSize: 10.5, marginTop: 6, fontFamily: "'IBM Plex Mono', monospace" }}>
+                Mixed bar sizes queued — capacity shown for dominant size ({dominantSize}mm).
+              </div>
+            )}
             {overCapacity && (
               <div style={{ color: 'var(--error)', fontSize: 11, marginTop: 6, fontFamily: "'IBM Plex Mono', monospace" }}>
                 Over capacity — remove {selected.size - capacity} bar(s).
@@ -846,6 +944,7 @@ function BuildBatchForm({
                     const code = u.uid_code ?? u.code
                     const on = selected.has(id)
                     const priority = (u.priority ?? 'normal') as string
+                    const sz = u.size_mm as number | null | undefined
                     return (
                       <button
                         key={id}
@@ -868,6 +967,9 @@ function BuildBatchForm({
                       >
                         {on && <CheckCircle size={11} />}
                         {code}
+                        {sz != null && (
+                          <span style={{ color: 'var(--ink-3)', fontWeight: 400 }}>{sz}mm</span>
+                        )}
                         {priority !== 'normal' && (
                           <span style={{ width: 6, height: 6, borderRadius: '50%', background: priority === 'urgent' ? 'var(--error)' : 'var(--warning)' }} />
                         )}
@@ -898,7 +1000,7 @@ function BuildBatchForm({
   )
 }
 
-// ── Production / grinding batches (queue view — read-only fallback) ─────────────
+// ── Production batches (queue view — non-grinding workstations) ─────────────────
 function ProductionBatches({
   steps,
   loading,
@@ -927,7 +1029,7 @@ function ProductionBatches({
     return m
   }, [uids])
 
-  // Show steps that have a queue, grouped grinding-first; collapse duplicates by step.
+  // Collapse duplicates by step; sort by queue depth.
   const rows = useMemo(() => {
     const seen = new Set<number>()
     const out: (ProductionStepRef & { queued: number })[] = []
@@ -937,9 +1039,7 @@ function ProductionBatches({
       const queued = queueByStep.get(s.cycle_step_id) ?? 0
       out.push({ ...s, queued })
     }
-    return out
-      .filter((r) => r.queued > 0 || r.grinding)
-      .sort((a, b) => Number(b.grinding) - Number(a.grinding) || b.queued - a.queued)
+    return out.filter((r) => r.queued > 0).sort((a, b) => b.queued - a.queued)
   }, [steps, queueByStep])
 
   if (loading) return <LoadingCard />
@@ -964,13 +1064,13 @@ function ProductionBatches({
       >
         <AlertTriangle size={15} style={{ color: 'var(--warning)', marginTop: 1, flexShrink: 0 }} />
         <div>
-          Grinding / production batch creation (Bunch, Surface, Bevel — dynamic length-based sets) has no
+          Manual production-batch creation (select workstation → pick queued UIDs up to capacity) has no
           dedicated backend endpoint yet. This is a read-only queue view; furnace batches are built on the
           Furnace tab.
         </div>
       </div>
 
-      <SectionLabel>Production &amp; Grinding Queues</SectionLabel>
+      <SectionLabel>Production Queues</SectionLabel>
       <div className="card" style={{ overflow: 'hidden' }}>
         <table className="es-table">
           <thead>
@@ -979,7 +1079,6 @@ function ProductionBatches({
               <th>Cycle</th>
               <th>Step</th>
               <th>Operation</th>
-              <th>Type</th>
               <th>Queued UIDs</th>
             </tr>
           </thead>
@@ -990,13 +1089,6 @@ function ProductionBatches({
                 <td>{r.cycle_type_name}</td>
                 <td>Step {r.step_number}</td>
                 <td>{r.operation_name}</td>
-                <td>
-                  {r.grinding ? (
-                    <span className="badge-blue">GRINDING</span>
-                  ) : (
-                    <span className="badge-gray">PRODUCTION</span>
-                  )}
-                </td>
                 <td>
                   <span
                     style={{
@@ -1014,7 +1106,7 @@ function ProductionBatches({
             {rows.length === 0 && (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={5}
                   style={{
                     textAlign: 'center',
                     color: 'var(--ink-3)',
@@ -1023,7 +1115,7 @@ function ProductionBatches({
                     fontSize: 11,
                   }}
                 >
-                  No production or grinding queues found.
+                  No production queues found.
                 </td>
               </tr>
             )}
@@ -1031,6 +1123,439 @@ function ProductionBatches({
         </table>
       </div>
     </>
+  )
+}
+
+// ── Grinding batches (rule-driven panels — Bunch / Surface / Bevel) ─────────────
+// Spec lines 560–646, 2279–2539. Grinding batches are decided dynamically just
+// before the run based on bar lengths. No dedicated backend endpoint exists yet,
+// so this renders the rule-driven structure populated from the live queue (active
+// UIDs at each grinding step) with clear "endpoint not yet available" states for
+// the assign / confirm / mark-run-complete actions.
+function GrindingBatches({
+  steps,
+  loading,
+  error,
+  onRetry,
+}: {
+  steps: ProductionStepRef[]
+  loading: boolean
+  error: boolean
+  onRetry: () => void
+}) {
+  const { data: uids = [], isLoading: uidsLoading } = useQuery({
+    queryKey: ['batch-mgmt-uids'],
+    queryFn: () => uidApi.list({ status: 'active' }).then((r) => r.data.items ?? []),
+    refetchInterval: 30_000,
+  })
+
+  // Queued UIDs (with bar length) per grinding step.
+  const queuedByStep = useMemo(() => {
+    const m = new Map<number, any[]>()
+    for (const u of uids as any[]) {
+      if (u.current_step_id == null) continue
+      const arr = m.get(u.current_step_id) ?? []
+      arr.push(u)
+      m.set(u.current_step_id, arr)
+    }
+    return m
+  }, [uids])
+
+  // Collapse duplicate steps, classify each into a grinding kind.
+  const grindSteps = useMemo(() => {
+    const seen = new Set<number>()
+    const out: (ProductionStepRef & { kind: GrindKind; queued: any[] })[] = []
+    for (const s of steps) {
+      if (seen.has(s.cycle_step_id)) continue
+      seen.add(s.cycle_step_id)
+      out.push({ ...s, kind: grindKindFor(s), queued: queuedByStep.get(s.cycle_step_id) ?? [] })
+    }
+    return out
+  }, [steps, queuedByStep])
+
+  if (loading) return <LoadingCard />
+  if (error) return <ErrorCard onRetry={onRetry} />
+
+  return (
+    <>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 8,
+          padding: '10px 14px',
+          borderRadius: 10,
+          background: 'var(--surface-2)',
+          border: '1px solid var(--line)',
+          color: 'var(--ink-2)',
+          fontSize: 12.5,
+          marginBottom: 18,
+          fontFamily: "'IBM Plex Sans', sans-serif",
+        }}
+      >
+        <Ruler size={15} style={{ color: 'var(--accent)', marginTop: 1, flexShrink: 0 }} />
+        <div>
+          Grinding batches are decided dynamically just before the run from bar lengths — not a fixed count.
+          The panels below enforce the spec rules (set sizing, machine-length pairing). Assign / Confirm /
+          Mark&nbsp;Run&nbsp;Complete have no backend endpoint yet; those actions are disabled with a clear
+          state until the grinding-batch API is available.
+        </div>
+      </div>
+
+      {/* Pairing reference (Surface / Bevel length rules) */}
+      <PairingReference />
+
+      {grindSteps.length === 0 ? (
+        <EmptyCard text="No grinding steps (Bunch / Surface / Bevel) found in current cycle definitions." />
+      ) : (
+        grindSteps.map((s) => {
+          if (s.kind === 'bunch')
+            return <BunchGrindingPanel key={s.cycle_step_id} step={s} queued={s.queued} />
+          if (s.kind === 'surface')
+            return <SurfaceGrindingPanel key={s.cycle_step_id} step={s} queued={s.queued} loading={uidsLoading} />
+          if (s.kind === 'bevel')
+            return <BevelGrindingPanel key={s.cycle_step_id} step={s} queued={s.queued} loading={uidsLoading} />
+          return (
+            <div key={s.cycle_step_id} style={{ marginBottom: 16 }}>
+              <GrindHeader code={s.workstation_code} title={`${s.operation_name} — Step ${s.step_number}`} cycle={s.cycle_type_name} />
+              <EmptyCard text={`${s.queued.length} bar(s) queued. Generic grinding step — no specialised panel.`} />
+            </div>
+          )
+        })
+      )}
+    </>
+  )
+}
+
+const barLen = (u: any): number | null => (u?.size_mm ?? null)
+const priorityRank = (p?: string) => (p === 'urgent' ? 0 : p === 'high' ? 1 : 2)
+const sortQueue = (a: any, b: any) =>
+  priorityRank(a.priority) - priorityRank(b.priority) ||
+  (a.waiting_since && b.waiting_since ? +new Date(a.waiting_since) - +new Date(b.waiting_since) : 0)
+
+function GrindHeader({ code, title, cycle }: { code: string; title: string; cycle: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+      <Wrench size={15} style={{ color: 'var(--accent)' }} />
+      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 13, color: 'var(--accent)' }}>
+        {code}
+      </span>
+      <span style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--ink)' }}>{title}</span>
+      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-3)' }}>{cycle}</span>
+    </div>
+  )
+}
+
+// Reusable horizontal bed/length fill bar (mm-based).
+function BedBar({ used, total }: { used: number; total: number }) {
+  const pct = Math.min(Math.round((used / Math.max(total, 1)) * 100), 100)
+  const over = used > total
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ flex: 1, height: 12, borderRadius: 6, background: 'var(--surface-3)', overflow: 'hidden', minWidth: 120 }}>
+        <div
+          style={{
+            width: `${pct}%`,
+            height: '100%',
+            background: over ? 'var(--error)' : pct >= 100 ? 'var(--success)' : 'var(--accent)',
+          }}
+        />
+      </div>
+      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: over ? 'var(--error)' : 'var(--ink-2)', whiteSpace: 'nowrap' }}>
+        {used} / {total}mm · {pct}%
+      </span>
+    </div>
+  )
+}
+
+function PriorityDot({ priority }: { priority?: string }) {
+  const p = priority ?? 'normal'
+  if (p === 'normal') return <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--ink-3)' }} />
+  return <span style={{ width: 6, height: 6, borderRadius: '50%', background: p === 'urgent' ? 'var(--error)' : 'var(--warning)' }} />
+}
+
+function QueuedBarRow({ u }: { u: any }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 9px', borderRadius: 7, background: 'var(--surface)', border: '1px solid var(--line)' }}>
+      <PriorityDot priority={u.priority} />
+      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, fontWeight: 700, color: 'var(--accent)' }}>
+        {u.uid_code ?? u.code}
+      </span>
+      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)' }}>
+        {barLen(u) != null ? `${barLen(u)}mm` : '—'}
+      </span>
+      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginLeft: 'auto' }}>
+        {u.cycle_type_name ?? ''}
+      </span>
+    </div>
+  )
+}
+
+function QueuedColumn({ queued, loading }: { queued: any[]; loading?: boolean }) {
+  const sorted = [...queued].sort(sortQueue)
+  return (
+    <div style={{ minWidth: 230 }}>
+      <SectionLabel>Queued Bars ({queued.length})</SectionLabel>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 5, maxHeight: 320, overflowY: 'auto' }}>
+        {loading ? (
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>Loading queue…</div>
+        ) : sorted.length === 0 ? (
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>No bars queued at this step.</div>
+        ) : (
+          sorted.map((u) => <QueuedBarRow key={u.uid_id ?? u.id} u={u} />)
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Disabled action footer (endpoint-not-available state).
+function GrindActions({ note }: { note: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+      <button className="btn-secondary" disabled title="Grinding-batch API not yet available" style={{ opacity: 0.55, cursor: 'not-allowed' }}>
+        <Sparkles size={14} /> Auto-suggest
+      </button>
+      <button className="btn-primary" disabled title="Grinding-batch API not yet available" style={{ opacity: 0.55, cursor: 'not-allowed' }}>
+        <CheckCircle size={14} /> Confirm run
+      </button>
+      <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)' }}>{note}</span>
+    </div>
+  )
+}
+
+// Length-pairing reference card (spec valid pairings).
+function PairingReference() {
+  return (
+    <div className="card" style={{ padding: 14, marginBottom: 18 }}>
+      <SectionLabel>Length Pairing Rules · Machine bed {MACHINE_BED_MM}mm</SectionLabel>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {PAIRING_RULES.map((r) => (
+          <span
+            key={r.combo}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontFamily: "'IBM Plex Mono', monospace",
+              fontSize: 11,
+              padding: '4px 9px',
+              borderRadius: 7,
+              background: r.ok ? 'rgba(34,160,107,.1)' : 'rgba(229,72,77,.1)',
+              color: r.ok ? 'var(--success)' : 'var(--error)',
+              border: `1px solid ${r.ok ? 'rgba(34,160,107,.25)' : 'rgba(229,72,77,.25)'}`,
+            }}
+          >
+            {r.ok ? '✓' : '✗'} {r.combo} {r.ok && r.total <= MACHINE_BED_MM ? `= ${r.total}mm` : ''}
+          </span>
+        ))}
+      </div>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 8 }}>
+        2750mm bars run alone on Delta/Gamma (3000mm) — blocked on Alpha/Beta (1500mm max).
+      </div>
+    </div>
+  )
+}
+
+// ── Bunch Grinding (Step 4 — SG-DLT): length-based dynamic set sizing ───────────
+function BunchGrindingPanel({ step, queued }: { step: ProductionStepRef; queued: any[] }) {
+  const barsPerSet = BUNCH_BARS_PER_SET_DEFAULT // Admin-configurable via Master Lists
+  // Determine sets-per-run from dominant bar length: 1500/1424 → 2 sets, 2750 → 1.
+  const sorted = [...queued].sort(sortQueue)
+  const sizes = sorted.map(barLen).filter((v): v is number => v != null)
+  const dominant = sizes.length
+    ? sizes.sort((a, b) => sizes.filter((v) => v === b).length - sizes.filter((v) => v === a).length)[0]
+    : 1500
+  const setsPerRun = dominant >= 2750 ? 1 : 2
+
+  // Build sets greedily from same-length bars (each set = same length).
+  const pool = sorted.filter((u) => barLen(u) === dominant)
+  const sets: any[][] = []
+  for (let i = 0; i < setsPerRun; i++) {
+    sets.push(pool.slice(i * barsPerSet, i * barsPerSet + barsPerSet))
+  }
+  const bedUsed = setsPerRun * dominant
+  const offLength = sorted.filter((u) => barLen(u) != null && barLen(u) !== dominant).length
+
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <GrindHeader code={step.workstation_code} title={`Bunch Grinding — Step ${step.step_number}`} cycle={step.cycle_type_name} />
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 12 }}>
+        <Metric label="Bars per set" value={`${barsPerSet}`} />
+        <Metric label="Sets per run" value={`${setsPerRun}`} />
+        <Metric label="Machine bed" value={`${MACHINE_BED_MM}mm`} />
+        <Metric label="Bar length" value={`${dominant}mm`} />
+        <Metric label="Max bars/run" value={`${setsPerRun * barsPerSet}`} />
+      </div>
+      <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginBottom: 12 }}>
+        Bars per set is Admin-configurable in Master Lists. Each set must be one length; two sets must fit within {MACHINE_BED_MM}mm.
+      </div>
+
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+        <QueuedColumn queued={queued} />
+        <div style={{ flex: 1, minWidth: 280 }}>
+          <SectionLabel>Set Builder</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {sets.map((bars, i) => {
+              const complete = bars.length === barsPerSet
+              return (
+                <div key={i}>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-2)', marginBottom: 4 }}>
+                    Set {i + 1} — Position {i + 1} ({i * dominant}–{(i + 1) * dominant}mm)
+                  </div>
+                  <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 8, background: 'var(--surface-2)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {Array.from({ length: barsPerSet }).map((_, slot) => {
+                      const u = bars[slot]
+                      return u ? (
+                        <QueuedBarRow key={u.uid_id ?? u.id} u={u} />
+                      ) : (
+                        <div key={`empty-${slot}`} style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)', padding: '5px 9px' }}>
+                          — empty slot —
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, marginTop: 4, color: complete ? 'var(--success)' : 'var(--warning)' }}>
+                    {bars.length} / {barsPerSet} bars {complete ? '✓ Set complete' : '⚠ Partial set — Supervisor decides wait or run'}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <SectionLabel>Total Bed</SectionLabel>
+            <BedBar used={bedUsed} total={MACHINE_BED_MM} />
+          </div>
+          {offLength > 0 && (
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--warning)', marginTop: 8 }}>
+              {offLength} queued bar(s) of a different length excluded — a set cannot mix lengths.
+            </div>
+          )}
+          <GrindActions note="Confirm run & Mark Run Complete (all bars at once) require the grinding-batch endpoint." />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Surface Grinding (Steps 12, 20 — SG-DLT): machine-bed pairing ───────────────
+function SurfaceGrindingPanel({ step, queued, loading }: { step: ProductionStepRef; queued: any[]; loading?: boolean }) {
+  const sorted = [...queued].sort(sortQueue)
+  // Suggested pairing: try to pair the two highest-priority bars whose combined
+  // length fits the 3000mm bed; a 2750mm bar runs alone.
+  const suggestion = suggestPair(sorted, SURFACE_MACHINE.maxMm)
+
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <GrindHeader code={step.workstation_code} title={`Surface Grinding — Step ${step.step_number}`} cycle={step.cycle_type_name} />
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+        <QueuedColumn queued={queued} loading={loading} />
+        <div style={{ flex: 1, minWidth: 280 }}>
+          <SectionLabel>Machine — {SURFACE_MACHINE.code} ({SURFACE_MACHINE.unit}) · max {SURFACE_MACHINE.maxMm}mm</SectionLabel>
+          <MachineBatchBox machine={SURFACE_MACHINE} bars={suggestion} />
+          <GrindActions note="Assign / Confirm batch require the grinding-batch endpoint." />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Bevel Grinding (Step 22 — AG-ALP / AG-BTA / AG-GMM): four-machine board ──────
+function BevelGrindingPanel({ step, queued, loading }: { step: ProductionStepRef; queued: any[]; loading?: boolean }) {
+  const sorted = [...queued].sort(sortQueue)
+  // Greedily assign suggested bars across machines respecting length limits.
+  const used = new Set<number>()
+  const assignment = BEVEL_MACHINES.map((m) => {
+    const bars: any[] = []
+    let total = 0
+    for (const u of sorted) {
+      const id = u.uid_id ?? u.id
+      const len = barLen(u)
+      if (used.has(id) || len == null) continue
+      if (len > m.maxMm) continue
+      if (bars.length >= m.maxBars) break
+      if (total + len > m.maxMm) continue
+      bars.push(u)
+      total += len
+      used.add(id)
+    }
+    return { machine: m, bars }
+  })
+  const queuedRemaining = sorted.filter((u) => !used.has(u.uid_id ?? u.id)).length
+
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 16 }}>
+      <GrindHeader code="AG-ALP / AG-BTA / AG-GMM" title={`Bevel Grinding — Step ${step.step_number}`} cycle={step.cycle_type_name} />
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+        <QueuedColumn queued={queued} loading={loading} />
+        <div style={{ flex: 1, minWidth: 300 }}>
+          <SectionLabel>Machine Assignment Board</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {assignment.map(({ machine, bars }) => (
+              <div key={machine.code}>
+                <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)', marginBottom: 4 }}>
+                  {machine.code} ({machine.unit}) · max {machine.maxMm}mm
+                </div>
+                <MachineBatchBox machine={machine} bars={bars} />
+              </div>
+            ))}
+          </div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, color: 'var(--ink-3)', marginTop: 8 }}>
+            Queued: {queuedRemaining} bar(s) waiting. 2750mm bars route to AG-GMM only.
+          </div>
+          <GrindActions note="Confirm all & Mark done (whole batch) require the grinding-batch endpoint." />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Suggest a fitting set of bars for one machine (length-limited, by priority).
+function suggestPair(sorted: any[], maxMm: number): any[] {
+  const bars: any[] = []
+  let total = 0
+  for (const u of sorted) {
+    const len = barLen(u)
+    if (len == null || len > maxMm) continue
+    if (bars.length >= 2) break
+    if (total + len > maxMm) continue
+    bars.push(u)
+    total += len
+  }
+  return bars
+}
+
+function MachineBatchBox({ machine, bars }: { machine: GrindMachine; bars: any[] }) {
+  const total = bars.reduce((acc, u) => acc + (barLen(u) ?? 0), 0)
+  return (
+    <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 10, background: 'var(--surface-2)' }}>
+      <BedBar used={total} total={machine.maxMm} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+        {bars.length === 0 ? (
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-3)' }}>— no suggested bars —</div>
+        ) : (
+          bars.map((u) => (
+            <div key={u.uid_id ?? u.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <PriorityDot priority={u.priority} />
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, fontWeight: 700, color: 'var(--accent)' }}>
+                {u.uid_code ?? u.code}
+              </span>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, color: 'var(--ink-2)' }}>
+                ({barLen(u)}mm)
+              </span>
+              <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginLeft: 'auto' }}>
+                suggested
+              </span>
+            </div>
+          ))
+        )}
+      </div>
+      {bars.length > 1 && (
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 6 }}>
+          Combined {total}mm ≤ {machine.maxMm}mm ✓
+        </div>
+      )}
+    </div>
   )
 }
 

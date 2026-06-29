@@ -179,28 +179,58 @@ function CapCell({ step }: { step: CycleStep }) {
   if (bunch) {
     const barsPerSet = 5
     return (
-      <CapPopover label="5 bars / set · Length-based" open={open} setOpen={setOpen}>
+      <CapPopover label="5 bars / set · Length-based" icon={<Ruler size={11} />} open={open} setOpen={setOpen}>
         <CapRow k="Bars per set" v={`${barsPerSet}`} editable />
-        <CapRow k="Machine bed" v="3000 mm (fixed)" />
+        <CapRow k="Machine bed" v="3000 mm (fixed)" muted />
         <div style={miniHr} />
-        <CapRow k="1500 mm" v={`2 sets × ${barsPerSet} = ${2 * barsPerSet} bars / run`} />
-        <CapRow k="1424 mm" v={`2 sets × ${barsPerSet} = ${2 * barsPerSet} bars / run`} />
-        <CapRow k="2750 mm" v={`1 set × ${barsPerSet} = ${barsPerSet} bars / run`} />
+        <CapRow k="1500 mm bars" v={`2 sets × ${barsPerSet} = ${2 * barsPerSet} bars / run`} />
+        <CapRow k="1424 mm bars" v={`2 sets × ${barsPerSet} = ${2 * barsPerSet} bars / run`} />
+        <CapRow k="2750 mm bars" v={`1 set × ${barsPerSet} = ${barsPerSet} bars / run`} />
+        <ReadOnlyNote>
+          Admin can change bars-per-set — takes effect on the next batch. No write
+          endpoint in this build, so the value is shown read-only.
+        </ReadOnlyNote>
       </CapPopover>
     )
   }
 
   // Grinding (length-based) — governed by machine limits, no number to edit.
   if (grinding) {
+    const isSG = /^SG-DLT/i.test(ws)
+    const isGMM = /^AG-GMM/i.test(ws)
+    const isAlpBta = /^AG-(ALP|BTA)/i.test(ws)
     return (
       <CapPopover label="Length-based" icon={<Ruler size={11} />} open={open} setOpen={setOpen}>
         <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--ink-2)', lineHeight: 1.5 }}>
-          Capacity governed by machine physical limits (max length &amp; pairing
-          rules). No fixed slot count.
+          Length-based batch — governed by machine physical limits. No fixed slot
+          count to edit.
         </div>
         <div style={miniHr} />
         <CapRow k="Machine" v={ws} />
-        <CapRow k="Rule" v="Length-based — see grinding rules" />
+        {isSG && (
+          <>
+            <CapRow k="Max bed" v="3000 mm" muted />
+            <CapRow k="Rule" v="combined ≤ 3000 mm" />
+            <CapRow k="1500 / 1424 mm" v="2 bars per run" />
+            <CapRow k="2750 mm" v="1 bar per run" />
+          </>
+        )}
+        {isAlpBta && (
+          <>
+            <CapRow k="Max length" v="1500 mm" muted />
+            <CapRow k="Rule" v="1 bar at a time" />
+          </>
+        )}
+        {isGMM && (
+          <>
+            <CapRow k="Max length" v="3000 mm" muted />
+            <CapRow k="Rule" v="combined ≤ 3000 mm" />
+          </>
+        )}
+        <ReadOnlyNote>
+          Governed by machine limits in grinding configuration — no per-step number
+          to edit here.
+        </ReadOnlyNote>
       </CapPopover>
     )
   }
@@ -222,9 +252,13 @@ function CapCell({ step }: { step: CycleStep }) {
         <div style={miniHr} />
         <CapRow k="1424 mm" v={`${c1424} bars (auto)`} muted />
         <CapRow k="2750 mm" v={`${c2750} bars (auto)`} muted />
-        <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--ink-3)', marginTop: 8 }}>
-          Other sizes auto-calculated from the 1500 mm base — read-only.
+        <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--ink-3)', marginTop: 8 }}>
+          Formula: floor(base × 1500 / bar_length)
         </div>
+        <ReadOnlyNote>
+          Admin edits only the 1500 mm base; other sizes are auto-calculated and
+          read-only. No write endpoint in this build — base shown read-only.
+        </ReadOnlyNote>
       </CapPopover>
     )
   }
@@ -232,11 +266,34 @@ function CapCell({ step }: { step: CycleStep }) {
   // Fixed-capacity (most steps) — single number.
   return (
     <CapPopover label="1" open={open} setOpen={setOpen}>
-      <CapRow k="Capacity" v="1 at a time" editable />
+      <CapRow k="Capacity" v="1 bar at a time" editable />
       <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--ink-3)', marginTop: 8 }}>
         Fixed-capacity step. Set the number of bars processed simultaneously.
       </div>
+      <ReadOnlyNote>No capacity write endpoint in this build — shown read-only.</ReadOnlyNote>
     </CapPopover>
+  )
+}
+
+// Small reusable read-only / audit note used across CAP popovers.
+function ReadOnlyNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        paddingTop: 8,
+        borderTop: '1px dashed var(--line)',
+        display: 'flex',
+        gap: 6,
+        fontFamily: SANS,
+        fontSize: 10.5,
+        color: 'var(--ink-3)',
+        lineHeight: 1.45,
+      }}
+    >
+      <Lock size={11} style={{ flexShrink: 0, marginTop: 1 }} />
+      <span>{children}</span>
+    </div>
   )
 }
 
@@ -247,7 +304,7 @@ function StepTags({ step }: { step: CycleStep }) {
   if (isFurnaceWs(ws))
     tags.push(
       <span key="t" className="badge-orange" style={{ fontSize: 9.5 }}>
-        <Flame size={10} /> Tempering
+        <Flame size={10} /> Furnace
       </span>
     )
   if (isSplitStep(step))
@@ -614,7 +671,9 @@ export default function Config() {
                 <AlertTriangle size={14} style={{ color: 'var(--warning)', flexShrink: 0 }} />
                 Saving step changes creates a new version automatically. In-progress
                 UIDs keep the version they were created under; new UIDs adopt the
-                latest. Inline step edits and drag-reorder are read-only in this build.
+                latest. Inline step edits, drag-reorder and capacity edits are
+                read-only in this build (no write endpoint); capacity changes would be
+                versioned with the cycle and logged in the audit trail.
               </div>
             </div>
 
@@ -790,7 +849,7 @@ export default function Config() {
                 }}
               >
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <Flame size={12} style={{ color: 'var(--warning)' }} /> Tempering (furnace)
+                  <Flame size={12} style={{ color: 'var(--warning)' }} /> Furnace (HT70/80/90)
                 </span>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                   <Scissors size={12} style={{ color: '#d97a2b' }} /> Split / converting

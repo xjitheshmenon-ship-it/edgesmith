@@ -62,6 +62,43 @@ const ROLE_BEHAVIOUR: Record<RoleKey, string> = {
   shopfloor: 'Only the Shopfloor Display page. No login required (PIN or open access).',
 }
 
+/* ─── page-access matrix (from spec "WHO SEES WHAT" + updated additions) ──────
+   Per cell: 'full' = ✓ full access, 'view' = read-only / limited, '—' = no access. */
+type Access = 'full' | 'view' | 'none'
+type AccessRow = { page: string } & Record<RoleKey, Access>
+
+const ACCESS_MATRIX: AccessRow[] = [
+  { page: 'Raw Material Intake', admin: 'full', manager: 'full', supervisor: 'none', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Joining Operation', admin: 'full', manager: 'full', supervisor: 'none', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Contractor Dispatch', admin: 'full', manager: 'full', supervisor: 'none', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Receiving', admin: 'full', manager: 'full', supervisor: 'full', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'UID Creation', admin: 'full', manager: 'full', supervisor: 'full', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Production Floor', admin: 'full', manager: 'full', supervisor: 'full', operator: 'full', service: 'none', shopfloor: 'none' },
+  { page: 'Shopfloor Display', admin: 'none', manager: 'none', supervisor: 'none', operator: 'none', service: 'none', shopfloor: 'full' },
+  { page: 'Batch Management', admin: 'full', manager: 'full', supervisor: 'full', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'QC', admin: 'full', manager: 'full', supervisor: 'full', operator: 'view', service: 'none', shopfloor: 'none' },
+  { page: 'Dashboard', admin: 'full', manager: 'full', supervisor: 'full', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'MO Linking', admin: 'full', manager: 'full', supervisor: 'none', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Reports', admin: 'full', manager: 'full', supervisor: 'view', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Service Call Lookup', admin: 'full', manager: 'full', supervisor: 'full', operator: 'none', service: 'full', shopfloor: 'none' },
+  { page: 'Cycle Builder', admin: 'full', manager: 'view', supervisor: 'none', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Master Lists', admin: 'full', manager: 'view', supervisor: 'none', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Tempering Parameters', admin: 'full', manager: 'none', supervisor: 'none', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Users and Roles', admin: 'full', manager: 'none', supervisor: 'none', operator: 'none', service: 'none', shopfloor: 'none' },
+  { page: 'Shift Management', admin: 'full', manager: 'full', supervisor: 'view', operator: 'view', service: 'none', shopfloor: 'none' },
+  { page: 'Job Assignment', admin: 'full', manager: 'full', supervisor: 'full', operator: 'view', service: 'none', shopfloor: 'none' },
+  { page: 'Employee Profiles + Badges', admin: 'full', manager: 'view', supervisor: 'view', operator: 'view', service: 'none', shopfloor: 'none' },
+]
+
+/* Notes that don't fit a single ✓/view/— cell, surfaced beneath the matrix. */
+const ACCESS_NOTES: { page: string; note: string }[] = [
+  { page: 'QC', note: 'Operator: log only (entries, no sign-off).' },
+  { page: 'Reports', note: 'Supervisor: limited report set.' },
+  { page: 'Shift Management', note: 'Supervisor: view + handover.' },
+  { page: 'Job Assignment', note: 'Operator: view own queue only.' },
+  { page: 'Employee Profiles + Badges', note: 'Operator: view own profile only.' },
+]
+
 /* ─── shared cell styles ───────────────────────────────────────────────────── */
 const TH: React.CSSProperties = {
   textAlign: 'left', padding: '10px 16px', fontFamily: MONO, fontSize: 10, fontWeight: 600,
@@ -81,6 +118,20 @@ const pill: React.CSSProperties = {
 function RoleBadge({ role }: { role: string }) {
   const r = ROLE_MAP[role] ?? { label: role || '—', color: C.ink2 }
   return <span style={{ ...pill, background: `${r.color}1f`, color: r.color }}>{r.label}</span>
+}
+
+function AccessCell({ level }: { level: Access }) {
+  if (level === 'full') {
+    return <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: C.greenText }}>✓</span>
+  }
+  if (level === 'view') {
+    return (
+      <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#2d6fb5' }}>
+        View
+      </span>
+    )
+  }
+  return <span style={{ fontFamily: MONO, fontSize: 13, color: C.ink3 }}>—</span>
 }
 
 function StatusBadge({ active }: { active: boolean }) {
@@ -289,6 +340,7 @@ function UserDrawer({
                 )
               })}
             </div>
+            {isEdit && <FieldNote text="Accounts are archived by setting them inactive — they are never deleted." />}
           </div>
 
           {error && (
@@ -552,6 +604,52 @@ export default function Users() {
             </div>
           ))}
         </div>
+
+        {/* page-access matrix */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginTop: 22, marginBottom: 12 }}>
+          <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase' }}>
+            Page Access Matrix
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <LegendItem swatch={<span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 12, color: C.greenText }}>✓</span>} label="Full" />
+            <LegendItem swatch={<span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 600, color: '#2d6fb5', textTransform: 'uppercase' }}>View</span>} label="View / limited" />
+            <LegendItem swatch={<span style={{ fontFamily: MONO, fontSize: 12, color: C.ink3 }}>—</span>} label="No access" />
+          </div>
+        </div>
+        <div style={{ overflowX: 'auto', border: `1px solid ${C.line}`, borderRadius: 10 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
+            <thead>
+              <tr>
+                <th style={{ ...TH, position: 'sticky', left: 0, background: C.surface, zIndex: 1 }}>Page</th>
+                {ROLES.map((r) => (
+                  <th key={r.key} style={{ ...TH, textAlign: 'center' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <span style={{ width: 7, height: 7, borderRadius: '50%', background: r.color }} />
+                      {r.label}
+                    </span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {ACCESS_MATRIX.map((row) => (
+                <tr key={row.page} className="row-hover">
+                  <td style={{ ...TD, fontFamily: SANS, fontWeight: 500, color: C.ink, position: 'sticky', left: 0, background: C.surface, whiteSpace: 'nowrap' }}>{row.page}</td>
+                  {ROLES.map((r) => (
+                    <td key={r.key} style={{ ...TD, textAlign: 'center' }}><AccessCell level={row[r.key]} /></td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {ACCESS_NOTES.map((n) => (
+            <div key={n.page} style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.03em', color: C.ink3, lineHeight: 1.5 }}>
+              <span style={{ color: C.ink2, fontWeight: 600 }}>{n.page}</span> — {n.note}
+            </div>
+          ))}
+        </div>
       </div>
 
       {drawer.open && (
@@ -580,6 +678,15 @@ function StatTile({ value, label, icon, color }: { value: number; label: string;
         {icon}
       </div>
     </div>
+  )
+}
+
+function LegendItem({ swatch, label }: { swatch: React.ReactNode; label: string }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 14 }}>{swatch}</span>
+      <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.06em', color: C.ink3, textTransform: 'uppercase' }}>{label}</span>
+    </span>
   )
 }
 

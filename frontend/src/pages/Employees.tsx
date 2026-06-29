@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { userApi, factoryApi } from '../api/client'
+import { useAuth } from '../hooks/useAuth'
 import type { FactoryLocation, Workstation } from '../types'
 import {
   Users as UsersIcon,
@@ -148,16 +149,20 @@ const TD: React.CSSProperties = {
 
 /* ─── employee detail panel ─────────────────────────────────────────────────── */
 function DetailPanel({
-  emp, locations, onToggleActive, pending,
+  emp, locations, onToggleActive, pending, canEdit, isSelf,
 }: {
   emp: Employee
   locations: FactoryLocation[]
   onToggleActive: (e: Employee) => void
   pending: boolean
+  canEdit: boolean
+  isSelf: boolean
 }) {
   const locName = emp.primary_location_id
     ? locations.find((l) => l.id === emp.primary_location_id)?.name ?? `Location ${emp.primary_location_id}`
     : 'Both / unassigned'
+
+  const isFurnaceRole = emp.role === 'supervisor' || emp.role === 'admin'
 
   return (
     <div className="card" style={{ padding: '20px 22px', position: 'sticky', top: 20 }}>
@@ -168,9 +173,10 @@ function DetailPanel({
           <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 22, letterSpacing: '-0.03em', color: C.ink, lineHeight: 1.1 }}>
             {emp.full_name || emp.username}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5, flexWrap: 'wrap' }}>
             <span style={{ fontFamily: MONO, fontSize: 11, color: C.ink2, letterSpacing: '0.04em' }}>{emp.username}</span>
             <RolePill role={emp.role} />
+            {isSelf && <span style={{ ...pill, background: 'var(--accent-dim)', color: C.accent, textTransform: 'none', letterSpacing: '0.02em' }}>Your profile</span>}
           </div>
         </div>
       </div>
@@ -183,26 +189,51 @@ function DetailPanel({
         <Field label="Location" value={locName} icon={<MapPin size={12} style={{ color: C.ink3 }} />} />
         <div>
           <div className="label" style={{ marginBottom: 6 }}>Status</div>
-          <button
-            onClick={() => onToggleActive(emp)}
-            disabled={pending}
-            className={emp.is_active ? 'btn-secondary' : 'btn-primary'}
-            style={{ height: 30, fontSize: 12 }}
-          >
-            {emp.is_active ? <CheckCircle size={13} /> : <XCircle size={13} />}
-            {pending ? 'Saving…' : emp.is_active ? 'Active — Deactivate' : 'Inactive — Activate'}
-          </button>
+          {canEdit ? (
+            <button
+              onClick={() => onToggleActive(emp)}
+              disabled={pending}
+              className={emp.is_active ? 'btn-secondary' : 'btn-primary'}
+              style={{ height: 30, fontSize: 12 }}
+            >
+              {emp.is_active ? <CheckCircle size={13} /> : <XCircle size={13} />}
+              {pending ? 'Saving…' : emp.is_active ? 'Active — Deactivate' : 'Inactive — Activate'}
+            </button>
+          ) : (
+            emp.is_active
+              ? <span style={{ ...pill, background: 'rgba(34,160,107,.14)', color: C.greenText }}><CheckCircle size={11} />Active</span>
+              : <span style={{ ...pill, background: C.surface3, color: C.ink3 }}><XCircle size={11} />Inactive</span>
+          )}
+        </div>
+      </div>
+
+      {/* Shift & assignment context (spec: shift eligibility on profile) */}
+      <SectionLabel icon={<Clock size={13} style={{ color: C.ink3 }} />}>Shift &amp; Assignment Context</SectionLabel>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 22 }}>
+        <Field label="Shift Eligibility" value="All shifts (pending eligibility endpoint)" />
+        <Field
+          label="Furnace (HT70/80/90)"
+          value={isFurnaceRole ? 'Eligible — supervisor role' : 'Not eligible — supervisor role required'}
+          icon={isFurnaceRole
+            ? <CheckCircle size={12} style={{ color: C.greenText }} />
+            : <ShieldX size={12} style={{ color: C.redText }} />}
+        />
+        <div style={{ gridColumn: '1 / -1' }}>
+          <div className="label" style={{ marginBottom: 4 }}>Current Assignment</div>
+          <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink3 }}>
+            Live workstation assignment is shown on the Shift Management &amp; Job Assignment pages; it is not duplicated here.
+          </div>
         </div>
       </div>
 
       {/* Skill badges */}
       <SectionLabel
         icon={<Award size={13} style={{ color: C.ink3 }} />}
-        right={
+        right={canEdit ? (
           <button className="btn-secondary" style={{ height: 28, fontSize: 11.5 }} disabled title="Badge data source not yet available">
             <Plus size={13} /> Assign Badge
           </button>
-        }
+        ) : undefined}
       >
         Skill Badges
       </SectionLabel>
@@ -258,6 +289,13 @@ function Field({ label, value, mono, icon }: { label: string; value: string; mon
 /* ─── page ─────────────────────────────────────────────────────────────────── */
 export default function Employees() {
   const qc = useQueryClient()
+  const { user } = useAuth()
+
+  // Access (spec line 1601 UPDATED): Admin = full edit; Manager/Supervisor = view
+  // roster; Operator = view own profile only. Service/Shopfloor have no access.
+  const role = user?.role ?? ''
+  const canEdit = role === 'admin'
+  const operatorSelfOnly = role === 'operator'
 
   const [search, setSearch] = useState('')
   const [roleFilter, setRoleFilter] = useState<string>('all')
@@ -285,9 +323,15 @@ export default function Employees() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['employees'] }),
   })
 
+  // Operators may only ever see their own profile (spec line 1601).
+  const visibleEmployees = useMemo(
+    () => (operatorSelfOnly ? employees.filter((e) => e.id === user?.id) : employees),
+    [employees, operatorSelfOnly, user?.id]
+  )
+
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase()
-    return employees
+    return visibleEmployees
       .filter((e) => roleFilter === 'all' || e.role === roleFilter)
       .filter((e) => {
         if (locFilter === 'all') return true
@@ -296,7 +340,7 @@ export default function Employees() {
       })
       .filter((e) => !term || e.full_name.toLowerCase().includes(term) || e.username.toLowerCase().includes(term))
       .sort((a, b) => (a.full_name || a.username).localeCompare(b.full_name || b.username))
-  }, [employees, roleFilter, locFilter, search])
+  }, [visibleEmployees, roleFilter, locFilter, search])
 
   const selected = useMemo(
     () => filtered.find((e) => e.id === selectedId) ?? filtered[0] ?? null,
@@ -314,12 +358,20 @@ export default function Employees() {
             Employee Profiles &amp; Badges
           </div>
           <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, marginTop: 3 }}>
-            {employees.length} employee{employees.length === 1 ? '' : 's'} · skill-badge assignments control workstation eligibility
+            {operatorSelfOnly
+              ? 'Your employee profile and skill badges'
+              : `${visibleEmployees.length} employee${visibleEmployees.length === 1 ? '' : 's'} · skill-badge assignments control workstation eligibility`}
           </div>
         </div>
-        <button className="btn-primary" disabled title="Add via Users & Roles — employee creation handled there">
-          <Plus size={15} /> Add Employee
-        </button>
+        {canEdit ? (
+          <button className="btn-primary" disabled title="Add via Users & Roles — employee creation handled there">
+            <Plus size={15} /> Add Employee
+          </button>
+        ) : (
+          <span style={{ ...pill, background: C.surface3, color: C.ink3, height: 28, padding: '0 12px' }}>
+            <ShieldCheck size={12} />{operatorSelfOnly ? 'View own profile' : 'View only'}
+          </span>
+        )}
       </div>
 
       {/* ── Badge expiry summary strip ─────────────────────────────────────── */}
@@ -347,9 +399,14 @@ export default function Employees() {
       )}
 
       {/* ── Two-panel layout: list (left) + detail (right) ─────────────────── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(420px, 1.5fr) minmax(360px, 1fr)', gap: 18, alignItems: 'start' }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: operatorSelfOnly ? 'minmax(360px, 720px)' : 'minmax(420px, 1.5fr) minmax(360px, 1fr)',
+        gap: 18, alignItems: 'start',
+      }}>
 
-        {/* Left: employee list */}
+        {/* Left: employee list — hidden for operators (own profile only) */}
+        {!operatorSelfOnly && (
         <div className="card" style={{ padding: '18px 20px' }}>
           <SectionLabel icon={<UsersIcon size={13} style={{ color: C.ink3 }} />}>Employee Roster</SectionLabel>
 
@@ -436,6 +493,7 @@ export default function Employees() {
             Badge-status column shows “No data” until a skills/badge endpoint is exposed.
           </div>
         </div>
+        )}
 
         {/* Right: detail panel */}
         {selected ? (
@@ -444,10 +502,14 @@ export default function Employees() {
             locations={locations}
             onToggleActive={(e) => toggleActive.mutate(e)}
             pending={toggleActive.isPending}
+            canEdit={canEdit}
+            isSelf={selected.id === user?.id}
           />
         ) : (
           <div className="card" style={{ padding: 32, textAlign: 'center', fontFamily: MONO, fontSize: 12, color: C.ink3 }}>
-            Select an employee to view their profile and badges.
+            {operatorSelfOnly
+              ? 'Your profile record could not be found in the roster.'
+              : 'Select an employee to view their profile and badges.'}
           </div>
         )}
       </div>

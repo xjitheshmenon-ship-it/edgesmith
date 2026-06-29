@@ -289,7 +289,14 @@ export default function Intake() {
 
 // ── Intake form ───────────────────────────────────────────────────────────────
 
+interface Supplier {
+  id: number
+  name: string
+  contact_info?: string | null
+}
+
 function IntakeForm({ onDone }: { onDone: () => void }) {
+  const qc = useQueryClient()
   const [form, setForm] = useState({
     material_type: 'Alloy Steel',
     supplier_name: '',
@@ -301,6 +308,27 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
     date_received: new Date().toISOString().slice(0, 10),
     po_reference: '',
     notes: '',
+  })
+
+  // Admin-managed supplier list (Faridabad contractors endpoint).
+  const suppliersQ = useQuery({
+    queryKey: ['far-contractors'],
+    queryFn: () => faridabadApi.contractors().then((r) => r.data as Supplier[]),
+  })
+  const supplierList = suppliersQ.data || []
+
+  // "Add new supplier" inline flow.
+  const [addingSupplier, setAddingSupplier] = useState(false)
+  const [newSupplier, setNewSupplier] = useState('')
+  const addSupplierMut = useMutation({
+    mutationFn: () => faridabadApi.createContractor({ name: newSupplier.trim() }),
+    onSuccess: async () => {
+      const name = newSupplier.trim()
+      await qc.invalidateQueries({ queryKey: ['far-contractors'] })
+      setForm((f) => ({ ...f, supplier_name: name }))
+      setNewSupplier('')
+      setAddingSupplier(false)
+    },
   })
 
   const set = (key: string, value: string) => setForm((f) => ({ ...f, [key]: value }))
@@ -350,15 +378,67 @@ function IntakeForm({ onDone }: { onDone: () => void }) {
           </select>
         </div>
 
-        {/* Supplier — free text (no dedicated supplier endpoint available) */}
+        {/* Supplier — dropdown from Admin-managed supplier list, with option to add new */}
         <div>
           <label style={labelStyle}>Supplier name *</label>
-          <input
-            className="input"
-            value={form.supplier_name}
-            onChange={(e) => set('supplier_name', e.target.value)}
-            placeholder="Supplier"
-          />
+          {addingSupplier ? (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                className="input"
+                value={newSupplier}
+                onChange={(e) => setNewSupplier(e.target.value)}
+                placeholder="New supplier name"
+                autoFocus
+              />
+              <button
+                className="btn-primary"
+                style={{ flexShrink: 0, padding: '0 10px' }}
+                disabled={addSupplierMut.isPending || !newSupplier.trim()}
+                onClick={() => addSupplierMut.mutate()}
+              >
+                {addSupplierMut.isPending ? '…' : 'Add'}
+              </button>
+              <button
+                className="btn-secondary"
+                style={{ flexShrink: 0, padding: '0 10px' }}
+                onClick={() => {
+                  setAddingSupplier(false)
+                  setNewSupplier('')
+                }}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ) : (
+            <select
+              className="input"
+              value={form.supplier_name}
+              onChange={(e) => {
+                if (e.target.value === '__add__') {
+                  setAddingSupplier(true)
+                  return
+                }
+                set('supplier_name', e.target.value)
+              }}
+            >
+              <option value="">
+                {suppliersQ.isLoading ? 'Loading suppliers…' : 'Select supplier…'}
+              </option>
+              {supplierList.map((s) => (
+                <option key={s.id} value={s.name}>{s.name}</option>
+              ))}
+              {/* Keep a previously-typed value selectable even if list lacks it. */}
+              {form.supplier_name && !supplierList.some((s) => s.name === form.supplier_name) && (
+                <option value={form.supplier_name}>{form.supplier_name}</option>
+              )}
+              <option value="__add__">+ Add new supplier…</option>
+            </select>
+          )}
+          {addSupplierMut.isError && (
+            <div style={{ color: 'var(--error)', fontFamily: SANS, fontSize: 11, marginTop: 4 }}>
+              Could not add supplier
+            </div>
+          )}
         </div>
 
         {/* Heat number */}

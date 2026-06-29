@@ -18,6 +18,14 @@ import {
   Users,
   Cpu,
   AlertTriangle,
+  Flame,
+  PauseCircle,
+  Wrench,
+  ClipboardCheck,
+  History,
+  CalendarRange,
+  Activity,
+  Send,
 } from 'lucide-react'
 import { format, addDays, parseISO } from 'date-fns'
 
@@ -146,16 +154,23 @@ function isConfirmed(row: AssignmentRow): boolean {
 }
 
 /* ─────────────────────────────────────────────────────────────────────────── */
+type Tab = 'schedule' | 'active' | 'history'
+
 export default function Shifts() {
   const { user } = useAuth()
   const qc = useQueryClient()
   const role = user?.role ?? ''
-  const canManage = role === 'admin' || role === 'manager' || role === 'supervisor'
+  // Updated access table: Admin/Manager fully manage the schedule (add/confirm/remove
+  // assignments). Supervisor = view + handover. Operator = view only.
+  const canManageSchedule = role === 'admin' || role === 'manager'
+  // Handover is the supervisor's write power; Admin/Manager may also act on it.
+  const canHandover = role === 'admin' || role === 'manager' || role === 'supervisor'
 
   const today = format(new Date(), 'yyyy-MM-dd')
   const [date, setDate] = useState<string>(today)
   const [period, setPeriod] = useState<ShiftPeriod>(currentPeriod(new Date()))
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [tab, setTab] = useState<Tab>('active')
 
   const periodDef = PERIODS.find((p) => p.key === period)!
   const remaining = minutesRemaining(date, periodDef)
@@ -254,14 +269,44 @@ export default function Shifts() {
             Operator-to-workstation roster for the selected shift · {format(parseISO(date), 'EEEE, d MMM yyyy')}
           </div>
         </div>
-        {canManage && (
+        {canManageSchedule && tab === 'schedule' && (
           <button className="btn-primary" onClick={() => setDrawerOpen(true)}>
             <Plus size={15} /> Add assignment
           </button>
         )}
       </div>
 
-      {/* ── Date + period selector ──────────────────────────────────────── */}
+      {/* ── Tabs: Schedule / Active Shift / Shift History ─────────────────── */}
+      <div style={{ display: 'flex', gap: 4, borderBottom: `1px solid ${C.line}`, marginBottom: 18 }}>
+        {([
+          { key: 'schedule', label: 'Schedule', icon: CalendarRange },
+          { key: 'active', label: 'Active Shift', icon: Activity },
+          { key: 'history', label: 'Shift History', icon: History },
+        ] as { key: Tab; label: string; icon: typeof Activity }[]).map((t) => {
+          const on = t.key === tab
+          const Icon = t.icon
+          return (
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              style={{
+                border: 'none', background: 'transparent', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 7, padding: '10px 14px',
+                fontFamily: MONO, fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase',
+                color: on ? C.ink : C.ink3,
+                borderBottom: on ? `2px solid ${C.accent}` : '2px solid transparent',
+                marginBottom: -1,
+              }}
+            >
+              <Icon size={14} style={{ color: on ? C.accent : C.ink3 }} />
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {/* ── Date + period selector (Schedule & Active tabs) ─────────────── */}
+      {tab !== 'history' && (
       <div className="card" style={{ padding: '16px 18px', marginBottom: 18, display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'center', justifyContent: 'space-between' }}>
         {/* Date stepper */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -311,8 +356,10 @@ export default function Shifts() {
           })}
         </div>
       </div>
+      )}
 
-      {/* ── Shift status strip ──────────────────────────────────────────── */}
+      {/* ── Shift status strip (Active tab) ─────────────────────────────── */}
+      {tab === 'active' && (
       <div className="card" style={{ padding: '14px 18px', marginBottom: 18, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 18 }}>
         <span style={{ ...pill, background: isLive ? 'rgba(34,160,107,.14)' : C.surface3, color: isLive ? C.greenText : C.ink2 }}>
           {isLive && <span style={{ width: 7, height: 7, borderRadius: '50%', background: C.green }} />}
@@ -330,11 +377,14 @@ export default function Shifts() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontFamily: MONO, fontSize: 12, color: remaining <= 30 ? C.orange : C.ink2, letterSpacing: '0.04em' }}>
             <Clock size={14} />
             {hhmm(remaining)} remaining
-            {remaining <= 30 && <span style={{ ...pill, background: 'rgba(217,122,43,.16)', color: C.orange }}>Handover soon</span>}
+            {remaining <= 30 && <span style={{ ...pill, background: 'rgba(217,122,43,.16)', color: C.orange }}>Handover window open</span>}
           </div>
         )}
       </div>
+      )}
 
+      {/* ── SCHEDULE TAB ─────────────────────────────────────────────────── */}
+      {tab === 'schedule' && (<>
       {/* ── Stat tiles ──────────────────────────────────────────────────── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
         <StatTile value={stats.total} label="Assignments" />
@@ -370,7 +420,7 @@ export default function Shifts() {
               No assignments for this shift yet.
             </div>
             <div style={{ fontFamily: MONO, fontSize: 11, color: C.ink3 }}>
-              {canManage ? 'Use “Add assignment” to build the roster.' : 'The roster has not been published.'}
+              {canManageSchedule ? 'Use “Add assignment” to build the roster.' : 'The roster has not been published.'}
             </div>
           </div>
         ) : (
@@ -381,7 +431,7 @@ export default function Shifts() {
                   <th style={TH}>Workstation</th>
                   <th style={TH}>Operator</th>
                   <th style={TH}>Status</th>
-                  {canManage && <th style={{ ...TH, textAlign: 'right' }}>Actions</th>}
+                  {canManageSchedule && <th style={{ ...TH, textAlign: 'right' }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -415,7 +465,7 @@ export default function Shifts() {
                         <span style={{ ...pill, background: 'rgba(217,122,43,.16)', color: C.orange }}>Pending</span>
                       )}
                     </td>
-                    {canManage && (
+                    {canManageSchedule && (
                       <td style={{ ...TD, textAlign: 'right', whiteSpace: 'nowrap' }}>
                         {!r.confirmed && r.id != null && (
                           <button
@@ -448,56 +498,29 @@ export default function Shifts() {
         )}
       </div>
 
-      {/* ── Queue view for the shift (best-effort) ──────────────────────── */}
-      {Array.isArray(queue) && queue.length > 0 && (
-        <div className="card" style={{ overflow: 'hidden' }}>
-          <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Cpu size={14} style={{ color: C.ink3 }} />
-            <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase' }}>
-              Workstation Queue — This Shift
-            </span>
-          </div>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
-              <thead>
-                <tr>
-                  <th style={TH}>Workstation</th>
-                  <th style={TH}>Operator(s)</th>
-                  <th style={{ ...TH, textAlign: 'right' }}>UIDs in queue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(queue as any[]).map((q: any, i: number) => {
-                  const w = pickWorkstation(q, workstations)
-                  const count = q?.uid_count ?? q?.queued ?? (Array.isArray(q?.uids) ? q.uids.length : 0)
-                  const ops: string[] = Array.isArray(q?.operators)
-                    ? q.operators.map((o: any) => o?.full_name ?? o?.name ?? o).filter(Boolean)
-                    : q?.operator_name
-                    ? [q.operator_name]
-                    : []
-                  return (
-                    <tr key={i} className="row-hover">
-                      <td style={TD}>
-                        <span style={{ fontFamily: MONO, fontWeight: 600, color: C.accent }}>{w?.code ?? '—'}</span>
-                        {w?.name && <span style={{ color: C.ink2, marginLeft: 8 }}>{w.name}</span>}
-                      </td>
-                      <td style={{ ...TD, color: C.ink2 }}>{ops.length ? ops.join(', ') : '—'}</td>
-                      <td style={{ ...TD, textAlign: 'right', fontFamily: ARCHIVO, fontWeight: 700, fontSize: 15, color: count > 0 ? C.ink : C.ink3 }}>
-                        {count}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      {/* ── Footer note on Schedule spec gaps ───────────────────────────── */}
+      <div style={{ marginTop: 22, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.06em', lineHeight: 1.6 }}>
+        Calendar view, copy-last-week auto-fill and the draft/publish workflow require dedicated schedule endpoints (not yet available).
+      </div>
+      </>)}
+
+      {/* ── ACTIVE SHIFT TAB ─────────────────────────────────────────────── */}
+      {tab === 'active' && (
+        <ActiveShiftTab
+          rows={rows}
+          queue={queue}
+          workstations={workstations}
+          isLive={isLive}
+          remaining={remaining}
+          shiftLabel={shiftLabel}
+          periodLabel={periodDef.label}
+          supervisorName={supervisor?.name ?? null}
+          canHandover={canHandover}
+        />
       )}
 
-      {/* ── Footer note on spec gaps ────────────────────────────────────── */}
-      <div style={{ marginTop: 22, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.06em', lineHeight: 1.6 }}>
-        Schedule calendar, draft/publish workflow and the supervisor handover panel require dedicated endpoints (not yet available).
-      </div>
+      {/* ── SHIFT HISTORY TAB ────────────────────────────────────────────── */}
+      {tab === 'history' && <ShiftHistoryTab />}
 
       {/* ── Add-assignment drawer ───────────────────────────────────────── */}
       {drawerOpen && (
@@ -514,6 +537,371 @@ export default function Shifts() {
           onSubmit={(payload) => createMut.mutate(payload)}
         />
       )}
+    </div>
+  )
+}
+
+/* ── shared row shape produced by the main component ─────────────────────────── */
+interface RosterRow {
+  u: { name: string; sub: string } | null
+  w: { code: string; name: string } | null
+  confirmed: boolean
+  id: number | null
+}
+
+/* ── Active Shift tab: status, workstation assignment, handover panel ────────── */
+function ActiveShiftTab({
+  rows,
+  queue,
+  workstations,
+  isLive,
+  remaining,
+  shiftLabel,
+  periodLabel,
+  supervisorName,
+  canHandover,
+}: {
+  rows: RosterRow[]
+  queue: unknown
+  workstations: Workstation[]
+  isLive: boolean
+  remaining: number | null
+  shiftLabel: string
+  periodLabel: string
+  supervisorName: string | null
+  canHandover: boolean
+}) {
+  // Handover window opens within 30 minutes of shift end (spec: Page 19).
+  const handoverOpen = isLive && remaining != null && remaining <= 30
+
+  // Build the per-workstation status table. Prefer live queue rows; otherwise
+  // derive from the roster so the table is never empty when a roster exists.
+  const queueRows = Array.isArray(queue) ? (queue as any[]) : []
+  const wsTable = useMemo(() => {
+    if (queueRows.length > 0) {
+      return queueRows.map((q: any) => {
+        const w = pickWorkstation(q, workstations)
+        const count = q?.uid_count ?? q?.queued ?? (Array.isArray(q?.uids) ? q.uids.length : 0)
+        const ops: string[] = Array.isArray(q?.operators)
+          ? q.operators.map((o: any) => o?.full_name ?? o?.name ?? o).filter(Boolean)
+          : q?.operator_name
+          ? [q.operator_name]
+          : []
+        const status = (q?.status as string) ?? (count > 0 ? 'running' : 'idle')
+        return { code: w?.code ?? '—', name: w?.name ?? '', ops, count, status }
+      })
+    }
+    // Roster-derived fallback: group operators by workstation.
+    const byWs = new Map<string, { name: string; ops: string[] }>()
+    rows.forEach((r) => {
+      if (!r.w) return
+      const cur = byWs.get(r.w.code) ?? { name: r.w.name, ops: [] }
+      if (r.u) cur.ops.push(r.u.name)
+      byWs.set(r.w.code, cur)
+    })
+    return Array.from(byWs.entries()).map(([code, v]) => ({
+      code, name: v.name, ops: v.ops, count: 0, status: 'idle' as string,
+    }))
+  }, [queueRows, rows, workstations])
+
+  return (
+    <>
+      {/* Handover countdown banner */}
+      {handoverOpen && (
+        <div className="card" style={{ padding: '14px 18px', marginBottom: 18, display: 'flex', alignItems: 'center', gap: 12, border: `1px solid ${C.orange}`, background: 'rgba(217,122,43,.06)' }}>
+          <Clock size={18} style={{ color: C.orange }} />
+          <div>
+            <div style={{ fontFamily: ARCHIVO, fontWeight: 700, fontSize: 15, color: C.ink }}>
+              Handover window open — {remaining} min to shift end
+            </div>
+            <div style={{ fontFamily: SANS, fontSize: 12, color: C.ink2, marginTop: 2 }}>
+              The outgoing supervisor should complete the handover before the next shift takes over.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Workstation assignment for current shift */}
+      <div className="card" style={{ overflow: 'hidden', marginBottom: 20 }}>
+        <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Cpu size={14} style={{ color: C.ink3 }} />
+          <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase' }}>
+            Workstation Assignment — Current Shift
+          </span>
+        </div>
+        {wsTable.length === 0 ? (
+          <div style={{ padding: '32px 18px', textAlign: 'center', fontFamily: SANS, fontSize: 13, color: C.ink2 }}>
+            No active workstations assigned for this shift.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 620 }}>
+              <thead>
+                <tr>
+                  <th style={TH}>Workstation</th>
+                  <th style={TH}>Assigned operator(s)</th>
+                  <th style={TH}>Job status</th>
+                  <th style={{ ...TH, textAlign: 'right' }}>UIDs processing</th>
+                </tr>
+              </thead>
+              <tbody>
+                {wsTable.map((q, i) => (
+                  <tr key={i} className="row-hover">
+                    <td style={TD}>
+                      <span style={{ fontFamily: MONO, fontWeight: 600, color: C.accent }}>{q.code}</span>
+                      {q.name && <span style={{ color: C.ink2, marginLeft: 8 }}>{q.name}</span>}
+                    </td>
+                    <td style={{ ...TD, color: C.ink2 }}>{q.ops.length ? q.ops.join(', ') : '—'}</td>
+                    <td style={TD}><JobStatusPill status={q.status} /></td>
+                    <td style={{ ...TD, textAlign: 'right', fontFamily: ARCHIVO, fontWeight: 700, fontSize: 15, color: q.count > 0 ? C.ink : C.ink3 }}>
+                      {q.count}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div style={{ padding: '10px 18px', borderTop: `1px solid ${C.line}`, fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
+          Reassigning operators within the active shift requires a dedicated endpoint (not yet available).
+        </div>
+      </div>
+
+      {/* Shift handover panel */}
+      <HandoverPanel
+        wsTable={wsTable}
+        shiftLabel={shiftLabel}
+        periodLabel={periodLabel}
+        outgoing={supervisorName}
+        canHandover={canHandover}
+        handoverOpen={handoverOpen}
+      />
+    </>
+  )
+}
+
+function JobStatusPill({ status }: { status: string }) {
+  const s = status.toLowerCase()
+  if (s === 'running' || s === 'active')
+    return <span style={{ ...pill, background: 'rgba(34,160,107,.14)', color: C.greenText }}>Running</span>
+  if (s === 'on hold' || s === 'on_hold' || s === 'hold')
+    return <span style={{ ...pill, background: 'rgba(229,72,77,.12)', color: C.redText }}>On hold</span>
+  return <span style={{ ...pill, background: C.surface3, color: C.ink2 }}>Idle</span>
+}
+
+/* ── Shift handover panel ────────────────────────────────────────────────────
+   Structured per spec (Page 19 / Shifts §handover). No submit/acknowledge
+   endpoint exists yet, so submission is captured in local state and clearly
+   marked as not yet persisted. */
+function HandoverPanel({
+  wsTable,
+  shiftLabel,
+  periodLabel,
+  outgoing,
+  canHandover,
+  handoverOpen,
+}: {
+  wsTable: { code: string; name: string; ops: string[]; count: number; status: string }[]
+  shiftLabel: string
+  periodLabel: string
+  outgoing: string | null
+  canHandover: boolean
+  handoverOpen: boolean
+}) {
+  // Outgoing supervisor confirms the auto-populated workstation statuses.
+  const [confirmed, setConfirmed] = useState<Record<string, boolean>>({})
+  const [equipment, setEquipment] = useState('')
+  const [urgent, setUrgent] = useState('')
+  const [submitted, setSubmitted] = useState<{ at: string } | null>(null)
+  const [acknowledged, setAcknowledged] = useState<{ at: string } | null>(null)
+
+  const allConfirmed = wsTable.length > 0 && wsTable.every((w) => confirmed[w.code])
+
+  return (
+    <div className="card" style={{ overflow: 'hidden', marginBottom: 20 }}>
+      <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <ClipboardCheck size={14} style={{ color: C.ink3 }} />
+        <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase' }}>
+          Shift Handover Panel
+        </span>
+        {handoverOpen && (
+          <span style={{ ...pill, background: 'rgba(217,122,43,.16)', color: C.orange, marginLeft: 'auto' }}>Window open</span>
+        )}
+      </div>
+
+      <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2 }}>
+          Outgoing: <strong style={{ color: C.ink, fontWeight: 600 }}>{outgoing ?? '—'}</strong>
+          {' · '}{shiftLabel} · {periodLabel}
+        </div>
+
+        {!canHandover && (
+          <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink2, padding: '14px 16px', background: C.surface3, borderRadius: 9 }}>
+            Handover is performed by the supervisor on duty. You have view-only access to this shift.
+          </div>
+        )}
+
+        {canHandover && (
+          <>
+            {/* 1. Workstation status confirm */}
+            <section>
+              <SectionLabel icon={Cpu} text="Workstation status (confirm or edit)" />
+              {wsTable.length === 0 ? (
+                <EmptyLine text="No active workstations to confirm." />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                  {wsTable.map((w) => (
+                    <label key={w.code} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: `1px solid ${C.line}`, borderRadius: 8, cursor: submitted ? 'default' : 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!confirmed[w.code]}
+                        disabled={!!submitted}
+                        onChange={(e) => setConfirmed((c) => ({ ...c, [w.code]: e.target.checked }))}
+                      />
+                      <span style={{ fontFamily: MONO, fontWeight: 600, color: C.accent }}>{w.code}</span>
+                      <span style={{ color: C.ink2, fontSize: 12.5, flex: 1 }}>{w.name}</span>
+                      <JobStatusPill status={w.status} />
+                      <span style={{ fontFamily: MONO, fontSize: 11, color: C.ink3 }}>{w.count} UID(s)</span>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* 2. Furnace batches in progress (auto-populated from Batch Management) */}
+            <section>
+              <SectionLabel icon={Flame} text="Furnace batches in progress" />
+              <EmptyLine text="Auto-population from Batch Management is not yet available — note any running or mid-soak batches in Urgent notes below." />
+            </section>
+
+            {/* 3. UIDs on hold (auto-populated from Production Floor) */}
+            <section>
+              <SectionLabel icon={PauseCircle} text="UIDs on hold" />
+              <EmptyLine text="Auto-population from Production Floor is not yet available — record on-hold UIDs and reasons in Urgent notes below." />
+            </section>
+
+            {/* 4. Equipment issues (free text, optional) */}
+            <section>
+              <SectionLabel icon={Wrench} text="Equipment issues (optional)" />
+              <textarea
+                className="input"
+                style={{ minHeight: 64, resize: 'vertical', marginTop: 8 }}
+                placeholder="Any equipment issues or workstation problems noted during the shift…"
+                value={equipment}
+                disabled={!!submitted}
+                onChange={(e) => setEquipment(e.target.value)}
+              />
+            </section>
+
+            {/* 5. Urgent notes for incoming supervisor (free text) */}
+            <section>
+              <SectionLabel icon={AlertTriangle} text="Urgent notes for incoming supervisor" />
+              <textarea
+                className="input"
+                style={{ minHeight: 80, resize: 'vertical', marginTop: 8 }}
+                placeholder="QC failures needing attention, on-hold UIDs and reasons, furnace batches mid-soak, general notes…"
+                value={urgent}
+                disabled={!!submitted}
+                onChange={(e) => setUrgent(e.target.value)}
+              />
+            </section>
+
+            {/* Submit / acknowledge */}
+            {submitted ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ fontFamily: SANS, fontSize: 13, color: C.greenText, display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', background: 'rgba(34,160,107,.1)', borderRadius: 9 }}>
+                  <Check size={15} /> Handover submitted by {outgoing ?? 'outgoing supervisor'} at {submitted.at}.
+                </div>
+                {acknowledged ? (
+                  <div style={{ fontFamily: SANS, fontSize: 13, color: C.ink, display: 'flex', alignItems: 'center', gap: 8, padding: '12px 14px', background: C.surface3, borderRadius: 9 }}>
+                    <ClipboardCheck size={15} style={{ color: C.greenText }} /> Acknowledged by incoming supervisor at {acknowledged.at}. Handover complete — both supervisors named on record.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontFamily: SANS, fontSize: 12.5, color: C.ink2 }}>
+                      Awaiting incoming supervisor. Until acknowledged, the outgoing supervisor remains supervisor of record.
+                    </span>
+                    <button className="btn-primary" onClick={() => setAcknowledged({ at: format(new Date(), 'HH:mm, d MMM') })}>
+                      <ClipboardCheck size={15} /> Acknowledge &amp; take over
+                    </button>
+                  </div>
+                )}
+                <div style={{ fontFamily: MONO, fontSize: 9.5, color: C.ink3, letterSpacing: '0.04em' }}>
+                  Handover persistence (submit / acknowledge endpoints and permanent record) is not yet available — this confirmation is local to your session.
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+                <button
+                  className="btn-primary"
+                  disabled={!allConfirmed}
+                  onClick={() => setSubmitted({ at: format(new Date(), 'HH:mm, d MMM') })}
+                >
+                  <Send size={15} /> Submit handover
+                </button>
+                {!allConfirmed && (
+                  <span style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3 }}>
+                    Confirm every workstation status to enable submit.
+                  </span>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function SectionLabel({ icon: Icon, text }: { icon: typeof Cpu; text: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+      <Icon size={14} style={{ color: C.ink3 }} />
+      <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: C.ink2 }}>{text}</span>
+    </div>
+  )
+}
+
+function EmptyLine({ text }: { text: string }) {
+  return (
+    <div style={{ fontFamily: SANS, fontSize: 12, color: C.ink3, marginTop: 6, padding: '10px 12px', background: C.surface3, borderRadius: 8 }}>
+      {text}
+    </div>
+  )
+}
+
+/* ── Shift History tab ──────────────────────────────────────────────────────
+   No completed-shift/history endpoint exists in the API client; render the
+   structured table header with a clear not-yet-available empty state. */
+function ShiftHistoryTab() {
+  const cols = ['Date', 'Shift', 'Location', 'Supervisor', 'Operators', 'UIDs processed', 'UIDs dispatched', 'Handover submitted', 'Acknowledged']
+  return (
+    <div className="card" style={{ overflow: 'hidden' }}>
+      <div style={{ padding: '14px 18px', borderBottom: `1px solid ${C.line}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <History size={14} style={{ color: C.ink3 }} />
+        <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 600, letterSpacing: '0.12em', color: C.ink3, textTransform: 'uppercase' }}>
+          Shift History — Completed Shifts
+        </span>
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 820 }}>
+          <thead>
+            <tr>{cols.map((c) => <th key={c} style={TH}>{c}</th>)}</tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colSpan={cols.length} style={{ ...TD, textAlign: 'center', padding: '40px 18px' }}>
+                <div style={{ fontFamily: SANS, fontSize: 14, color: C.ink2, marginBottom: 6 }}>
+                  Shift history is not yet available.
+                </div>
+                <div style={{ fontFamily: MONO, fontSize: 10.5, color: C.ink3, letterSpacing: '0.04em' }}>
+                  A completed-shift / handover-history endpoint is required to populate this table and the full shift record.
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
