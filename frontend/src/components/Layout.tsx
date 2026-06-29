@@ -19,7 +19,7 @@ interface NavItem {
   icon: React.ReactNode
   roles: string[]
 }
-interface NavSection { title: string; items: NavItem[] }
+interface NavSection { title: string; items: NavItem[]; location?: 'F1' | 'F2' }
 
 const ALL = ['admin', 'manager', 'supervisor', 'operator', 'service', 'shopfloor']
 const sz = 16
@@ -29,12 +29,12 @@ const SECTIONS: NavSection[] = [
   { title: 'OVERVIEW', items: [
     { label: 'Dashboard', to: '/', icon: <LayoutDashboard size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
   ]},
-  { title: 'FARIDABAD', items: [
+  { title: 'FARIDABAD', location: 'F2', items: [
     { label: 'Raw Material Intake', to: '/faridabad', icon: <Inbox size={sz} />, roles: ['admin', 'manager'] },
     { label: 'Joining Operation', to: '/faridabad', icon: <Link2 size={sz} />, roles: ['admin', 'manager'] },
     { label: 'Contractor Dispatch', to: '/faridabad', icon: <Truck size={sz} />, roles: ['admin', 'manager'] },
   ]},
-  { title: 'DHARMAPURI', items: [
+  { title: 'DHARMAPURI', location: 'F1', items: [
     { label: 'Receiving', to: '/receiving', icon: <Download size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'UID Creation', to: '/uids', icon: <Tag size={sz} />, roles: ['admin', 'manager', 'supervisor'] },
     { label: 'Production Floor', to: '/queue', icon: <Factory size={sz} />, roles: ['admin', 'manager', 'supervisor', 'operator'] },
@@ -237,6 +237,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
   const role = user?.role || ''
   const visibleSections = SECTIONS
+    // Location-scoped sections (Faridabad / Dharmapuri) follow the topbar toggle.
+    .filter(s => !s.location || loc === 'both' || s.location === loc)
     .map(s => ({ ...s, items: s.items.filter(it => it.roles.includes(role)) }))
     .filter(s => s.items.length > 0)
   const allVisibleItems = visibleSections.flatMap(s => s.items)
