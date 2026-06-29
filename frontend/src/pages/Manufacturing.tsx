@@ -11,10 +11,10 @@ type StatusFilter = 'all' | 'in_progress' | 'completed' | 'open' | 'cancelled'
 type ViewMode = 'list' | 'kanban'
 
 const STATUS_META: Record<string, { label: string; dot: string; bg: string; color: string }> = {
-  open:        { label: 'Draft',       dot: '#5a7aaa', bg: 'rgba(90,122,170,.18)',  color: '#9bb4d4' },
-  in_progress: { label: 'In Progress', dot: '#fbbf24', bg: 'rgba(251,191,36,.18)',  color: '#fcd34d' },
-  completed:   { label: 'Done',        dot: '#22a06b', bg: 'rgba(212,238,203,.2)',   color: '#d4eecb' },
-  cancelled:   { label: 'Cancelled',   dot: '#f87171', bg: 'rgba(248,113,113,.18)', color: '#fca5a5' },
+  open:        { label: 'Draft',       dot: '#9aa0a6', bg: 'rgba(154,160,166,.14)', color: '#9aa0a6' },
+  in_progress: { label: 'In Progress', dot: '#f59e0b', bg: 'rgba(245,158,11,.14)',  color: '#f59e0b' },
+  completed:   { label: 'Done',        dot: '#22a06b', bg: 'rgba(34,160,107,.14)',  color: '#22a06b' },
+  cancelled:   { label: 'Cancelled',   dot: '#e5484d', bg: 'rgba(229,72,77,.14)',   color: '#e5484d' },
 }
 
 function statusMeta(s: string) {
@@ -525,19 +525,14 @@ export default function Manufacturing() {
   )
 }
 
-const DT = {
-  surface: '#173a70', s2: '#21498a', s3: '#2a5aa0', line: '#2c5191',
-  ink: '#eaf4e4', ink2: '#9bb4d4', ink3: '#5a7aaa', accent: '#d4eecb', accentInk: '#143160',
-  red: '#e5484d', green: '#22a06b',
-}
 const dinput: React.CSSProperties = {
   width: '100%', padding: '9px 12px', borderRadius: 8, boxSizing: 'border-box',
-  background: DT.s3, border: `1px solid ${DT.line}`, color: DT.ink,
+  background: 'var(--surface-3)', border: '1px solid var(--line)', color: 'var(--ink)',
   fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13, outline: 'none',
 }
 const dlabel: React.CSSProperties = {
   fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em',
-  color: DT.ink3, textTransform: 'uppercase', marginBottom: 6, display: 'block',
+  color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 6, display: 'block',
 }
 
 function DrawerShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
@@ -547,7 +542,7 @@ function DrawerShell({ children, onClose }: { children: React.ReactNode; onClose
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(10,20,45,.52)', backdropFilter: 'blur(3px)', zIndex: 40 }} />
       <aside style={{
         position: 'fixed', top: 0, right: 0, bottom: 0, width: 460,
-        background: DT.surface, borderLeft: `1px solid ${DT.line}`,
+        background: 'var(--surface)', borderLeft: '1px solid var(--line)',
         zIndex: 41, display: 'flex', flexDirection: 'column',
         animation: 'es-drawer .28s cubic-bezier(.2,.8,.2,1) both',
       }}>
@@ -567,12 +562,12 @@ function CreateMOModal({ onClose }: { onClose: () => void }) {
 
   return (
     <DrawerShell onClose={onClose}>
-      <div style={{ padding: '18px 22px', borderBottom: `1px solid ${DT.line}`, background: DT.s2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+      <div style={{ padding: '18px 22px', borderBottom: 'var(--line)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div>
-          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: DT.ink }}>New Manufacturing Order</div>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: DT.ink3, marginTop: 3 }}>PRODUCTION RECORD</div>
+          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)' }}>New Manufacturing Order</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 3 }}>PRODUCTION RECORD</div>
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: DT.ink2, padding: 4 }}><X size={18} /></button>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', padding: 4 }}><X size={18} /></button>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 22, display: 'flex', flexDirection: 'column', gap: 18 }}>
         <div><label style={dlabel}>MO Number</label><input style={dinput} value={form.mo_number} onChange={e => setForm({ ...form, mo_number: e.target.value })} /></div>
@@ -580,11 +575,11 @@ function CreateMOModal({ onClose }: { onClose: () => void }) {
         <div><label style={dlabel}>Quantity</label><input style={dinput} type="number" min={1} value={form.quantity} onChange={e => setForm({ ...form, quantity: Number(e.target.value) })} /></div>
         <div><label style={dlabel}>Notes</label><textarea style={{ ...dinput, resize: 'vertical' }} rows={3} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
         {mutation.error && (
-          <div style={{ padding: '10px 14px', borderRadius: 8, background: `${DT.red}20`, border: `1px solid ${DT.red}40`, color: DT.red, fontSize: 13 }}>{errMsg}</div>
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--error)', border: 'var(--error)', color: 'var(--error)', fontSize: 13 }}>{errMsg}</div>
         )}
         <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: `1px solid ${DT.line}`, background: 'transparent', color: DT.ink2, cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
-          <button disabled={mutation.isPending} onClick={() => mutation.mutate({ ...form, quantity: Number(form.quantity) })} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: DT.accent, color: DT.accentInk, cursor: 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: 'var(--line)', background: 'transparent', color: 'var(--ink-2)', cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
+          <button disabled={mutation.isPending} onClick={() => mutation.mutate({ ...form, quantity: Number(form.quantity) })} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: 'var(--accent)', color: 'var(--accent-ink)', cursor: 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
             {mutation.isPending ? 'Creating…' : 'Create Order'}
           </button>
         </div>
@@ -610,12 +605,12 @@ function CreatePatternModal({ onClose }: { onClose: () => void }) {
 
   return (
     <DrawerShell onClose={onClose}>
-      <div style={{ padding: '18px 22px', borderBottom: `1px solid ${DT.line}`, background: DT.s2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+      <div style={{ padding: '18px 22px', borderBottom: 'var(--line)', background: 'var(--surface-2)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <div>
-          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: DT.ink }}>New Conversion Pattern</div>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: DT.ink3, marginTop: 3 }}>CUT LAYOUT</div>
+          <div style={{ fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 16, color: 'var(--ink)' }}>New Conversion Pattern</div>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: 'var(--ink-3)', marginTop: 3 }}>CUT LAYOUT</div>
         </div>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: DT.ink2, padding: 4 }}><X size={18} /></button>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-2)', padding: 4 }}><X size={18} /></button>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 22, display: 'flex', flexDirection: 'column', gap: 18 }}>
         <div><label style={dlabel}>Pattern Name</label><input style={dinput} value={name} onChange={e => setName(e.target.value)} /></div>
@@ -624,27 +619,27 @@ function CreatePatternModal({ onClose }: { onClose: () => void }) {
         <div><label style={dlabel}>Kerf per cut (mm)</label><input style={dinput} type="number" value={kerf} onChange={e => setKerf(Number(e.target.value))} /></div>
 
         {/* Live preview */}
-        <div style={{ padding: '14px 16px', borderRadius: 10, background: DT.s2, border: `1px solid ${DT.line}`, display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: DT.ink3, textTransform: 'uppercase', marginBottom: 2 }}>Preview</div>
+        <div style={{ padding: '14px 16px', borderRadius: 10, background: 'var(--surface-2)', border: 'var(--line)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, letterSpacing: '0.14em', color: 'var(--ink-3)', textTransform: 'uppercase', marginBottom: 2 }}>Preview</div>
           {[
-            { label: 'Cuts', value: String(numCuts), color: DT.ink },
-            { label: 'Total output', value: `${parsedOutputs.reduce((a, b) => a + b, 0)} mm`, color: DT.ink },
-            { label: 'Kerf loss', value: `${numCuts * kerf} mm`, color: DT.ink2 },
-            { label: 'Scrap', value: `${scrap} mm`, color: scrap < 0 ? DT.red : DT.green },
+            { label: 'Cuts', value: String(numCuts), color: 'var(--ink)' },
+            { label: 'Total output', value: `${parsedOutputs.reduce((a, b) => a + b, 0)} mm`, color: 'var(--ink)' },
+            { label: 'Kerf loss', value: `${numCuts * kerf} mm`, color: 'var(--ink-2)' },
+            { label: 'Scrap', value: `${scrap} mm`, color: scrap < 0 ? 'var(--error)' : '#22a06b' },
           ].map(r => (
             <div key={r.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-              <span style={{ color: DT.ink2 }}>{r.label}</span>
+              <span style={{ color: 'var(--ink-2)' }}>{r.label}</span>
               <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: r.color }}>{r.value}</span>
             </div>
           ))}
         </div>
 
         {mutation.error && (
-          <div style={{ padding: '10px 14px', borderRadius: 8, background: `${DT.red}20`, border: `1px solid ${DT.red}40`, color: DT.red, fontSize: 13 }}>Failed to create pattern</div>
+          <div style={{ padding: '10px 14px', borderRadius: 8, background: 'var(--error)', border: 'var(--error)', color: 'var(--error)', fontSize: 13 }}>Failed to create pattern</div>
         )}
         <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-          <button onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: `1px solid ${DT.line}`, background: 'transparent', color: DT.ink2, cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
-          <button disabled={mutation.isPending || scrap < 0} onClick={() => mutation.mutate({ name, input_length_mm: inputLen, output_lengths_mm: parsedOutputs, kerf_mm: kerf })} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: scrap < 0 ? DT.s2 : DT.accent, color: scrap < 0 ? DT.ink3 : DT.accentInk, cursor: scrap < 0 ? 'not-allowed' : 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
+          <button onClick={onClose} style={{ flex: 1, padding: '10px 0', borderRadius: 9, border: 'var(--line)', background: 'transparent', color: 'var(--ink-2)', cursor: 'pointer', fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 13 }}>Cancel</button>
+          <button disabled={mutation.isPending || scrap < 0} onClick={() => mutation.mutate({ name, input_length_mm: inputLen, output_lengths_mm: parsedOutputs, kerf_mm: kerf })} style={{ flex: 2, padding: '10px 0', borderRadius: 9, border: 'none', background: scrap < 0 ? 'var(--surface-2)' : 'var(--accent)', color: scrap < 0 ? 'var(--ink-3)' : 'var(--accent-ink)', cursor: scrap < 0 ? 'not-allowed' : 'pointer', fontFamily: "'Archivo', sans-serif", fontWeight: 700, fontSize: 13 }}>
             {mutation.isPending ? 'Creating…' : 'Create Pattern'}
           </button>
         </div>

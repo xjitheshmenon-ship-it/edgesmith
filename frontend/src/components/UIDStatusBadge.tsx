@@ -1,11 +1,9 @@
-import clsx from 'clsx'
-
 const MAP: Record<string, [string, string]> = {
   active:     ['badge-green',  'Active'],
   on_hold:    ['badge-yellow', 'On Hold'],
-  converting: ['badge-blue',   'Converting'],
+  converting: ['badge-orange', 'Converting'],
   converted:  ['badge-gray',   'Converted'],
-  dispatched: ['badge-orange', 'Dispatched'],
+  dispatched: ['badge-blue',   'Dispatched'],
   archived:   ['badge-gray',   'Archived'],
 }
 

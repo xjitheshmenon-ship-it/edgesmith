@@ -1,6 +1,6 @@
 const MAP: Record<string, [string, string]> = {
-  urgent: ['badge-red',    '🔴 Urgent'],
-  high:   ['badge-orange', '🟠 High'],
+  urgent: ['badge-red',    'Urgent'],
+  high:   ['badge-yellow', 'High'],
   normal: ['badge-gray',   'Normal'],
 }
 
