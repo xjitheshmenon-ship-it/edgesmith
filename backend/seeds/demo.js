@@ -341,6 +341,25 @@ async function main() {
       );
     }
 
+    // ── Faridabad work items across the 10-step FAR cycle ─────────────────────
+    const { rows: farRows } = await client.query(`SELECT id FROM cycle_types WHERE code = 'FAR'`);
+    if (farRows[0]) {
+      const farId = farRows[0].id;
+      // [step, status, sizeMm]
+      const farDist = [
+        ['1', 'queued', 1200], ['2', 'in_progress', 1200], ['3', 'queued', 1200],
+        ['5', 'in_progress', null], ['6', 'queued', null], ['7', 'queued', null],
+        ['8', 'queued', 1200], ['9', 'queued', 1200],
+      ];
+      for (const [step, status, size] of farDist) {
+        await client.query(
+          `INSERT INTO faridabad_items (cycle_type_id, size_mm, current_step, status, current_operator_id, started_at, priority)
+           VALUES ($1,$2,$3,$4,$5,$6,'Normal')`,
+          [farId, size, step, status, status === 'in_progress' ? supFar : null, status === 'in_progress' ? new Date(Date.now() - 18 * 60000).toISOString() : null]
+        );
+      }
+    }
+
     console.log(`✓ Demo data created: ${operators.length + 4} extra employees, 3 MOs, Faridabad chain (3 dispatches), ${allUidIds.length} UIDs, step+QC logs, 1 furnace + 1 production batch, today's shift with jobs, and 4 alerts.`);
   });
 

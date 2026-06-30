@@ -13,6 +13,8 @@ export const NAV = [
     ['intake', 'Raw Material Intake', 'inbox', null],
     ['joining', 'Joining Operation', 'link', null],
     ['dispatch', 'Contractor Dispatch', 'truck', 'pendingDispatch'],
+    ['farfloor', 'Faridabad Production Floor', 'grid', null],
+    ['farstation', 'Faridabad My Workstation', 'clock', null],
     ['farbatch', 'Faridabad Batch Management', 'stack', null],
   ]],
   ['DHARMAPURI', [
