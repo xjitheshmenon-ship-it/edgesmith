@@ -49,6 +49,13 @@ function isFurnace(code) {
   return FURNACE_CODES.some((f) => c.startsWith(f));
 }
 
+/* Which factory a workstation belongs to — FAR-* and the welding bench are
+   Faridabad; everything else is Dharmapuri. */
+function isFaridabadStation(code) {
+  const c = String(code || '').toUpperCase();
+  return c.startsWith('FAR-') || c.startsWith('WELD');
+}
+
 /* The required badge for a workstation — best-effort across field names. */
 function requiredBadge(ws) {
   return pick(ws, 'required_badge', 'badge', 'badge_code', 'skill', 'required_skill', 'workstation_type_code', 'type_code');
@@ -96,28 +103,34 @@ function BadgeChip({ code, ok }) {
   );
 }
 
-/* ── left panel: one unassigned-workstation row (draggable) ──────────────── */
+/* ── left panel: one workstation row (DROP TARGET for an operator) ───────── */
 
-function WorkstationRow({ ws, selected, onSelect, onAssignClick, draggable, onDragStart, onDragEnd, operatorsCount }) {
+function WorkstationRow({ ws, draggingOp, onDropOperator }) {
   const furnace = isFurnace(ws.code);
   const status = queueStatus(ws.queued, ws.running);
-  const badge = requiredBadge(ws);
+  const [over, setOver] = useState(false);
+  const canDrop = !!draggingOp && !furnace;
 
   return (
     <div
-      draggable={draggable && !furnace}
-      onDragStart={(e) => onDragStart(e, ws)}
-      onDragEnd={onDragEnd}
-      onClick={() => onSelect(ws.code)}
+      onDragOver={(e) => { if (!canDrop) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(false);
+        if (canDrop) onDropOperator(ws);
+      }}
       style={{
-        border: '1px solid ' + (selected ? 'var(--status-blue, #3b82f6)' : 'var(--border-card, #e3ebde)'),
+        border: '1px solid ' + (over ? 'var(--status-success, #22a06b)' : 'var(--border-card, #e3ebde)'),
         borderRadius: 'var(--radius-lg, 11px)',
-        background: selected ? 'var(--bg-soft-blue, #eaf0f7)' : 'var(--bg-card, #fff)',
+        background: over ? 'var(--bg-soft-green, #e7ece4)' : 'var(--bg-card, #fff)',
         padding: '11px 13px',
-        cursor: furnace ? 'default' : 'grab',
         display: 'flex',
         flexDirection: 'column',
         gap: 7,
+        outline: over ? '2px dashed var(--status-success, #22a06b)' : 'none',
+        outlineOffset: 2,
+        transition: 'background 0.1s, outline 0.1s',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -146,7 +159,6 @@ function WorkstationRow({ ws, selected, onSelect, onAssignClick, draggable, onDr
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <StatusPill status={status} label={QUEUE_STATUS_LABEL[status]} />
-        {badge ? <BadgeChip code={badge} ok /> : null}
         {furnace ? (
           <span className="badge" style={{ background: 'rgba(192,118,43,0.14)', color: 'var(--cycle-oven, #c0762b)' }}>
             ◍ FURNACE · SUPERVISOR
@@ -154,44 +166,20 @@ function WorkstationRow({ ws, selected, onSelect, onAssignClick, draggable, onDr
         ) : null}
       </div>
 
-      {!furnace ? (
-        <button
-          className="btn btn-sm"
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onAssignClick(ws);
-          }}
-          disabled={operatorsCount === 0}
-          style={{ height: 30, justifyContent: 'center' }}
-          title={operatorsCount === 0 ? 'No operators on shift' : 'Assign to an operator'}
-        >
-          <Icon name="assign" size={13} />
-          Assign…
-        </button>
-      ) : (
-        <div style={{ fontFamily: SANS, fontSize: 11, color: T_SECONDARY }}>
-          Auto-assigned to the supervisor on duty.
-        </div>
-      )}
+      <div style={{ fontFamily: SANS, fontSize: 11, color: over ? 'var(--status-success-dark, #1c7a52)' : T_MUTED }}>
+        {furnace ? 'Auto-assigned to the supervisor on duty.' : over ? 'Drop to assign this operator' : 'Drag an operator here'}
+      </div>
     </div>
   );
 }
 
-/* ── centre: one operator card (drop target) ─────────────────────────────── */
+/* ── centre: one operator card (DRAGGABLE; click to pick a machine) ──────── */
 
-function OperatorCard({ op, assignments, allWorkstations, dragging, onDrop, onUnassign, pendingId }) {
-  const [over, setOver] = useState(false);
+function OperatorCard({ op, assignments, allWorkstations, onUnassign, onPickMachine, onDragStartOp, onDragEndOp, isDragging, canAssign, pendingId }) {
   const opId = pick(op, 'id', 'employee_id', 'user_id');
   const name = pick(op, 'name', 'full_name', 'username') || 'Operator';
   const empId = pick(op, 'emp_code', 'employee_code', 'emp_id', 'code');
   const role = pick(op, 'role', 'role_name') || 'operator';
-
-  // Would the in-flight drag be a valid drop here? (used to colour the target)
-  const dragWs = dragging;
-  const dragFurnace = dragWs ? isFurnace(dragWs.code) : false;
-  const dragBadge = dragWs ? requiredBadge(dragWs) : null;
-  const dragQualified = dragWs ? operatorHoldsBadge(op, dragBadge) : false;
 
   const totalQueue = assignments.reduce((sum, a) => sum + (a.queued || 0), 0);
 
@@ -205,38 +193,32 @@ function OperatorCard({ op, assignments, allWorkstations, dragging, onDrop, onUn
   return (
     <div
       className="card"
-      onDragOver={(e) => {
-        if (!dragWs || dragFurnace) return; // furnace can't be dropped on operators
-        e.preventDefault();
-        setOver(true);
-      }}
-      onDragLeave={() => setOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        setOver(false);
-        if (!dragWs || dragFurnace) return;
-        onDrop(op, dragWs);
-      }}
+      draggable={canAssign}
+      onDragStart={(e) => onDragStartOp(e, op)}
+      onDragEnd={onDragEndOp}
       style={{
         padding: '16px 18px',
         display: 'flex',
         flexDirection: 'column',
         gap: 12,
-        outline: over ? '2px dashed ' + (dragQualified ? 'var(--status-success, #22a06b)' : 'var(--status-warning, #d97a2b)') : 'none',
-        outlineOffset: 2,
-        transition: 'outline 0.1s',
+        cursor: canAssign ? 'grab' : 'default',
+        opacity: isDragging ? 0.5 : 1,
+        transition: 'opacity 0.1s',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-        <div>
-          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15.5, letterSpacing: '-0.02em', color: T_PRIMARY }}>
-            {name}
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
-            {empId ? <Mono style={{ fontSize: 11, color: T_SECONDARY }}>{empId}</Mono> : null}
-            <span className="badge" style={{ background: 'rgba(45,111,181,0.14)', color: 'var(--cycle-eat, #2d6fb5)' }}>
-              {String(role).toUpperCase()}
-            </span>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          {canAssign ? <Icon name="grid" size={13} color={T_MUTED} /> : null}
+          <div>
+            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15.5, letterSpacing: '-0.02em', color: T_PRIMARY }}>
+              {name}
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
+              {empId ? <Mono style={{ fontSize: 11, color: T_SECONDARY }}>{empId}</Mono> : null}
+              <span className="badge" style={{ background: 'rgba(45,111,181,0.14)', color: 'var(--cycle-eat, #2d6fb5)' }}>
+                {String(role).toUpperCase()}
+              </span>
+            </div>
           </div>
         </div>
         <StatusPill status={assignments.length ? 'active' : 'idle'} label={assignments.length ? 'WORKING' : 'IDLE'} />
@@ -247,19 +229,10 @@ function OperatorCard({ op, assignments, allWorkstations, dragging, onDrop, onUn
         <Label style={{ marginBottom: 6 }}>Skill badges</Label>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {heldBadges.length ? (
-            heldBadges.map((b) => {
-              // highlight a badge the operator LACKS for the workstation being dragged
-              const lacking = dragWs && dragBadge && !dragQualified;
-              return <BadgeChip key={b} code={b} ok={!lacking || String(b).toUpperCase() !== String(dragBadge).toUpperCase()} />;
-            })
+            heldBadges.map((b) => <BadgeChip key={b} code={b} ok />)
           ) : (
             <span style={{ fontFamily: SANS, fontSize: 12, color: T_MUTED }}>No badges on file</span>
           )}
-          {dragWs && dragBadge && !dragQualified ? (
-            <span className="badge" style={{ background: 'rgba(217,122,43,0.16)', color: 'var(--status-warning, #d97a2b)' }}>
-              ⚠ needs {dragBadge}
-            </span>
-          ) : null}
         </div>
       </div>
 
@@ -273,15 +246,14 @@ function OperatorCard({ op, assignments, allWorkstations, dragging, onDrop, onUn
             style={{
               border: '1.5px dashed var(--border-input, #d6e0d2)',
               borderRadius: 'var(--radius-lg, 11px)',
-              padding: '16px 12px',
+              padding: '14px 12px',
               textAlign: 'center',
               fontFamily: SANS,
               fontSize: 12,
               color: T_MUTED,
-              background: over ? 'var(--bg-soft-green, #e7ece4)' : 'transparent',
             }}
           >
-            Drag a workstation here
+            Not assigned to any machine yet
           </div>
         ) : (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -328,37 +300,52 @@ function OperatorCard({ op, assignments, allWorkstations, dragging, onDrop, onUn
           Total queue: <strong style={{ color: T_PRIMARY }}>{totalQueue}</strong> UIDs across {assignments.length} workstation{assignments.length === 1 ? '' : 's'}
         </div>
       ) : null}
+
+      {canAssign ? (
+        <button className="btn btn-sm" type="button" onClick={() => onPickMachine(op)} style={{ justifyContent: 'center' }}>
+          <Icon name="assign" size={13} />
+          Assign machine…
+        </button>
+      ) : null}
     </div>
   );
 }
 
-/* ── assign-via-click picker (fallback to drag-and-drop) ─────────────────── */
+/* ── machine picker: opens from an operator, shows only the machines they can
+   run (badge held, or no badge requirement). The authoritative eligible list
+   comes from the backend; we intersect it with the unassigned stations on the
+   floor for this factory. ──────────────────────────────────────────────── */
 
-function AssignPicker({ ws, operators, onPick, onClose, busy }) {
-  const { location } = useApp();
-  const [elig, setElig] = useState(null); // { requiresBadge, badgeName, operators: [] }
-  const [showAll, setShowAll] = useState(false);
+function MachinePicker({ op, location, candidateWorkstations, onPick, onClose, busy }) {
+  const opId = pick(op, 'id', 'employee_id', 'user_id');
+  const opName = pick(op, 'name', 'full_name', 'username') || 'Operator';
+  const [elig, setElig] = useState(null); // array of {code,name,requiresBadge,hasBadge}
   const [loadErr, setLoadErr] = useState(null);
 
   useEffect(() => {
     let live = true;
-    setElig(null); setLoadErr(null); setShowAll(false);
+    setElig(null); setLoadErr(null);
     workstationAssignmentsApi
-      .eligibleOperators(ws.code, location)
-      .then((r) => { if (live) setElig(r.data); })
-      .catch((e) => { if (live) setLoadErr(e.message || 'Could not load eligible operators.'); });
+      .eligibleWorkstations(opId, location)
+      .then((r) => { if (live) setElig(Array.isArray(r.data) ? r.data : []); })
+      .catch((e) => { if (live) setLoadErr(e.message || 'Could not load eligible machines.'); });
     return () => { live = false; };
-  }, [ws.code, location]);
+  }, [opId, location]);
 
-  const requiresBadge = !!elig?.requiresBadge;
-  const badgeName = elig?.badgeName || requiredBadge(ws);
-  const eligibleIds = new Set((elig?.operators || []).map((o) => String(o.id)));
-  // Default: only certified operators. Override reveals everyone (NEEDS marked).
-  const shown = !elig
-    ? []
-    : showAll || !requiresBadge
-      ? operators
-      : operators.filter((op) => eligibleIds.has(String(pick(op, 'id', 'employee_id', 'user_id'))));
+  const eligByCode = useMemo(() => {
+    const m = {};
+    (elig || []).forEach((w) => { m[w.code] = w; });
+    return m;
+  }, [elig]);
+
+  // Show only machines the operator can run that are still unassigned on the floor.
+  const machines = useMemo(() => {
+    if (!elig) return [];
+    return candidateWorkstations
+      .filter((w) => eligByCode[w.code])
+      .map((w) => ({ ...w, ...eligByCode[w.code] }))
+      .sort((a, b) => (b.hasBadge ? 1 : 0) - (a.hasBadge ? 1 : 0) || b.queued - a.queued);
+  }, [elig, eligByCode, candidateWorkstations]);
 
   return (
     <div
@@ -368,9 +355,9 @@ function AssignPicker({ ws, operators, onPick, onClose, busy }) {
       <div onMouseDown={(e) => e.stopPropagation()} className="card cp-fade-in" style={{ width: '100%', maxWidth: 460, boxShadow: 'var(--shadow-modal)', padding: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border-card, #e3ebde)' }}>
           <div>
-            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, color: T_PRIMARY }}>Assign {ws.code}</div>
+            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, color: T_PRIMARY }}>Assign {opName} to a machine</div>
             <div style={{ fontFamily: SANS, fontSize: 12, color: T_SECONDARY, marginTop: 2 }}>
-              {requiresBadge ? `Requires ${badgeName} · certified operators only` : 'No badge requirement'} · queue {ws.queued}
+              Only machines this operator is badged for (or that need no badge).
             </div>
           </div>
           <button onClick={onClose} className="btn btn-sm" style={{ width: 32, padding: 0, justifyContent: 'center' }} aria-label="Close">
@@ -381,49 +368,35 @@ function AssignPicker({ ws, operators, onPick, onClose, busy }) {
           {loadErr ? (
             <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--status-danger, #e5484d)', padding: 12 }}>{loadErr}</div>
           ) : !elig ? (
-            <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, padding: 12 }}>Loading eligible operators…</div>
-          ) : shown.length === 0 ? (
+            <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, padding: 12 }}>Loading machines…</div>
+          ) : machines.length === 0 ? (
             <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, padding: 12 }}>
-              {requiresBadge ? `No certified operators on shift for ${badgeName}.` : 'No operators on shift.'}
+              No unassigned machines available for {opName} on this floor.
             </div>
           ) : (
-            shown.map((op) => {
-              const ok = !requiresBadge || eligibleIds.has(String(pick(op, 'id', 'employee_id', 'user_id')));
-              return (
-                <button
-                  key={pick(op, 'id', 'employee_id', 'user_id')}
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onPick(op, ok)}
-                  className="btn"
-                  style={{ height: 'auto', padding: '11px 13px', justifyContent: 'flex-start', textAlign: 'left' }}
-                >
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY }}>
-                      {pick(op, 'name', 'full_name', 'username')}
-                    </div>
-                    <Mono style={{ fontSize: 11, color: T_SECONDARY }}>{pick(op, 'emp_code', 'employee_code', 'emp_id', 'code') || ''}</Mono>
+            machines.map((w) => (
+              <button
+                key={w.code}
+                type="button"
+                disabled={busy}
+                onClick={() => onPick(w)}
+                className="btn"
+                style={{ height: 'auto', padding: '11px 13px', justifyContent: 'flex-start', textAlign: 'left' }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY }}>
+                    <Mono style={{ fontSize: 12.5 }}>{w.code}</Mono>{w.name ? <span style={{ fontWeight: 500, color: T_SECONDARY }}> · {w.name}</span> : null}
                   </div>
-                  {ok ? (
-                    <span className="badge" style={{ background: 'rgba(34,160,107,0.14)', color: 'var(--status-success, #22a06b)' }}>✓ QUALIFIED</span>
-                  ) : (
-                    <span className="badge" style={{ background: 'rgba(217,122,43,0.16)', color: 'var(--status-warning, #d97a2b)' }}>⚠ NEEDS {badgeName}</span>
-                  )}
-                </button>
-              );
-            })
+                  <Mono style={{ fontSize: 11, color: T_SECONDARY }}>queue {w.queued ?? 0}</Mono>
+                </div>
+                {w.hasBadge ? (
+                  <span className="badge" style={{ background: 'rgba(34,160,107,0.14)', color: 'var(--status-success, #22a06b)' }}>✓ BADGED</span>
+                ) : (
+                  <span className="badge" style={{ background: 'rgba(154,160,166,0.16)', color: 'var(--text-secondary, #5d7188)' }}>OPEN</span>
+                )}
+              </button>
+            ))
           )}
-          {/* Supervisor override: badge is a warning, not a hard block. */}
-          {requiresBadge && elig ? (
-            <button
-              type="button"
-              className="btn btn-sm"
-              style={{ alignSelf: 'flex-start', marginTop: 4 }}
-              onClick={() => setShowAll((v) => !v)}
-            >
-              {showAll ? 'Show certified only' : 'Show all operators (override)'}
-            </button>
-          ) : null}
         </div>
       </div>
     </div>
@@ -452,9 +425,8 @@ export default function JobAssignment() {
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // all | waiting | ready | in_progress
-  const [selectedWs, setSelectedWs] = useState(null);
-  const [dragging, setDragging] = useState(null);
-  const [pickerWs, setPickerWs] = useState(null);
+  const [dragging, setDragging] = useState(null); // the operator being dragged
+  const [pickerOp, setPickerOp] = useState(null); // operator whose machine picker is open
   const [pendingId, setPendingId] = useState(null);
   const [actionError, setActionError] = useState(null);
   const reqRef = useRef(0);
@@ -496,7 +468,7 @@ export default function JobAssignment() {
   const rawAssignments = data?.assignments || [];
 
   // Build a clean workstation list with code/name/queue/running.
-  const workstations = useMemo(
+  const allWorkstations = useMemo(
     () =>
       stations.map((s) => ({
         code: s.code,
@@ -507,6 +479,14 @@ export default function JobAssignment() {
       })),
     [stations]
   );
+
+  // Scope the board to the selected factory — FAR-*/WELD for Faridabad, the rest
+  // for Dharmapuri. (No 'both' on this page; it follows the factory toggle.)
+  const workstations = useMemo(() => {
+    if (location === 'both') return allWorkstations;
+    const far = location === 'faridabad';
+    return allWorkstations.filter((w) => isFaridabadStation(w.code) === far);
+  }, [allWorkstations, location]);
 
   // assignments grouped by operator id, enriched with each station's queue depth.
   const assignmentsByOperator = useMemo(() => {
@@ -549,9 +529,9 @@ export default function JobAssignment() {
       .sort((a, b) => b.queued - a.queued);
   }, [workstations, assignedCodes, search, statusFilter]);
 
-  // ── shift summary figures ──
+  // ── shift summary figures (factory-scoped) ──
   const totalStations = workstations.length;
-  const assignedCount = assignedCodes.size;
+  const assignedCount = workstations.filter((w) => assignedCodes.has(w.code)).length;
   const unassignedAll = workstations.filter((w) => !assignedCodes.has(w.code));
   const unassignedWithQueue = unassignedAll.filter((w) => w.queued > 0 && !isFurnace(w.code));
   const idleOperators = operators.filter((op) => !(assignmentsByOperator.get(pick(op, 'id', 'employee_id', 'user_id')) || []).length).length;
@@ -611,20 +591,22 @@ export default function JobAssignment() {
     [canAssign, refetch]
   );
 
-  const onDragStart = (e, ws) => {
-    if (isFurnace(ws.code)) {
-      e.preventDefault();
-      return;
-    }
-    setDragging(ws);
+  // Operator is the draggable unit now — drop it on a workstation to assign.
+  const onDragStartOp = (e, op) => {
+    setDragging(op);
     try {
-      e.dataTransfer.setData(DRAG_MIME, ws.code);
+      e.dataTransfer.setData(DRAG_MIME, String(pick(op, 'id', 'employee_id', 'user_id')));
       e.dataTransfer.effectAllowed = 'move';
     } catch {
       /* some browsers restrict setData — state covers us */
     }
   };
-  const onDragEnd = () => setDragging(null);
+  const onDragEndOp = () => setDragging(null);
+  const onDropOperatorOnWs = (ws) => {
+    const op = dragging;
+    setDragging(null);
+    if (op) doAssign(op, ws);
+  };
 
   /* ── render ── */
 
@@ -635,7 +617,7 @@ export default function JobAssignment() {
           Job Assignment
         </div>
         <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>
-          {locationLabel} · assign workstations to operators for this shift
+          {locationLabel} · drag an operator onto a machine, or click an operator to pick a machine they're badged for
           {data?.shift ? ` · ${pick(data.shift, 'name', 'shift_name', 'label') || `Shift ${shiftId ?? ''}`}` : ''}
           {loading && !data ? ' · loading…' : ''}
           {isManager && !isAdmin ? ' · read-only' : ''}
@@ -743,13 +725,8 @@ export default function JobAssignment() {
                 <WorkstationRow
                   key={ws.code}
                   ws={ws}
-                  selected={selectedWs === ws.code}
-                  onSelect={setSelectedWs}
-                  onAssignClick={canAssign ? setPickerWs : () => {}}
-                  draggable={canAssign}
-                  onDragStart={onDragStart}
-                  onDragEnd={onDragEnd}
-                  operatorsCount={operators.length}
+                  draggingOp={canAssign ? dragging : null}
+                  onDropOperator={onDropOperatorOnWs}
                 />
               ))}
             </div>
@@ -775,15 +752,19 @@ export default function JobAssignment() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
               {operators.map((op) => {
                 const opId = pick(op, 'id', 'employee_id', 'user_id');
+                const dragId = dragging ? pick(dragging, 'id', 'employee_id', 'user_id') : null;
                 return (
                   <OperatorCard
                     key={opId}
                     op={op}
                     assignments={assignmentsByOperator.get(opId) || []}
-                    allWorkstations={workstations}
-                    dragging={canAssign ? dragging : null}
+                    allWorkstations={allWorkstations}
+                    canAssign={canAssign}
+                    isDragging={String(dragId) === String(opId)}
                     pendingId={pendingId}
-                    onDrop={(o, ws) => doAssign(o, ws)}
+                    onDragStartOp={onDragStartOp}
+                    onDragEndOp={onDragEndOp}
+                    onPickMachine={setPickerOp}
                     onUnassign={doUnassign}
                   />
                 );
@@ -825,16 +806,16 @@ export default function JobAssignment() {
         </div>
       </div>
 
-      {pickerWs && (
-        <AssignPicker
-          ws={pickerWs}
-          operators={operators}
+      {pickerOp && (
+        <MachinePicker
+          op={pickerOp}
+          location={location}
+          candidateWorkstations={unassignedAll}
           busy={!!pendingId}
-          onClose={() => setPickerWs(null)}
-          onPick={(op) => {
-            // doAssign re-checks qualification and prompts for override itself.
-            doAssign(op, pickerWs);
-            setPickerWs(null);
+          onClose={() => setPickerOp(null)}
+          onPick={(ws) => {
+            doAssign(pickerOp, ws, true); // picker only offers eligible machines
+            setPickerOp(null);
           }}
         />
       )}

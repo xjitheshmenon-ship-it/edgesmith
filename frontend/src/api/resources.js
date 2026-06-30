@@ -179,4 +179,6 @@ export const workstationAssignmentsApi = {
   unassign: (id) => api.delete(`/workstation-assignments/${id}`),
   eligibleOperators: (workstationCode, location) =>
     api.get('/workstation-assignments/eligible-operators', { workstation_code: workstationCode, location }),
+  eligibleWorkstations: (employeeId, location) =>
+    api.get('/workstation-assignments/eligible-workstations', { employee_id: employeeId, location }),
 };
