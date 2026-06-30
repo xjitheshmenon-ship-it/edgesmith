@@ -10,6 +10,25 @@
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
+const TOKEN_KEY = 'cpcms_token';
+
+/**
+ * Persist (or clear) the JWT used for Bearer auth. The web build authenticates
+ * via the httpOnly cookie, but inside the Android (Capacitor) WebView the API
+ * is cross-origin and third-party cookies are unreliable, so we also send the
+ * token the backend returns on login as an Authorization: Bearer header.
+ */
+export function setAuthToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch { /* storage unavailable — fall back to cookie auth */ }
+}
+
+function getAuthToken() {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
 class ApiError extends Error {
   constructor(code, message, status, details) {
     super(message);
@@ -28,12 +47,17 @@ async function request(method, path, { body, params } = {}) {
     if (qs) url += `?${qs}`;
   }
 
+  const headers = {};
+  if (body) headers['Content-Type'] = 'application/json';
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
   let res;
   try {
     res = await fetch(url, {
       method,
       credentials: 'include',
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch (networkErr) {

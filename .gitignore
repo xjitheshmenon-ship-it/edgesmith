@@ -7,3 +7,6 @@ dist/
 **/dist/
 *.log
 .DS_Store
+
+# Capacitor generated Android project (built in CI)
+frontend/android/

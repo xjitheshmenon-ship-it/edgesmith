@@ -1,0 +1,8 @@
+{
+  "appId": "com.edgesmith.cpcms",
+  "appName": "CPCMS",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  }
+}
