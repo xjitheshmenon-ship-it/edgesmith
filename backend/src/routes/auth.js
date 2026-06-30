@@ -6,12 +6,21 @@ const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
 
+// In production the frontend (GitHub Pages) and the API (Render) are on
+// different origins, so the auth cookie must be SameSite=None + Secure to be
+// sent on cross-site requests. In local dev (same-site, http) we use Lax so the
+// cookie still works without HTTPS. Override with COOKIE_SAMESITE if needed.
+const IS_PROD = process.env.NODE_ENV === 'production';
 const COOKIE_OPTS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
-  sameSite: 'strict',
+  secure: IS_PROD,
+  sameSite: process.env.COOKIE_SAMESITE || (IS_PROD ? 'none' : 'lax'),
   maxAge: 8 * 60 * 60 * 1000, // 8h, matches JWT_EXPIRES_IN
 };
+
+// clearCookie must be given matching sameSite/secure/httpOnly or the browser
+// won't clear the cross-site cookie.
+const CLEAR_OPTS = { httpOnly: COOKIE_OPTS.httpOnly, secure: COOKIE_OPTS.secure, sameSite: COOKIE_OPTS.sameSite };
 
 /**
  * POST /api/v1/auth/login
@@ -89,7 +98,7 @@ router.post('/refresh', authenticate, async (req, res) => {
  * POST /api/v1/auth/logout
  */
 router.post('/logout', (req, res) => {
-  res.clearCookie('cpcms_token');
+  res.clearCookie('cpcms_token', CLEAR_OPTS);
   return res.json({ success: true, data: { loggedOut: true } });
 });
 

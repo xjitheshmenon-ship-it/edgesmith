@@ -13,20 +13,22 @@ router.use(authenticate);
  *  - filtered to the user's location unless admin/manager (cross-location)
  */
 router.get('/', async (req, res) => {
-  const conditions = [`status = 'active'`];
+  // All condition columns are qualified with the alerts alias `a.` because the
+  // uids join also exposes status/location_id (otherwise "column is ambiguous").
+  const conditions = [`a.status = 'active'`];
   const params = [];
   let p = 1;
 
-  conditions.push(`(target_employee_id = $${p} OR target_employee_id IS NULL)`);
+  conditions.push(`(a.target_employee_id = $${p} OR a.target_employee_id IS NULL)`);
   params.push(req.user.sub);
   p++;
 
-  conditions.push(`(target_role IS NULL OR target_role = $${p})`);
+  conditions.push(`(a.target_role IS NULL OR a.target_role = $${p})`);
   params.push(req.user.role);
   p++;
 
   if (req.user.role !== 'admin' && req.user.role !== 'manager') {
-    conditions.push(`(location_id = $${p} OR location_id IS NULL)`);
+    conditions.push(`(a.location_id = $${p} OR a.location_id IS NULL)`);
     params.push(req.user.location_id);
     p++;
   }
@@ -34,7 +36,7 @@ router.get('/', async (req, res) => {
   const { rows } = await query(
     `SELECT a.*, u.uid_code FROM alerts a LEFT JOIN uids u ON u.id = a.uid_id
      WHERE ${conditions.join(' AND ')}
-     ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, created_at DESC
+     ORDER BY CASE a.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, a.created_at DESC
      LIMIT 100`,
     params
   );

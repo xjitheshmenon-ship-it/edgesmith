@@ -21,8 +21,20 @@ const { runOverdueReceivingCheck } = require('./src/jobs/overdueReceiving');
 const app = express();
 
 // ── Core middleware ──────────────────────────────────────────────────────────
+// CORS_ALLOWED_ORIGIN may be a single origin or a comma-separated list (e.g.
+// the GitHub Pages site plus a custom domain). credentials:true is required so
+// the browser sends/receives the httpOnly auth cookie cross-origin.
+const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGIN || 'http://localhost:5173')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
 app.use(cors({
-  origin: process.env.CORS_ALLOWED_ORIGIN || 'http://localhost:5173',
+  origin(origin, cb) {
+    // Allow same-origin / non-browser callers (no Origin header) and any
+    // explicitly allow-listed origin.
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error(`Origin ${origin} not allowed by CORS`));
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '2mb' }));

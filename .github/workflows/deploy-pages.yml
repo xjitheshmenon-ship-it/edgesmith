@@ -31,12 +31,21 @@ jobs:
       - name: Build
         working-directory: frontend
         env:
+          # Served under https://<owner>.github.io/edgesmith/ — fed to Vite's
+          # `base` and to React Router via import.meta.env.BASE_URL.
           VITE_BASE_PATH: /edgesmith/
-          # Backend API base URL. Override anytime via a repo Actions variable
-          # (Settings → Secrets and variables → Actions → Variables: VITE_API_URL);
-          # falls back to the deployed Render backend below.
-          VITE_API_URL: ${{ vars.VITE_API_URL || 'https://edgesmith-backend.onrender.com' }}
+          # Backend API base. The API client appends bare paths (e.g. /auth/login)
+          # to this, so it MUST include the /api/v1 suffix. Override anytime via a
+          # repo Actions variable (Settings → Secrets and variables → Actions →
+          # Variables: VITE_API_BASE_URL); falls back to the Render backend below.
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || 'https://edgesmith-backend.onrender.com/api/v1' }}
         run: npm run build
+
+      # BrowserRouter deep-links (e.g. /edgesmith/dashboard) 404 on GitHub Pages
+      # without a SPA fallback; serving index.html as 404.html fixes refreshes.
+      - name: SPA fallback (404.html)
+        working-directory: frontend
+        run: cp dist/index.html dist/404.html
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
