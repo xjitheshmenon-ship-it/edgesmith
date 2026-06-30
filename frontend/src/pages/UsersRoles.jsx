@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { adminApi } from '../api/resources';
 import { api } from '../api/client';
 import { useAuth } from '../store/AuthContext';
@@ -266,64 +266,158 @@ function PermissionsReference() {
   );
 }
 
-// ── Audit log ────────────────────────────────────────────────────────────
+// ── Activity log (all users) ───────────────────────────────────────────────
+function fmtTs(v) {
+  if (!v) return '—';
+  try {
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return String(v);
+    return d.toLocaleString(undefined, { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    return String(v);
+  }
+}
+
+const ACTION_COLOR = {
+  INSERT: { bg: 'rgba(34,160,107,0.14)', fg: 'var(--status-success, #22a06b)' },
+  UPDATE: { bg: 'rgba(45,111,181,0.14)', fg: 'var(--cycle-eat, #2d6fb5)' },
+  DELETE: { bg: 'rgba(229,72,77,0.14)', fg: 'var(--status-danger, #e5484d)' },
+};
+
+/* A compact summary of what changed, from the before/after JSON. */
+function summariseChange(r) {
+  const after = r.after_value ?? r.after;
+  const before = r.before_value ?? r.before;
+  const action = String(r.action || '').toUpperCase();
+  if (action === 'DELETE') return 'Removed';
+  const obj = after && typeof after === 'object' ? after : null;
+  if (!obj) return action === 'INSERT' ? 'Created' : '—';
+  const parts = Object.entries(obj)
+    .filter(([k]) => !['id', 'created_at', 'updated_at', 'password_hash'].includes(k))
+    .slice(0, 4)
+    .map(([k, v]) => `${k}: ${v == null ? '—' : typeof v === 'object' ? JSON.stringify(v) : String(v)}`);
+  const s = parts.join(' · ');
+  return s.length > 120 ? s.slice(0, 117) + '…' : s || (action === 'INSERT' ? 'Created' : 'Updated');
+}
+
 function AuditLog() {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
+  const [actors, setActors] = useState([]);
+  const [employeeId, setEmployeeId] = useState('');
+  const [table, setTable] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [search, setSearch] = useState('');
 
+  // Actor list (everyone) for the filter dropdown.
   useEffect(() => {
     let live = true;
-    adminApi
-      .auditLog()
-      .then((r) => r.data)
-      .then((data) => {
-        if (!live) return;
-        setRows(Array.isArray(data) ? data : data?.items || []);
-      })
-      .catch((e) => live && setError(e.message || 'Could not load the audit log.'));
-    return () => {
-      live = false;
-    };
+    adminApi.users().then((r) => live && setActors(r.data || [])).catch(() => {});
+    return () => { live = false; };
   }, []);
 
-  if (error) return <ErrorBanner message={error} />;
-  if (rows == null) return <Empty>Loading audit log…</Empty>;
-  if (rows.length === 0) return <Empty>No audit entries recorded yet.</Empty>;
+  const load = useCallback(() => {
+    setRows(null);
+    setError(null);
+    adminApi
+      .auditLog({ employeeId: employeeId || undefined, table: table || undefined, from: from || undefined, to: to || undefined })
+      .then((r) => setRows(Array.isArray(r.data) ? r.data : r.data?.items || []))
+      .catch((e) => setError(e.message || 'Could not load the activity log.'));
+  }, [employeeId, table, from, to]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Distinct entity (table) names for the entity filter, from what's loaded.
+  const tables = useMemo(() => {
+    const s = new Set();
+    (rows || []).forEach((r) => r.table_name && s.add(r.table_name));
+    return [...s].sort();
+  }, [rows]);
+
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows || [];
+    return (rows || []).filter((r) =>
+      `${r.employee_name || ''} ${r.action || ''} ${r.table_name || ''} ${r.record_id || ''} ${summariseChange(r)}`
+        .toLowerCase()
+        .includes(q)
+    );
+  }, [rows, search]);
+
+  const selStyle = { height: 32, fontSize: 12, padding: '0 8px' };
 
   return (
-    <div style={{ overflowX: 'auto', maxHeight: 320, overflowY: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: SANS, fontSize: 12.5 }}>
-        <thead>
-          <tr style={{ textAlign: 'left', fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted, #9bb4d4)' }}>
-            <th style={{ padding: '6px 12px 8px 0' }}>When</th>
-            <th style={{ padding: '6px 12px 8px 0' }}>Actor</th>
-            <th style={{ padding: '6px 12px 8px 0' }}>Action</th>
-            <th style={{ padding: '6px 12px 8px 0' }}>Detail</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={f(r, 'id') ?? i} style={{ borderTop: '1px solid #eef2ea' }}>
-              <td style={{ padding: '8px 12px 8px 0', fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary, #5d7188)', whiteSpace: 'nowrap' }}>
-                {f(r, 'created_at', 'createdAt', 'timestamp', 'time') || '—'}
-              </td>
-              <td style={{ padding: '8px 12px 8px 0', color: 'var(--text-primary, #15366a)' }}>
-                {f(r, 'actor', 'username', 'user', 'actor_name') || '—'}
-              </td>
-              <td style={{ padding: '8px 12px 8px 0', fontFamily: MONO, fontSize: 11 }}>
-                {f(r, 'action', 'event', 'type') || '—'}
-              </td>
-              <td style={{ padding: '8px 12px 8px 0', color: 'var(--text-secondary, #5d7188)' }}>
-                {(() => {
-                  const d = f(r, 'detail', 'details', 'description', 'message', 'summary');
-                  if (d == null) return '—';
-                  return typeof d === 'string' ? d : JSON.stringify(d);
-                })()}
-              </td>
-            </tr>
+    <div>
+      <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)', marginBottom: 10 }}>
+        Every recorded action across the system, by every user — newest first (latest 500).
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+        <select className="form-select" style={selStyle} value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+          <option value="">All users</option>
+          {actors.map((a) => (
+            <option key={a.id} value={a.id}>{a.full_name}{a.role ? ` (${a.role})` : ''}</option>
           ))}
-        </tbody>
-      </table>
+        </select>
+        <select className="form-select" style={selStyle} value={table} onChange={(e) => setTable(e.target.value)}>
+          <option value="">All entities</option>
+          {tables.map((t) => (<option key={t} value={t}>{t}</option>))}
+        </select>
+        <input type="date" className="form-input" style={selStyle} value={from} onChange={(e) => setFrom(e.target.value)} title="From" />
+        <input type="date" className="form-input" style={selStyle} value={to} onChange={(e) => setTo(e.target.value)} title="To" />
+        <input className="form-input" style={{ ...selStyle, flex: 1, minWidth: 140 }} placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
+        {(employeeId || table || from || to || search) ? (
+          <button type="button" className="btn btn-sm" onClick={() => { setEmployeeId(''); setTable(''); setFrom(''); setTo(''); setSearch(''); }}>Clear</button>
+        ) : null}
+        <button type="button" className="btn btn-sm" onClick={load}>Refresh</button>
+      </div>
+
+      {error ? <ErrorBanner message={error} /> : rows == null ? (
+        <Empty>Loading activity log…</Empty>
+      ) : shown.length === 0 ? (
+        <Empty>No activity matches these filters.</Empty>
+      ) : (
+        <div style={{ overflowX: 'auto', maxHeight: 420, overflowY: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: SANS, fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ textAlign: 'left', fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted, #9bb4d4)', position: 'sticky', top: 0, background: 'var(--bg-card, #fff)' }}>
+                <th style={{ padding: '6px 12px 8px 0' }}>When</th>
+                <th style={{ padding: '6px 12px 8px 0' }}>User</th>
+                <th style={{ padding: '6px 12px 8px 0' }}>Action</th>
+                <th style={{ padding: '6px 12px 8px 0' }}>Entity</th>
+                <th style={{ padding: '6px 12px 8px 0' }}>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((r, i) => {
+                const action = String(r.action || '').toUpperCase();
+                const c = ACTION_COLOR[action] || { bg: 'rgba(154,160,166,0.14)', fg: 'var(--text-secondary, #5d7188)' };
+                return (
+                  <tr key={r.id ?? i} style={{ borderTop: '1px solid #eef2ea' }}>
+                    <td style={{ padding: '8px 12px 8px 0', fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary, #5d7188)', whiteSpace: 'nowrap' }}>
+                      {fmtTs(r.created_at)}
+                    </td>
+                    <td style={{ padding: '8px 12px 8px 0', color: 'var(--text-primary, #15366a)', whiteSpace: 'nowrap' }}>
+                      {r.employee_name || (r.employee_id ? `#${r.employee_id}` : 'System')}
+                    </td>
+                    <td style={{ padding: '8px 12px 8px 0' }}>
+                      <span className="badge" style={{ background: c.bg, color: c.fg }}>{action || '—'}</span>
+                    </td>
+                    <td style={{ padding: '8px 12px 8px 0', fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary, #5d7188)', whiteSpace: 'nowrap' }}>
+                      {r.table_name || '—'}{r.record_id ? ` #${r.record_id}` : ''}
+                    </td>
+                    <td style={{ padding: '8px 12px 8px 0', color: 'var(--text-secondary, #5d7188)' }}>
+                      {summariseChange(r)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -548,9 +642,9 @@ export default function UsersRoles() {
         <PermissionsReference />
       </div>
 
-      {/* ── Audit log ── */}
+      {/* ── Activity log (all users) ── */}
       <div className="card" style={{ marginTop: 16, padding: '18px 20px' }}>
-        <SectionTitle>Recent Admin Activity</SectionTitle>
+        <SectionTitle>Activity Log — all users</SectionTitle>
         <AuditLog />
       </div>
     </div>
