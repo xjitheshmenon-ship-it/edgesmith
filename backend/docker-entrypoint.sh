@@ -1,6 +1,15 @@
 #!/bin/sh
 set -e
 
+# DESTRUCTIVE, one-time: wipe the database before migrating. Use this only to
+# clear a database that still holds an older backend's colliding tables. It
+# defaults OFF — set RESET_DB=true in Render for a single deploy, then set it
+# back to false so future deploys never wipe data.
+if [ "${RESET_DB:-false}" = "true" ]; then
+  echo "[entrypoint] RESET_DB=true — wiping database before migrate..."
+  node scripts/reset-schema.js
+fi
+
 # Render's free tier has no Shell, so the database is bootstrapped here on boot.
 # Both steps are safe to run on every deploy:
 #   - migrate skips already-applied files (tracked in schema_migrations)
