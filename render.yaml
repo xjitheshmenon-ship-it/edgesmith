@@ -19,6 +19,11 @@ services:
         value: 8h
       - key: CORS_ALLOWED_ORIGIN
         value: https://xjitheshmenon-ship-it.github.io
+      # Loads the demo dataset on boot. Idempotent — it seeds once, then skips
+      # on every later deploy. Set to "false" (or remove) to stop seeding demo
+      # data on a freshly reset database.
+      - key: SEED_DEMO
+        value: "true"
 
 databases:
   - name: edgesmith-db
