@@ -296,17 +296,33 @@ async function main() {
       await q(`INSERT INTO production_batch_uids (production_batch_id, uid_id, set_number) VALUES ($1,$2,$3)`, [prodBatch.id, uidId, setNo++]);
     }
 
-    // ── Jobs for the current shift (queued + in progress) ─────────────────────
-    const jobSteps = ['1', '2', '4', '5'];
+    // ── Jobs for the current shift — all assigned to the primary operator so the
+    //    'operator' demo login sees MULTIPLE workstations (one tab each), with one
+    //    live in-progress job whose timer is actually running.
+    const primaryOp = operators[0];
+    // Pick steps that have a real workstation unit so every job lands on a
+    // named workstation (four distinct ones → four tabs).
+    const jobSteps = ['1', '4', '5', '18'].filter((sn) => unitForStep(sn));
+    let activeUid = null;
     for (const sn of jobSteps) {
-      for (const uidId of (uidsByStep[sn] || []).slice(0, 2)) {
+      const ids = (uidsByStep[sn] || []).slice(0, 2);
+      for (let i = 0; i < ids.length; i++) {
+        const isActive = sn === '1' && i === 0; // one running job at the first station
         await q(
           `INSERT INTO jobs (shift_id, uid_id, cycle_step_id, workstation_unit_id, operator_id, status, assigned_by, assignment_type)
            VALUES ($1,$2,$3,$4,$5,$6,$7,'manual')`,
-          [shiftId, uidId, stepByNum[sn].id, unitForStep(sn), operators[parseInt(sn, 10) % operators.length],
-            sn === '1' ? 'in_progress' : 'queued', supDhr]
+          [shiftId, ids[i], stepByNum[sn].id, unitForStep(sn), primaryOp, isActive ? 'in_progress' : 'queued', supDhr]
         );
+        if (isActive) activeUid = ids[i];
       }
+    }
+    // Open (un-closed) step log for the running job so its timer shows ~12 min.
+    if (activeUid) {
+      await q(
+        `INSERT INTO uid_step_logs (uid_id, step_number, operation_name, workstation_unit_id, operator_id, shift_id, started_at)
+         VALUES ($1,'1',$2,$3,$4,$5, now() - interval '12 minutes')`,
+        [activeUid, stepByNum['1'].operation_name, unitForStep('1'), primaryOp, shiftId]
+      );
     }
 
     // ── Alerts ────────────────────────────────────────────────────────────────

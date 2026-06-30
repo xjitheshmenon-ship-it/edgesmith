@@ -416,7 +416,7 @@ function ActiveJobCard({ job, nowMs, canAct, onStart, onPause, onResume, onClose
   const uid = pick(job, 'uid', 'uid_code', 'code');
   const step = jobStep(job);
   const opName = pick(job, 'operation', 'operation_name', 'step_name');
-  const station = pick(job, 'workstation', 'station', 'workstation_code', 'station_code', 'unit');
+  const station = pick(job, 'workstation_name', 'unit_name', 'workstation_code', 'unit_code', 'workstation', 'station', 'station_code', 'unit');
   const cycle = pick(job, 'cycle', 'cycle_type');
   const length = pick(job, 'length', 'length_mm');
   const finish = pick(job, 'finish', 'pattern', 'finish_type');
@@ -434,7 +434,7 @@ function ActiveJobCard({ job, nowMs, canAct, onStart, onPause, onResume, onClose
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <StatusPill status={paused ? 'paused' : running ? 'in_progress' : status} label={paused && pauseReason ? `PAUSED — ${pauseReason}` : undefined} />
           <Mono style={{ fontSize: 11, color: T_SECONDARY }}>
-            {pick(job, 'shift', 'shift_name') ? `Shift ${pick(job, 'shift', 'shift_name')} · ` : ''}{station || ''}
+            {pick(job, 'shift', 'shift_name', 'shift_number') ? `Shift ${pick(job, 'shift', 'shift_name', 'shift_number')} · ` : ''}{station || ''}
           </Mono>
         </div>
 
@@ -570,12 +570,13 @@ export default function MyWorkstation() {
     return data.jobs || data.items || data.results || [];
   }, [data]);
 
-  // Group jobs into workstations.
+  // Group jobs into workstations (an operator can run several this shift).
   const stations = useMemo(() => {
     const map = new Map();
     for (const job of jobs) {
-      const code = pick(job, 'workstation', 'station', 'workstation_code', 'station_code') || 'Unassigned';
-      if (!map.has(code)) map.set(code, { code, jobs: [] });
+      const code = pick(job, 'workstation_code', 'unit_code', 'workstation', 'station', 'station_code') || 'Unassigned';
+      const name = pick(job, 'workstation_name', 'unit_name', 'workstation_type_code') || code;
+      if (!map.has(code)) map.set(code, { code, name, jobs: [] });
       map.get(code).jobs.push(job);
     }
     return Array.from(map.values()).sort((a, b) => a.code.localeCompare(b.code));
@@ -730,7 +731,10 @@ export default function MyWorkstation() {
                   }}
                 >
                   <span style={{ width: 9, height: 9, borderRadius: '50%', background: dotColor(sStatus), display: 'inline-block' }} />
-                  <span style={{ fontFamily: MONO, fontSize: 13, fontWeight: 600 }}>{s.code}</span>
+                  <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.15 }}>
+                    <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700 }}>{s.name}</span>
+                    {s.name !== s.code && <span style={{ fontFamily: MONO, fontSize: 10, opacity: 0.7 }}>{s.code}</span>}
+                  </span>
                 </button>
               );
             })}
@@ -741,7 +745,8 @@ export default function MyWorkstation() {
               {/* station heading */}
               <div>
                 <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 18, letterSpacing: '-0.02em', color: T_PRIMARY }}>
-                  {station.code}
+                  {station.name}
+                  {station.name !== station.code && <span style={{ fontFamily: MONO, fontWeight: 500, fontSize: 13, color: T_MUTED }}>{' '}· {station.code}</span>}
                   {activeJob && (
                     <span style={{ fontFamily: SANS, fontWeight: 500, fontSize: 14, color: T_SECONDARY }}>
                       {' '}— {pick(activeJob, 'operation', 'operation_name', 'step_name') || 'Active job'}
@@ -776,7 +781,7 @@ export default function MyWorkstation() {
                 <div style={{ padding: '14px 18px', borderBottom: queue.length ? '1px solid var(--border-card, #e3ebde)' : 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Icon name="list" size={16} color={T_SECONDARY} />
                   <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 14, letterSpacing: '-0.02em', color: T_PRIMARY }}>
-                    Queue — {station.code}
+                    Queue — {station.name}
                   </span>
                   <Mono style={{ fontSize: 11, color: T_MUTED }}>
                     ({queue.length} {queue.length === 1 ? 'UID' : 'UIDs'} waiting)
