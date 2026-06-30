@@ -213,6 +213,75 @@ router.post('/dispatches', requireRole(['admin', 'manager']), async (req, res) =
   return res.status(201).json({ success: true, data: result });
 });
 
+// ── Batch Management — two-leg dispatch journey ──────────────────────────────
+
+const ROLLING_ALERT_DAYS = 15;
+
+/**
+ * GET /faridabad/batches — every dispatch batch with its derived two-leg status:
+ *   Dispatched to Rolling/At Rolling → Dispatched to Dharmapuri → Received.
+ * Receipt is read live from Dharmapuri's receiving events (no duplicate entry).
+ */
+router.get('/batches', async (req, res) => {
+  const { rows } = await query(
+    `SELECT cd.id, cd.batch_reference, cd.block_count, cd.date_dispatched, cd.expected_delivery_date,
+            cd.possible_alloy_heats, cd.possible_ms_heats,
+            ct.code AS cycle_code, cc.name AS color_name, cc.hex_swatch, cont.name AS contractor_name,
+            l2.dispatched_date AS onward_date, l2.notes AS onward_notes,
+            (SELECT COUNT(*) FROM receiving_events re WHERE re.dispatch_batch_id = cd.id) AS receiving_count,
+            (SELECT min(re.date_received) FROM receiving_events re WHERE re.dispatch_batch_id = cd.id) AS date_received
+     FROM contractor_dispatches cd
+     JOIN cycle_types ct ON ct.id = cd.cycle_type_id
+     JOIN color_codes cc ON cc.id = cd.color_code_id
+     JOIN contractors cont ON cont.id = cd.contractor_id
+     LEFT JOIN batch_dispatch_legs l2 ON l2.dispatch_batch_id = cd.id AND l2.leg = 2
+     ORDER BY cd.created_at DESC`
+  );
+
+  const today = new Date();
+  const daysBetween = (a, b) => Math.max(0, Math.floor((new Date(b).getTime() - new Date(a).getTime()) / 86400000));
+
+  const data = rows.map((b) => {
+    const received = Number(b.receiving_count) > 0;
+    const dispatchedOnward = !!b.onward_date;
+    let status;
+    if (received) status = 'Received at Dharmapuri';
+    else if (dispatchedOnward) status = 'Dispatched to Dharmapuri';
+    else status = 'At Rolling';
+    // Days at rolling: from leg-1 dispatch until it left rolling (onward/received) or now.
+    const endRef = received ? b.date_received : dispatchedOnward ? b.onward_date : today;
+    const daysAtRolling = b.date_dispatched ? daysBetween(b.date_dispatched, endRef) : 0;
+    const rollingOverdue = status === 'At Rolling' && daysAtRolling > ROLLING_ALERT_DAYS;
+    return { ...b, status, days_at_rolling: daysAtRolling, rolling_overdue: rollingOverdue, rolling_alert_days: ROLLING_ALERT_DAYS };
+  });
+
+  return res.json({ success: true, data });
+});
+
+/**
+ * POST /faridabad/batches/:id/dispatch-onward — Step 10: the rolling contractor
+ * ships the block onward to Dharmapuri (it never returns to Faridabad).
+ * body: { dispatchedDate, notes? }
+ */
+router.post('/batches/:id/dispatch-onward', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const { dispatchedDate, notes } = req.body || {};
+  if (!dispatchedDate) {
+    return res.status(400).json({ success: false, error: { code: 'MISSING_DATE', message: 'dispatchedDate is required.' } });
+  }
+  const { rows: cd } = await query(`SELECT id FROM contractor_dispatches WHERE id = $1`, [req.params.id]);
+  if (!cd[0]) return res.status(404).json({ success: false, error: { code: 'BATCH_NOT_FOUND', message: 'Batch not found.' } });
+
+  const { rows } = await query(
+    `INSERT INTO batch_dispatch_legs (dispatch_batch_id, leg, dispatched_date, notes, created_by)
+     VALUES ($1, 2, $2, $3, $4)
+     ON CONFLICT (dispatch_batch_id, leg) DO UPDATE SET dispatched_date = EXCLUDED.dispatched_date, notes = EXCLUDED.notes
+     RETURNING *`,
+    [req.params.id, dispatchedDate, notes || null, req.user.sub]
+  );
+  await req.audit({ tableName: 'batch_dispatch_legs', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
+  return res.status(201).json({ success: true, data: rows[0] });
+});
+
 // ── MS sheet cutting balance (calculated, never measured) ────────────────────
 
 /** POST /faridabad/ms-cutting/calculate — preview the balance for a cut run. */
