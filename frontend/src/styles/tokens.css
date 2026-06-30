@@ -1,0 +1,299 @@
+/* ============================================================================
+   CPCMS — Design Tokens
+   Extracted from the locked Claude Design build (CPCMS_dc__7_.html).
+   Do not hand-edit colors here without checking the locked design first —
+   these values are the single source of truth shared across every page.
+   ============================================================================ */
+
+:root {
+  /* ── Core surfaces ── */
+  --bg-page: #eef2ec;
+  --bg-card: #ffffff;
+  --bg-muted: #f4f7f2;
+  --bg-muted-2: #f6f9f4;
+  --bg-muted-3: #f3f6f1;
+  --bg-muted-4: #f1f5ef;
+  --bg-soft-green: #e7ece4;
+  --bg-soft-green-2: #e9efe6;
+  --bg-soft-blue: #eaf0f7;
+  --bg-soft-blue-2: #eef3fa;
+  --bg-soft-amber: #fdf6ef;
+  --bg-soft-amber-2: #f0e2d0;
+  --bg-soft-purple: #3a2a5a;
+
+  /* ── Ink (navy) — topbar, sidebar, shopfloor dark display ── */
+  --ink-900: #0a1d3a;
+  --ink-850: #0c2750;
+  --ink-800: #0e2c57;
+  --ink-750: #11305f;
+  --ink-700: #13294d;
+  --ink-650: #15366a;
+  --ink-600: #1d3a63;
+  --ink-border: #2c5191;
+  --ink-border-2: #21498a;
+
+  /* ── Text ── */
+  --text-primary: #15366a;
+  --text-secondary: #5d7188;
+  --text-muted: #9bb4d4;
+  --text-muted-2: #7d96bb;
+  --text-muted-3: #8aa0bf;
+  --text-onink: #eaf4e4;
+  --text-onink-muted: #cfe0ee;
+  --text-onink-faint: #5d7fae;
+
+  /* ── Borders ── */
+  --border-card: #e3ebde;
+  --border-input: #d6e0d2;
+  --border-muted: #cdd9c8;
+  --border-soft: #dde4d8;
+
+  /* ── Brand accent ── */
+  --accent-green: #d4eecb;
+
+  /* ── Cycle type colors ── */
+  --cycle-eat: #2d6fb5;
+  --cycle-swan: #7a4fc0;
+  --cycle-oven: #c0762b;
+
+  /* ── Status / semantic colors ── */
+  --status-success: #22a06b;
+  --status-success-dark: #1c7a52;
+  --status-danger: #e5484d;
+  --status-danger-dark: #c0392b;
+  --status-warning: #d97a2b;
+  --status-amber: #f0c674;
+  --status-amber-2: #f0a020;
+  --status-neutral: #9aa0a6;
+  --status-blue: #3b82f6;
+  --status-mint: #36d399;
+  --status-red-soft: #ff9b9b;
+  --status-red-soft-2: #ff6b6b;
+
+  /* ── Faridabad location accent (orange family) ── */
+  --location-faridabad: #d97a2b;
+  --location-faridabad-bg: #bca27e;
+  --location-dharmapuri: #3b82f6;
+
+  /* ── Radii ── */
+  --radius-sm: 5px;
+  --radius-md: 9px;
+  --radius-lg: 11px;
+  --radius-xl: 14px;
+  --radius-pill: 20px;
+
+  /* ── Shadows ── */
+  --shadow-card: 0 1px 3px rgba(21, 54, 106, 0.06);
+  --shadow-modal: 0 18px 40px rgba(21, 54, 106, 0.2);
+  --shadow-drawer: -12px 0 40px rgba(0, 0, 0, 0.18);
+
+  /* ── Fonts ── */
+  --font-display: 'Archivo', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+  --font-body: 'IBM Plex Sans', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+}
+
+input, select, textarea, button {
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* ── Scrollbars ── */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-muted);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+aside::-webkit-scrollbar {
+  width: 0;
+}
+
+/* ── Animations ── */
+@keyframes cp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes cp-fade {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.cp-fade-in {
+  animation: cp-fade 0.18s ease-out;
+}
+
+/* ── Shared component classes (badges, pills, buttons) ── */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.status-pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-card);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: var(--radius-md);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 600;
+  border: 1px solid var(--border-input);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  transition: all 0.14s;
+}
+.btn:hover {
+  background: var(--bg-muted);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--ink-650);
+  color: var(--accent-green);
+  border: none;
+}
+.btn-primary:hover {
+  background: var(--ink-600);
+}
+.btn-danger {
+  background: var(--status-danger);
+  color: #fff;
+  border: none;
+}
+.btn-sm {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.form-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  display: block;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.form-input,
+.form-select {
+  width: 100%;
+  height: 44px;
+  padding: 0 13px;
+  border: 1.5px solid var(--border-input);
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+  background: var(--bg-card);
+  appearance: none;
+}
+.form-input:focus,
+.form-select:focus {
+  border-color: var(--status-blue);
+  box-shadow: 0 0 0 3px rgba(45, 111, 181, 0.14);
+}
+
+.tab-strip {
+  display: inline-flex;
+  background: var(--bg-soft-green-2);
+  border-radius: var(--radius-lg);
+  padding: 3px;
+}
+.tab-strip button {
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--text-secondary);
+  transition: all 0.14s;
+}
+.tab-strip button.active {
+  background: var(--ink-650);
+  color: var(--text-onink);
+}
