@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { useAuth } from '../store/AuthContext';
 import { batchesApi } from '../api/batches';
+import { cyclesApi } from '../api/resources';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill } from '../components/common/Badges';
 
@@ -21,22 +22,16 @@ const FURNACE_STEPS = [
   { id: 23, code: 'HT90-T4', label: 'Tempering 4 — Stress Relief', baseCap: 80, targetTemp: 480, targetSoak: 90 },
 ];
 
-const GRINDING_STEPS = [
-  { id: 4, label: 'Bunch Grinding', station: 'SG-DLT', kind: 'bunch' },
-  { id: 12, label: 'Surface Grind 1', station: 'SG-DLT', kind: 'surface' },
-  { id: 20, label: 'Surface Grind 2', station: 'SG-DLT', kind: 'surface' },
-  { id: 22, label: 'Bevel Grinding', station: 'AG-ALP / AG-BTA / AG-GMM', kind: 'bevel' },
-];
-
 const num = (v) => (typeof v === 'number' ? v : Number(v));
 const pick = (o, ...keys) => { for (const k of keys) if (o && o[k] != null) return o[k]; return undefined; };
 
 /* Normalise a queued-UID record from whatever shape the API returns. */
 function normalizeUid(u) {
   return {
+    id: pick(u, 'id', 'uid_id'),
     code: pick(u, 'code', 'uid_code', 'uid') || '—',
     cycle: pick(u, 'cycle', 'cycle_code', 'cycle_type'),
-    length: num(pick(u, 'length_mm', 'bar_length_mm', 'length')) || 0,
+    length: num(pick(u, 'size_mm', 'length_mm', 'bar_length_mm', 'length')) || 0,
     priority: pick(u, 'priority') || 'Normal',
     waitMins: num(pick(u, 'wait_mins', 'wait_minutes', 'wait_time')) || 0,
     raw: u,
@@ -50,7 +45,7 @@ function Heading() {
         Batch Management
       </div>
       <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-        Furnace queues, capacity &amp; thresholds, and grinding set builders
+        Furnace queues, capacity &amp; minimum-threshold batch building
       </div>
     </>
   );
@@ -103,25 +98,29 @@ function ReadOnlyStat({ label, value, unit }) {
    The minimum-queue threshold is separate: a Supervisor may override it
    with a logged reason (overrideThreshold / overrideReason).
    ════════════════════════════════════════════════════════════════════ */
-function FurnaceBuilder({ step, isSupervisor }) {
-  const [selected, setSelected] = useState(() => new Set());
+function FurnaceBuilder({ step, cycleCode, isSupervisor }) {
+  const [selected, setSelected] = useState(() => new Set()); // set of UID ids
   const [override, setOverride] = useState(false);
   const [overrideReason, setOverrideReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState(null);
   const [okMsg, setOkMsg] = useState(null);
 
-  // Cycle type of the first selected UID — locks the whole batch.
-  const [lockedCycle, setLockedCycle] = useState(null);
+  // A furnace batch is single-cycle by construction — the queue is already
+  // filtered to one cycle type, so the whole batch is locked to cycleCode.
+  const lockedCycle = cycleCode;
 
   const { data, error, loading, refetch } = usePolling(
-    () => batchesApi.furnaceQueue(step.id).then((r) => r.data),
-    [step.id],
+    () => batchesApi.furnaceQueue(step.id, cycleCode).then((r) => r.data),
+    [step.id, cycleCode],
   );
 
-  const queue = useMemo(() => (Array.isArray(data?.uids) ? data.uids : Array.isArray(data) ? data : data?.queue || []).map(normalizeUid), [data]);
-  const capacity = num(pick(data || {}, 'capacity', 'max_capacity')) || step.baseCap;
-  const threshold = num(pick(data || {}, 'min_threshold', 'threshold', 'minimum_queue_threshold'));
+  const queue = useMemo(
+    () => (Array.isArray(data?.fullQueue) ? data.fullQueue : Array.isArray(data?.uids) ? data.uids : Array.isArray(data) ? data : data?.queue || []).map(normalizeUid),
+    [data]
+  );
+  const capacity = num(pick(data || {}, 'effectiveCapacity', 'capacity', 'max_capacity')) || step.baseCap;
+  const threshold = num(pick(data || {}, 'minThreshold', 'min_threshold', 'threshold', 'minimum_queue_threshold'));
   const targetTemp = pick(data || {}, 'target_temp', 'target_temperature') ?? step.targetTemp;
   const targetSoak = pick(data || {}, 'target_soak', 'target_soak_mins', 'target_soaking_time') ?? step.targetSoak;
 
@@ -130,15 +129,11 @@ function FurnaceBuilder({ step, isSupervisor }) {
     setOkMsg(null);
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(u.code)) {
-        next.delete(u.code);
-        if (next.size === 0) setLockedCycle(null);
+      if (next.has(u.id)) {
+        next.delete(u.id);
       } else {
-        // Guard: cannot mix cycle types — block selecting a different cycle.
-        if (lockedCycle && u.cycle && u.cycle !== lockedCycle) return prev;
         if (next.size >= capacity) return prev; // capacity guard
-        next.add(u.code);
-        if (!lockedCycle && u.cycle) setLockedCycle(u.cycle);
+        next.add(u.id);
       }
       return next;
     });
@@ -159,9 +154,9 @@ function FurnaceBuilder({ step, isSupervisor }) {
     setOkMsg(null);
     try {
       const payload = {
-        cycle_step_id: step.id,
-        cycle_code: lockedCycle,
-        uid_codes: Array.from(selected),
+        cycleStepId: step.id,
+        cycleCode,
+        uidIds: Array.from(selected),
       };
       if (override && isSupervisor) {
         payload.overrideThreshold = true;
@@ -170,7 +165,6 @@ function FurnaceBuilder({ step, isSupervisor }) {
       await batchesApi.furnaceCreate(payload);
       setOkMsg(`Furnace batch created for ${step.label} (${selectedCount} bars).`);
       setSelected(new Set());
-      setLockedCycle(null);
       setOverride(false);
       setOverrideReason('');
       refetch();
@@ -198,16 +192,15 @@ function FurnaceBuilder({ step, isSupervisor }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
             {queue.map((u) => {
-              const isSelected = selected.has(u.code);
-              const wrongCycle = lockedCycle && u.cycle && u.cycle !== lockedCycle;
+              const isSelected = selected.has(u.id);
               const atCap = !isSelected && selectedCount >= capacity;
-              const disabled = wrongCycle || atCap;
+              const disabled = atCap;
               return (
                 <button
-                  key={u.code}
+                  key={u.id}
                   onClick={() => toggle(u)}
                   disabled={disabled}
-                  title={wrongCycle ? `Single-cycle batch — locked to ${lockedCycle}. Cannot mix ${u.cycle}.` : atCap ? `Capacity ${capacity} reached` : ''}
+                  title={atCap ? `Capacity ${capacity} reached` : ''}
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '1fr auto auto auto',
@@ -453,242 +446,68 @@ function ActiveFurnaceBatches() {
 }
 
 /* ════════════════════════════════════════════════════════════════════
-   GRINDING — set/assignment builders (dynamic length-based batching)
-   ════════════════════════════════════════════════════════════════════ */
-function CapacityBar({ used, max }) {
-  const pct = Math.min(100, max ? (used / max) * 100 : 0);
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ flex: 1, height: 8, borderRadius: 6, background: 'var(--bg-muted)', overflow: 'hidden' }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: pct >= 100 ? 'var(--status-success)' : 'var(--status-blue)', transition: 'width 0.2s' }} />
-      </div>
-      <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-secondary)' }}>{used} / {max}mm</span>
-    </div>
-  );
-}
-
-const MACHINES = [
-  { code: 'AG-ALP', label: 'Alpha', max: 1500 },
-  { code: 'AG-BTA', label: 'Beta', max: 1500 },
-  { code: 'AG-GMM', label: 'Gamma', max: 3000 },
-  { code: 'SG-DLT', label: 'Delta', max: 3000 },
-];
-
-function GrindingPanel({ step }) {
-  // Pull queued bars from the furnace-queue endpoint (same queue model).
-  const { data, error, loading, refetch } = usePolling(
-    () => batchesApi.furnaceQueue(step.id).then((r) => r.data),
-    [step.id],
-  );
-  const [assign, setAssign] = useState({}); // machineCode -> [uid codes]
-  const [hint, setHint] = useState(null);
-
-  const queue = useMemo(() => (Array.isArray(data?.uids) ? data.uids : Array.isArray(data) ? data : data?.queue || []).map(normalizeUid), [data]);
-  const byCode = useMemo(() => Object.fromEntries(queue.map((u) => [u.code, u])), [queue]);
-
-  // Which machines apply to this grinding kind.
-  const machines = useMemo(() => {
-    if (step.kind === 'bevel') return MACHINES.filter((m) => m.code !== 'SG-DLT');
-    return MACHINES.filter((m) => m.code === 'SG-DLT'); // surface + bunch run on SG-DLT
-  }, [step.kind]);
-
-  const assignedCodes = useMemo(() => new Set(Object.values(assign).flat()), [assign]);
-
-  function lengthOn(code) {
-    return (assign[code] || []).reduce((s, c) => s + (byCode[c]?.length || 0), 0);
-  }
-
-  function tryAdd(machine, u) {
-    setHint(null);
-    if (u.length > machine.max) {
-      setHint(`${u.length}mm bar cannot run on ${machine.label} (max ${machine.max}mm)`);
-      return;
-    }
-    const current = lengthOn(machine.code);
-    if (current + u.length > machine.max) {
-      setHint(`Combined length ${current + u.length}mm exceeds ${machine.label} capacity of ${machine.max}mm`);
-      return;
-    }
-    setAssign((prev) => ({ ...prev, [machine.code]: [...(prev[machine.code] || []), u.code] }));
-  }
-
-  function removeFrom(machineCode, code) {
-    setAssign((prev) => ({ ...prev, [machineCode]: (prev[machineCode] || []).filter((c) => c !== code) }));
-  }
-
-  if (loading && !data) return <Empty>Loading queued bars…</Empty>;
-  if (error) return <ErrorBox error={error} onRetry={refetch} />;
-
-  const unassigned = queue.filter((u) => !assignedCodes.has(u.code));
-
-  return (
-    <div style={{ marginTop: 12 }}>
-      {step.kind === 'bunch' && (
-        <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', marginBottom: 10 }}>
-          Bars per set: 5 (Admin configurable) · Machine bed 3000mm · sets placed end-to-end · all bars in a set must share length
-        </div>
-      )}
-      {step.kind === 'bevel' && (
-        <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', marginBottom: 10 }}>
-          2750mm bars: AG-GMM only — Alpha/Beta max 1500mm, blocked automatically
-        </div>
-      )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 16 }}>
-        {/* Queued bars */}
-        <div>
-          <Label>Queued bars ({unassigned.length})</Label>
-          {unassigned.length === 0 ? (
-            <Empty>No bars queued.</Empty>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 340, overflowY: 'auto' }}>
-              {unassigned.map((u) => (
-                <div key={u.code} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-input)', background: 'var(--bg-card)' }}>
-                  <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, flex: 1 }}>{u.code}</span>
-                  <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-secondary)' }}>{u.length}mm</span>
-                  {u.priority === 'High' && <span style={{ fontFamily: MONO, fontSize: 9, color: 'var(--status-danger)' }}>● HIGH</span>}
-                  <div style={{ display: 'flex', gap: 4 }}>
-                    {machines.map((m) => (
-                      <button
-                        key={m.code}
-                        className="btn btn-sm"
-                        style={{ height: 26, padding: '0 8px', fontSize: 10 }}
-                        disabled={u.length > m.max}
-                        title={u.length > m.max ? `${u.length}mm > ${m.max}mm max` : `Assign to ${m.label}`}
-                        onClick={() => tryAdd(m, u)}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Machine assignment board */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {machines.map((m) => {
-            const codes = assign[m.code] || [];
-            const used = lengthOn(m.code);
-            return (
-              <div key={m.code} className="card" style={{ padding: '12px 14px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700 }}>{m.code} <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>{m.label}</span></div>
-                  <span style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-secondary)' }}>max {m.max}mm</span>
-                </div>
-                <CapacityBar used={used} max={m.max} />
-                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {codes.length === 0 ? (
-                    <span style={{ fontFamily: SANS, fontSize: 11, color: 'var(--text-muted)' }}>— empty —</span>
-                  ) : codes.map((c) => (
-                    <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontFamily: MONO, fontSize: 11, flex: 1 }}>{c} ({byCode[c]?.length}mm)</span>
-                      <button className="btn btn-sm" style={{ height: 24, padding: '0 7px', fontSize: 10 }} onClick={() => removeFrom(m.code, c)}>Remove</button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {hint && (
-        <div style={{ marginTop: 10, fontFamily: SANS, fontSize: 12, color: 'var(--status-danger)', display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Icon name="alert" size={13} color="var(--status-danger)" /> {hint}
-        </div>
-      )}
-
-      <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-        <button className="btn btn-primary" disabled={assignedCodes.size === 0} title="Confirm all loaded machine batches">
-          Confirm Run ({assignedCodes.size} bars)
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ════════════════════════════════════════════════════════════════════
    PAGE
    ════════════════════════════════════════════════════════════════════ */
 export default function BatchManagement() {
   const { isSupervisor, isAdmin, isManager } = useAuth();
   const canBuild = isSupervisor || isAdmin || isManager;
 
-  const [section, setSection] = useState('furnace');
   const [stepId, setStepId] = useState(FURNACE_STEPS[2].id); // Tempering 1 default
-  const [grindStepId, setGrindStepId] = useState(GRINDING_STEPS[0].id);
+  const [cycleCode, setCycleCode] = useState('EAT');
 
   const step = FURNACE_STEPS.find((s) => s.id === stepId) || FURNACE_STEPS[0];
-  const grindStep = GRINDING_STEPS.find((s) => s.id === grindStepId) || GRINDING_STEPS[0];
+
+  // Dharmapuri cycle types that actually carry furnace steps (configured cycles).
+  // Faridabad (FAR) rolling lives on its own Faridabad Batch Management page.
+  const { data: cyclesData } = usePolling(() => cyclesApi.list().then((r) => r.data).catch(() => []), []);
+  const cycleOptions = useMemo(() => {
+    const rows = Array.isArray(cyclesData) ? cyclesData : [];
+    const configured = rows.filter((c) => c.code && c.code !== 'FAR' && Number(c.step_count) > 0);
+    return (configured.length ? configured : [{ code: 'EAT', name: 'EAT Cycle' }]).map((c) => ({ code: c.code, name: c.name || c.code }));
+  }, [cyclesData]);
 
   return (
     <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
       <Heading />
 
-      <div className="tab-strip" style={{ marginTop: 18 }}>
-        <button className={section === 'furnace' ? 'active' : ''} onClick={() => setSection('furnace')}>Furnace Batches</button>
-        <button className={section === 'grinding' ? 'active' : ''} onClick={() => setSection('grinding')}>Grinding Batches</button>
+      {/* Active batches */}
+      <div style={{ marginTop: 20 }}>
+        <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.03em', color: 'var(--text-primary)', marginBottom: 10 }}>
+          Active furnace batches
+        </div>
+        <ActiveFurnaceBatches />
       </div>
 
-      {section === 'furnace' && (
-        <>
-          {/* Active batches */}
-          <div style={{ marginTop: 20 }}>
-            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.03em', color: 'var(--text-primary)', marginBottom: 10 }}>
-              Active furnace batches
-            </div>
-            <ActiveFurnaceBatches />
+      {/* Build a batch */}
+      <div className="card" style={{ marginTop: 20, padding: '18px 20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.03em', color: 'var(--text-primary)' }}>
+            Build a furnace batch
           </div>
-
-          {/* Build a batch */}
-          <div className="card" style={{ marginTop: 20, padding: '18px 20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-              <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.03em', color: 'var(--text-primary)' }}>
-                Build a furnace batch
-              </div>
-              <div style={{ minWidth: 240 }}>
-                <select className="form-select" style={{ height: 38 }} value={stepId} onChange={(e) => setStepId(Number(e.target.value))}>
-                  {FURNACE_STEPS.map((s) => (
-                    <option key={s.id} value={s.id}>{s.code} — {s.label}</option>
-                  ))}
-                </select>
-              </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ minWidth: 150 }}>
+              <select className="form-select" style={{ height: 38 }} value={cycleCode} onChange={(e) => setCycleCode(e.target.value)}>
+                {cycleOptions.map((c) => (
+                  <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
+                ))}
+              </select>
             </div>
-
-            {!canBuild ? (
-              <Empty>Only a Supervisor can build furnace batches.</Empty>
-            ) : (
-              <FurnaceBuilder key={step.id} step={step} isSupervisor={canBuild} />
-            )}
-          </div>
-        </>
-      )}
-
-      {section === 'grinding' && (
-        <div className="card" style={{ marginTop: 20, padding: '18px 20px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.03em', color: 'var(--text-primary)' }}>
-              {grindStep.label} — {grindStep.station}
-            </div>
-            <div style={{ minWidth: 240 }}>
-              <select className="form-select" style={{ height: 38 }} value={grindStepId} onChange={(e) => setGrindStepId(Number(e.target.value))}>
-                {GRINDING_STEPS.map((s) => (
-                  <option key={s.id} value={s.id}>Step {s.id} — {s.label}</option>
+            <div style={{ minWidth: 220 }}>
+              <select className="form-select" style={{ height: 38 }} value={stepId} onChange={(e) => setStepId(Number(e.target.value))}>
+                {FURNACE_STEPS.map((s) => (
+                  <option key={s.id} value={s.id}>{s.code} — {s.label}</option>
                 ))}
               </select>
             </div>
           </div>
-
-          {!canBuild ? (
-            <Empty>Only a Supervisor can build grinding batches.</Empty>
-          ) : (
-            <GrindingPanel key={grindStep.id} step={grindStep} />
-          )}
         </div>
-      )}
+
+        {!canBuild ? (
+          <Empty>Only a Supervisor can build furnace batches.</Empty>
+        ) : (
+          <FurnaceBuilder key={`${step.id}|${cycleCode}`} step={step} cycleCode={cycleCode} isSupervisor={canBuild} />
+        )}
+      </div>
     </div>
   );
 }
