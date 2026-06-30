@@ -90,16 +90,67 @@ router.get('/weld-tally', async (req, res) => {
  * directly too for flexibility / testing.
  */
 router.post('/weld', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
-  const { cycleCode, alloyIntakeId, msIntakeId, workstationUnitId, sizeMm } = req.body;
+  const { cycleCode, alloyIntakeId, msIntakeId, workstationUnitId, sizeMm, bom } = req.body;
   const { rows: cycleRows } = await query(`SELECT id FROM cycle_types WHERE code = $1`, [cycleCode]);
   if (!cycleRows[0]) return res.status(400).json({ success: false, error: { code: 'UNKNOWN_CYCLE', message: 'Unknown cycle type.' } });
 
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO faridabad_weld_log (cycle_type_id, alloy_intake_id, ms_intake_id, operator_id, workstation_unit_id, size_mm, started_at)
+       VALUES ($1,$2,$3,$4,$5,$6, now()) RETURNING *`,
+      [cycleRows[0].id, alloyIntakeId || null, msIntakeId || null, req.user.sub, workstationUnitId || null, sizeMm || null]
+    );
+    const weld = rows[0];
+
+    // BOM lines for the final block — the input pieces welded together.
+    const lines = Array.isArray(bom) ? bom : [];
+    for (const c of lines) {
+      const componentType = (c.componentType || c.component_type || 'other').toString().slice(0, 20);
+      const intakeId = c.intakeId ?? c.intake_id ?? null;
+      const description = c.description ?? null;
+      const dimensionsMm = c.dimensionsMm ?? c.dimensions_mm ?? null;
+      const quantity = Number(c.quantity) > 0 ? Number(c.quantity) : 1;
+      if (!intakeId && !description) continue; // skip empty rows
+      await client.query(
+        `INSERT INTO faridabad_weld_bom (weld_log_id, component_type, intake_id, description, dimensions_mm, quantity)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [weld.id, componentType, intakeId, description, dimensionsMm, quantity]
+      );
+    }
+    return weld;
+  });
+
+  return res.status(201).json({ success: true, data: result });
+});
+
+/**
+ * GET /api/v1/faridabad/welds?limit=
+ * Recent welded blocks with their BOM (the input pieces welded together).
+ * Read-only — for the Joining Operation page's "recent blocks" view.
+ */
+router.get('/welds', async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
   const { rows } = await query(
-    `INSERT INTO faridabad_weld_log (cycle_type_id, alloy_intake_id, ms_intake_id, operator_id, workstation_unit_id, size_mm, started_at)
-     VALUES ($1,$2,$3,$4,$5,$6, now()) RETURNING *`,
-    [cycleRows[0].id, alloyIntakeId || null, msIntakeId || null, req.user.sub, workstationUnitId || null, sizeMm || null]
+    `SELECT wl.id, wl.size_mm, wl.dispatched, wl.started_at,
+            ct.code AS cycle_code, e.full_name AS operator_name,
+            COALESCE((
+              SELECT json_agg(json_build_object(
+                       'id', b.id, 'componentType', b.component_type,
+                       'intakeId', b.intake_id, 'heatNumber', ri.heat_number,
+                       'description', b.description, 'dimensionsMm', b.dimensions_mm,
+                       'quantity', b.quantity) ORDER BY b.id)
+              FROM faridabad_weld_bom b
+              LEFT JOIN raw_material_intakes ri ON ri.id = b.intake_id
+              WHERE b.weld_log_id = wl.id
+            ), '[]') AS bom
+     FROM faridabad_weld_log wl
+     JOIN cycle_types ct ON ct.id = wl.cycle_type_id
+     LEFT JOIN employees e ON e.id = wl.operator_id
+     ORDER BY wl.id DESC
+     LIMIT $1`,
+    [limit]
   );
-  return res.status(201).json({ success: true, data: rows[0] });
+  return res.json({ success: true, data: rows });
 });
 
 /**

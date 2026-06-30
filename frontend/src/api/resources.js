@@ -15,6 +15,7 @@ export const faridabadApi = {
   createIntake: (payload) => api.post('/faridabad/intakes', payload),
   weldTally: () => api.get('/faridabad/weld-tally'),
   logWeld: (payload) => api.post('/faridabad/weld', payload),
+  recentWelds: (limit) => api.get('/faridabad/welds', { limit }),
   dispatches: () => api.get('/faridabad/dispatches'),
   createDispatch: (payload) => api.post('/faridabad/dispatches', payload),
   // Work items moving through the 10-step FAR cycle (floor + workstation)
