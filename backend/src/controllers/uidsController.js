@@ -82,7 +82,7 @@ async function getUidDetail(req, res) {
   const { code } = req.params;
   const { rows } = await query(
     `SELECT u.*, ct.code AS cycle_code, sl.code AS storage_code,
-            sz.size_mm, d.code AS design_code, mo.mo_number, p.name AS parent_uid_code,
+            sz.size_mm, d.code AS design_code, mo.mo_number, p.uid_code AS parent_uid_code,
             re.receiving_reference, cd.batch_reference AS dispatch_batch_reference,
             cd.possible_alloy_heats, cd.possible_ms_heats, cd.color_code_id,
             cc.name AS color_name, cont.name AS contractor_name
