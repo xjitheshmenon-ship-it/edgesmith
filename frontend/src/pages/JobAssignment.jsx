@@ -159,6 +159,11 @@ function WorkstationRow({ ws, draggingOp, onDropOperator }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <StatusPill status={status} label={QUEUE_STATUS_LABEL[status]} />
+        {ws.ops && ws.ops.length ? (
+          <span className="badge" style={{ background: 'rgba(45,111,181,0.14)', color: 'var(--cycle-eat, #2d6fb5)' }}>
+            {ws.ops.length} op{ws.ops.length === 1 ? '' : 's'}
+          </span>
+        ) : null}
         {furnace ? (
           <span className="badge" style={{ background: 'rgba(192,118,43,0.14)', color: 'var(--cycle-oven, #c0762b)' }}>
             ◍ FURNACE · SUPERVISOR
@@ -166,8 +171,20 @@ function WorkstationRow({ ws, draggingOp, onDropOperator }) {
         ) : null}
       </div>
 
+      {ws.ops && ws.ops.length ? (
+        <div style={{ fontFamily: SANS, fontSize: 11, color: T_SECONDARY }}>
+          {ws.ops.map((o) => o.name).join(', ')}
+        </div>
+      ) : null}
+
       <div style={{ fontFamily: SANS, fontSize: 11, color: over ? 'var(--status-success-dark, #1c7a52)' : T_MUTED }}>
-        {furnace ? 'Auto-assigned to the supervisor on duty.' : over ? 'Drop to assign this operator' : 'Drag an operator here'}
+        {furnace
+          ? 'Auto-assigned to the supervisor on duty.'
+          : over
+            ? 'Drop to assign this operator'
+            : ws.ops && ws.ops.length
+              ? 'Drag another operator here to add'
+              : 'Drag an operator here'}
       </div>
     </div>
   );
@@ -387,7 +404,7 @@ function MachinePicker({ op, location, candidateWorkstations, onPick, onClose, b
                   <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY }}>
                     <Mono style={{ fontSize: 12.5 }}>{w.code}</Mono>{w.name ? <span style={{ fontWeight: 500, color: T_SECONDARY }}> · {w.name}</span> : null}
                   </div>
-                  <Mono style={{ fontSize: 11, color: T_SECONDARY }}>queue {w.queued ?? 0}</Mono>
+                  <Mono style={{ fontSize: 11, color: T_SECONDARY }}>queue {w.queued ?? 0}{w.ops && w.ops.length ? ` · ${w.ops.length} on machine` : ''}</Mono>
                 </div>
                 {w.hasBadge ? (
                   <span className="badge" style={{ background: 'rgba(34,160,107,0.14)', color: 'var(--status-success, #22a06b)' }}>✓ BADGED</span>
@@ -507,27 +524,35 @@ export default function JobAssignment() {
     return map;
   }, [rawAssignments, workstations]);
 
-  // codes already assigned to someone → drop them from the "unassigned" panel.
-  const assignedCodes = useMemo(() => {
-    const set = new Set();
-    for (const a of rawAssignments) set.add(pick(a, 'workstation_code', 'code', 'workstation', 'station_code'));
-    return set;
+  // Operators assigned per workstation code — a workstation can be run by
+  // SEVERAL operators (e.g. a two-person machine), so we track all of them.
+  const opsByCode = useMemo(() => {
+    const map = {};
+    for (const a of rawAssignments) {
+      const code = pick(a, 'workstation_code', 'code', 'workstation', 'station_code');
+      const name = pick(a, 'full_name', 'name', 'employee_name') || pick(a, 'employee_code', 'emp_code') || 'Operator';
+      if (!map[code]) map[code] = [];
+      map[code].push({ id: pick(a, 'operator_id', 'employee_id'), name });
+    }
+    return map;
   }, [rawAssignments]);
 
-  // Unassigned workstations: active this shift, not yet assigned, busiest first.
-  // Search + queue-status filter applied. Furnace stations stay listed (flagged)
-  // since the supervisor still needs visibility, but they are not draggable.
-  const unassigned = useMemo(() => {
+  const assignedCodes = useMemo(() => new Set(Object.keys(opsByCode)), [opsByCode]);
+
+  // The board shows EVERY factory workstation (so already-staffed machines can
+  // still take another operator), search + queue-status filtered. Unstaffed
+  // machines with a queue float to the top.
+  const boardWorkstations = useMemo(() => {
     const q = search.trim().toUpperCase();
     return workstations
-      .filter((w) => !assignedCodes.has(w.code))
+      .map((w) => ({ ...w, ops: opsByCode[w.code] || [] }))
       .filter((w) => {
         if (q && !`${w.code} ${w.name || ''}`.toUpperCase().includes(q)) return false;
         if (statusFilter !== 'all' && queueStatus(w.queued, w.running) !== statusFilter) return false;
         return true;
       })
-      .sort((a, b) => b.queued - a.queued);
-  }, [workstations, assignedCodes, search, statusFilter]);
+      .sort((a, b) => (a.ops.length === 0 ? 0 : 1) - (b.ops.length === 0 ? 0 : 1) || b.queued - a.queued);
+  }, [workstations, opsByCode, search, statusFilter]);
 
   // ── shift summary figures (factory-scoped) ──
   const totalStations = workstations.length;
@@ -670,7 +695,7 @@ export default function JobAssignment() {
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 300px) minmax(0, 1fr) minmax(200px, 240px)', gap: 18, marginTop: 18, alignItems: 'start' }}>
         {/* ── LEFT: unassigned workstations ── */}
         <div className="card" style={{ padding: '16px 16px', position: 'sticky', top: 18 }}>
-          <Label style={{ marginBottom: 10 }}>Unassigned workstations · {unassignedAll.length}</Label>
+          <Label style={{ marginBottom: 10 }}>Workstations · {workstations.length}</Label>
 
           <div style={{ position: 'relative', marginBottom: 10 }}>
             <span style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: T_MUTED }}>
@@ -708,20 +733,18 @@ export default function JobAssignment() {
 
           {loading && !data ? (
             <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY, padding: '12px 4px' }}>Loading workstations…</div>
-          ) : unassigned.length === 0 ? (
+          ) : boardWorkstations.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '28px 8px' }}>
               <Icon name="check" size={24} color="var(--status-success, #22a06b)" />
               <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY, marginTop: 8 }}>
                 {workstations.length === 0
                   ? 'No active workstations for this shift.'
-                  : search || statusFilter !== 'all'
-                  ? 'No workstations match this filter.'
-                  : 'All workstations assigned.'}
+                  : 'No workstations match this filter.'}
               </div>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
-              {unassigned.map((ws) => (
+              {boardWorkstations.map((ws) => (
                 <WorkstationRow
                   key={ws.code}
                   ws={ws}
@@ -806,19 +829,29 @@ export default function JobAssignment() {
         </div>
       </div>
 
-      {pickerOp && (
-        <MachinePicker
-          op={pickerOp}
-          location={location}
-          candidateWorkstations={unassignedAll}
-          busy={!!pendingId}
-          onClose={() => setPickerOp(null)}
-          onPick={(ws) => {
-            doAssign(pickerOp, ws, true); // picker only offers eligible machines
-            setPickerOp(null);
-          }}
-        />
-      )}
+      {pickerOp && (() => {
+        // Any factory machine the operator isn't already on — a machine can be
+        // staffed by several operators, so already-staffed ones still qualify.
+        const ownCodes = new Set(
+          (assignmentsByOperator.get(pick(pickerOp, 'id', 'employee_id', 'user_id')) || []).map((a) => a.code)
+        );
+        const candidates = workstations
+          .map((w) => ({ ...w, ops: opsByCode[w.code] || [] }))
+          .filter((w) => !ownCodes.has(w.code));
+        return (
+          <MachinePicker
+            op={pickerOp}
+            location={location}
+            candidateWorkstations={candidates}
+            busy={!!pendingId}
+            onClose={() => setPickerOp(null)}
+            onPick={(ws) => {
+              doAssign(pickerOp, ws, true); // picker only offers eligible machines
+              setPickerOp(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }
