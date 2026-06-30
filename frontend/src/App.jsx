@@ -16,6 +16,8 @@ import RawMaterialIntake from './pages/RawMaterialIntake';
 import JoiningOperation from './pages/JoiningOperation';
 import ContractorDispatch from './pages/ContractorDispatch';
 import FaridabadBatchManagement from './pages/FaridabadBatchManagement';
+import FaridabadProductionFloor from './pages/FaridabadProductionFloor';
+import FaridabadMyWorkstation from './pages/FaridabadMyWorkstation';
 import ServiceLookup from './pages/ServiceLookup';
 import MoLinking from './pages/MoLinking';
 import MasterLists from './pages/MasterLists';
@@ -43,6 +45,8 @@ const PAGES = {
   joining: JoiningOperation,
   dispatch: ContractorDispatch,
   farbatch: FaridabadBatchManagement,
+  farfloor: FaridabadProductionFloor,
+  farstation: FaridabadMyWorkstation,
   service: ServiceLookup,
   mo: MoLinking,
   masters: MasterLists,
