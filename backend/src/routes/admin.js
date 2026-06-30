@@ -31,7 +31,7 @@ router.get('/tempering-params', async (req, res) => {
  */
 router.patch('/tempering-params/:cycleCode/:temperingStep', requireRole(['admin']), async (req, res) => {
   const { cycleCode, temperingStep } = req.params;
-  const { targetTempC, targetSoakMin, toleranceTempC, toleranceSoakMin } = req.body;
+  const { targetTempC, targetSoakMin, toleranceTempC, toleranceSoakMin, risingTimeMin } = req.body;
 
   if (!TEMPERING_STEPS.includes(temperingStep)) {
     return res.status(400).json({ success: false, error: { code: 'INVALID_STEP', message: `temperingStep must be one of ${TEMPERING_STEPS.join(', ')}` } });
@@ -41,13 +41,15 @@ router.patch('/tempering-params/:cycleCode/:temperingStep', requireRole(['admin'
   if (!cycleRows[0]) return res.status(404).json({ success: false, error: { code: 'UNKNOWN_CYCLE', message: 'Unknown cycle type.' } });
 
   const { rows } = await query(
-    `INSERT INTO tempering_parameters (cycle_type_id, tempering_step, target_temp_c, target_soak_min, tolerance_temp_c, tolerance_soak_min, changed_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+    `INSERT INTO tempering_parameters (cycle_type_id, tempering_step, target_temp_c, target_soak_min, tolerance_temp_c, tolerance_soak_min, rising_time_min, changed_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      ON CONFLICT (cycle_type_id, tempering_step)
      DO UPDATE SET target_temp_c = EXCLUDED.target_temp_c, target_soak_min = EXCLUDED.target_soak_min,
-       tolerance_temp_c = EXCLUDED.tolerance_temp_c, tolerance_soak_min = EXCLUDED.tolerance_soak_min, changed_by = EXCLUDED.changed_by
+       tolerance_temp_c = EXCLUDED.tolerance_temp_c, tolerance_soak_min = EXCLUDED.tolerance_soak_min,
+       rising_time_min = EXCLUDED.rising_time_min, changed_by = EXCLUDED.changed_by
      RETURNING *`,
-    [cycleRows[0].id, temperingStep, targetTempC, targetSoakMin, toleranceTempC || 5, toleranceSoakMin || 5, req.user.sub]
+    [cycleRows[0].id, temperingStep, targetTempC, targetSoakMin, toleranceTempC || 5, toleranceSoakMin || 5,
+      risingTimeMin == null || risingTimeMin === '' ? null : risingTimeMin, req.user.sub]
   );
 
   await req.audit({ tableName: 'tempering_parameters', recordId: rows[0].id, action: 'UPDATE', after: rows[0] });

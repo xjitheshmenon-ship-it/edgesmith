@@ -17,16 +17,17 @@ const FURNACE = 'HT90';
 // The three cycle types — rows in the matrix. Colours/badges come from Badges.jsx.
 const CYCLE_TYPES = ['EAT', 'SWAN', 'OVEN'];
 
-// The four HT90 tempering steps — columns in the matrix.
-// `step` is the canonical step number used as the temperingStep path param.
+// The four HT90 tempering steps — columns in the matrix. `key` is the backend's
+// tempering_step value (used both to match a param record and as the PATCH path
+// param); `step` is only the human-facing step number shown in the subtitle.
 const STEPS = [
-  { step: 9, label: 'Tempering 1', sub: 'Step 9 · first temper' },
-  { step: 10, label: 'Tempering 2', sub: 'Step 10 · second temper' },
-  { step: 14, label: 'Tempering 3', sub: 'Step 14 · after machining' },
-  { step: 23, label: 'Tempering 4', sub: 'Step 23 · stress relief' },
+  { key: 'tempering_1', step: 9, label: 'Tempering 1', sub: 'Step 9 · first temper' },
+  { key: 'tempering_2', step: 10, label: 'Tempering 2', sub: 'Step 10 · second temper' },
+  { key: 'tempering_3', step: 14, label: 'Tempering 3', sub: 'Step 14 · after machining' },
+  { key: 'tempering_4', step: 23, label: 'Tempering 4', sub: 'Step 23 · stress relief' },
 ];
 
-// ── Field accessors (tolerate snake_case or camelCase from the API) ─────────
+// ── Field accessors (match the backend columns; keep camelCase fallbacks) ────
 const f = (o, ...keys) => {
   for (const k of keys) if (o != null && o[k] != null && o[k] !== '') return o[k];
   return undefined;
@@ -34,11 +35,12 @@ const f = (o, ...keys) => {
 const num = (v) => (v == null || v === '' ? null : Number(v));
 
 const getCycle = (p) => f(p, 'cycle_code', 'cycleCode', 'cycle_type', 'cycleType', 'cycle');
-const getStep = (p) => num(f(p, 'tempering_step', 'temperingStep', 'step', 'step_number', 'stepNumber'));
+const getStepKey = (p) => f(p, 'tempering_step', 'temperingStep', 'step_key', 'stepKey');
 const getTargetTemp = (p) => num(f(p, 'target_temp_c', 'targetTempC', 'target_temp', 'targetTemp', 'temp'));
-const getSoak = (p) => num(f(p, 'soak_time_min', 'soakTimeMin', 'soak_time', 'soakTime', 'soak'));
-const getTempTol = (p) => num(f(p, 'temp_tolerance_c', 'tempToleranceC', 'temp_tolerance', 'tempTolerance', 'temp_tol'));
-const getSoakTol = (p) => num(f(p, 'soak_tolerance_min', 'soakToleranceMin', 'soak_tolerance', 'soakTolerance', 'soak_tol'));
+const getSoak = (p) => num(f(p, 'target_soak_min', 'targetSoakMin', 'soak_time_min', 'soakTimeMin', 'soak'));
+const getTempTol = (p) => num(f(p, 'tolerance_temp_c', 'toleranceTempC', 'temp_tolerance_c', 'tempToleranceC', 'temp_tol'));
+const getSoakTol = (p) => num(f(p, 'tolerance_soak_min', 'toleranceSoakMin', 'soak_tolerance_min', 'soakToleranceMin', 'soak_tol'));
+const getRising = (p) => num(f(p, 'rising_time_min', 'risingTimeMin', 'rising_time', 'risingTime'));
 const getVersion = (p) => f(p, 'version', 'version_number', 'versionNumber');
 const getUpdatedAt = (p) => f(p, 'updated_at', 'updatedAt', 'changed_at', 'changedAt', 'created_at', 'createdAt');
 const getChangedBy = (p) =>
@@ -113,7 +115,8 @@ function ValueChip({ label, value, unit, tol, mono }) {
 function CellEditor({ cycle, stepMeta, param, busy, onCancel, onSave }) {
   const [form, setForm] = useState(() => ({
     target_temp_c: getTargetTemp(param) ?? '',
-    soak_time_min: getSoak(param) ?? '',
+    target_soak_min: getSoak(param) ?? '',
+    rising_time_min: getRising(param) ?? '',
     temp_tolerance_c: getTempTol(param) ?? '',
     soak_tolerance_min: getSoakTol(param) ?? '',
   }));
@@ -121,18 +124,35 @@ function CellEditor({ cycle, stepMeta, param, busy, onCancel, onSave }) {
 
   const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
 
+  // Map the form fields to the exact body keys the backend PATCH expects.
+  const PAYLOAD_KEYS = {
+    target_temp_c: 'targetTempC',
+    target_soak_min: 'targetSoakMin',
+    temp_tolerance_c: 'toleranceTempC',
+    soak_tolerance_min: 'toleranceSoakMin',
+  };
+
   function submit(e) {
     e.preventDefault();
     setErr(null);
     const payload = {};
-    for (const k of ['target_temp_c', 'soak_time_min', 'temp_tolerance_c', 'soak_tolerance_min']) {
+    // Target, soak and the two tolerances are required.
+    for (const [k, apiKey] of Object.entries(PAYLOAD_KEYS)) {
       const v = form[k];
-      if (v === '' || v == null) return setErr('All four values are required.');
+      if (v === '' || v == null) return setErr('Target, soak and both tolerances are required.');
       const n = Number(v);
       if (Number.isNaN(n) || n < 0) return setErr('Values must be non-negative numbers.');
-      payload[k] = n;
+      payload[apiKey] = n;
     }
-    onSave(cycle, stepMeta.step, payload).then((apiErr) => {
+    // Rising time is optional.
+    if (form.rising_time_min !== '' && form.rising_time_min != null) {
+      const r = Number(form.rising_time_min);
+      if (Number.isNaN(r) || r < 0) return setErr('Rising time must be a non-negative number.');
+      payload.risingTimeMin = r;
+    } else {
+      payload.risingTimeMin = null;
+    }
+    onSave(cycle, stepMeta.key, payload).then((apiErr) => {
       if (apiErr) setErr(apiErr);
     });
   }
@@ -157,7 +177,9 @@ function CellEditor({ cycle, stepMeta, param, busy, onCancel, onSave }) {
     <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 9 }} className="cp-fade-in">
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <Field k="target_temp_c" label="Target" unit="°C" mono />
-        <Field k="soak_time_min" label="Soak" unit="min" />
+        <Field k="target_soak_min" label="Soak" unit="min" />
+        <Field k="rising_time_min" label="Rising time" unit="min" />
+        <div />
         <Field k="temp_tolerance_c" label="Temp tol ±" unit="°C" mono />
         <Field k="soak_tolerance_min" label="Soak tol ±" unit="min" />
       </div>
@@ -194,6 +216,7 @@ function MatrixCell({ cycle, stepMeta, param, isAdmin, editing, busy, onEdit, on
             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
               <ValueChip label="Target" value={getTargetTemp(param)} unit="°C" mono />
               <ValueChip label="Soak" value={getSoak(param)} unit="min" />
+              <ValueChip label="Rising time" value={getRising(param)} unit="min" />
               <div style={{ borderTop: '1px dashed var(--border-input, #d6e0d2)', margin: '2px 0' }} />
               <ValueChip label="Temp tol" value={getTempTol(param)} unit="°C" tol mono />
               <ValueChip label="Soak tol" value={getSoakTol(param)} unit="min" tol />
@@ -252,11 +275,11 @@ export default function TemperingParameters() {
     load();
   }, [load]);
 
-  // Index params by `${cycle}:${step}` for O(1) cell lookup.
+  // Index params by `${cycle}:${stepKey}` for O(1) cell lookup.
   const byKey = {};
   for (const p of params || []) {
     const c = getCycle(p);
-    const s = getStep(p);
+    const s = getStepKey(p);
     if (c != null && s != null) byKey[`${c}:${s}`] = p;
   }
 
@@ -274,7 +297,7 @@ export default function TemperingParameters() {
     setNotice(null);
     try {
       await adminApi.updateTemperingParams(cycle, step, payload).then((r) => r.data);
-      const stepLabel = STEPS.find((s) => s.step === step)?.label || `Step ${step}`;
+      const stepLabel = STEPS.find((s) => s.key === step)?.label || step;
       setNotice(`${cycle} · ${stepLabel} updated — a new parameter version was created (${user?.full_name || user?.username || 'you'}).`);
       setEditKey(null);
       await load();
@@ -353,7 +376,7 @@ export default function TemperingParameters() {
                       </div>
                     </td>
                     {STEPS.map((stepMeta) => {
-                      const key = `${cycle}:${stepMeta.step}`;
+                      const key = `${cycle}:${stepMeta.key}`;
                       return (
                         <MatrixCell
                           key={key}

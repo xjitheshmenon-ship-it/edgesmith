@@ -254,11 +254,12 @@ async function seedEatCycle(wsIds) {
  * should review and adjust to the actual metallurgical spec before
  * production use. SWAN/OVEN left unconfigured until those cycles exist.
  */
+// [step, target_temp_c, target_soak_min, tolerance_temp_c, tolerance_soak_min, rising_time_min]
 const TEMPERING_DEFAULTS = [
-  ['tempering_1', 180, 90, 5, 5],
-  ['tempering_2', 160, 90, 5, 5],
-  ['tempering_3', 150, 60, 5, 5],
-  ['tempering_4', 140, 60, 5, 5], // Stress Relief
+  ['tempering_1', 180, 90, 5, 5, 45],
+  ['tempering_2', 160, 90, 5, 5, 40],
+  ['tempering_3', 150, 60, 5, 5, 35],
+  ['tempering_4', 140, 60, 5, 5, 30], // Stress Relief
 ];
 
 async function seedTemperingParameters() {
@@ -266,13 +267,13 @@ async function seedTemperingParameters() {
   const eatId = eatRows[0].id;
 
   let count = 0;
-  for (const [step, temp, soak, tolT, tolS] of TEMPERING_DEFAULTS) {
+  for (const [step, temp, soak, tolT, tolS, rising] of TEMPERING_DEFAULTS) {
     const { rows: existing } = await query(`SELECT id FROM tempering_parameters WHERE cycle_type_id = $1 AND tempering_step = $2`, [eatId, step]);
     if (existing.length) continue;
     await query(
-      `INSERT INTO tempering_parameters (cycle_type_id, tempering_step, target_temp_c, target_soak_min, tolerance_temp_c, tolerance_soak_min)
-       VALUES ($1,$2,$3,$4,$5,$6)`,
-      [eatId, step, temp, soak, tolT, tolS]
+      `INSERT INTO tempering_parameters (cycle_type_id, tempering_step, target_temp_c, target_soak_min, tolerance_temp_c, tolerance_soak_min, rising_time_min)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [eatId, step, temp, soak, tolT, tolS, rising]
     );
     count++;
   }
