@@ -59,9 +59,11 @@ furnaceRouter.get('/queue', async (req, res) => {
     return res.status(400).json({ success: false, error: { code: 'MISSING_PARAMS', message: 'cycle_step_id and cycle_code are required.' } });
   }
 
-  const { rows: stepRows } = await query(`SELECT * FROM cycle_steps WHERE id = $1`, [cycle_step_id]);
-  const step = stepRows[0];
-  if (!step) return res.status(404).json({ success: false, error: { code: 'STEP_NOT_FOUND', message: 'Step not found.' } });
+  // cycle_step_id from the client is a step NUMBER (e.g. 9 = Tempering 1).
+  // Resolve it against this cycle's current version — never assume the PK id
+  // equals the step number (the 16B split step makes those diverge).
+  const step = await resolveFurnaceStep(query, cycle_code, cycle_step_id);
+  if (!step) return res.status(404).json({ success: false, error: { code: 'STEP_NOT_FOUND', message: 'Step not found for this cycle.' } });
 
   // Queued UIDs at this step, this cycle type only (hard isolation rule)
   const { rows: queued } = await query(
@@ -120,9 +122,9 @@ furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor']), async (
   }
 
   const result = await withTransaction(async (client) => {
-    const { rows: stepRows } = await client.query(`SELECT * FROM cycle_steps WHERE id = $1`, [cycleStepId]);
-    const step = stepRows[0];
-    if (!step) throw Object.assign(new Error('Step not found'), { status: 404, code: 'STEP_NOT_FOUND' });
+    // cycleStepId is a step NUMBER — resolve against the cycle's current version.
+    const step = await resolveFurnaceStep((sql, p) => client.query(sql, p), cycleCode, cycleStepId);
+    if (!step) throw Object.assign(new Error('Step not found for this cycle'), { status: 404, code: 'STEP_NOT_FOUND' });
 
     const { rows: cycleRows } = await client.query(`SELECT id FROM cycle_types WHERE code = $1`, [cycleCode]);
     if (!cycleRows[0]) throw Object.assign(new Error('Unknown cycle'), { status: 400, code: 'UNKNOWN_CYCLE' });
@@ -161,7 +163,7 @@ furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor']), async (
       `INSERT INTO furnace_batches (batch_number, cycle_step_id, cycle_type_id, workstation_unit_id,
                                      target_temp_c, target_soak_min, status, started_at, operator_id)
        VALUES ($1,$2,$3,$4,$5,$6,'running', now(), $7) RETURNING *`,
-      [batchNumber, cycleStepId, cycleTypeId, workstationUnitId || null,
+      [batchNumber, step.id, cycleTypeId, workstationUnitId || null,
         params ? params.target_temp_c : null, params ? params.target_soak_min : null, req.user.sub]
     );
     const batch = batchRows[0];
@@ -483,6 +485,25 @@ grindingRouter.post('/batches/:id/close', requireRole(['admin', 'manager', 'supe
 
 router.use('/furnace-batches', furnaceRouter);
 router.use('/grinding', grindingRouter);
+
+/**
+ * Resolve a furnace step from a step NUMBER within a cycle's CURRENT version.
+ * `run` is a (sql, params) => Promise function (query or a client-bound wrapper).
+ * Falls back to a primary-key lookup for backward compatibility.
+ */
+async function resolveFurnaceStep(run, cycleCode, stepNumberOrId) {
+  const { rows } = await run(
+    `SELECT cs.* FROM cycle_steps cs
+     JOIN cycle_versions cv ON cv.id = cs.cycle_version_id
+     JOIN cycle_types ct ON ct.id = cv.cycle_type_id
+     WHERE ct.code = $1 AND cv.is_current = true AND cs.step_number = $2
+     LIMIT 1`,
+    [cycleCode, String(stepNumberOrId)]
+  );
+  if (rows[0]) return rows[0];
+  const { rows: byId } = await run(`SELECT * FROM cycle_steps WHERE id = $1`, [stepNumberOrId]);
+  return byId[0] || null;
+}
 
 function mapStepToTemperingKey(stepNumber) {
   const map = { '9': 'tempering_1', '10': 'tempering_2', '14': 'tempering_3', '23': 'tempering_4' };
