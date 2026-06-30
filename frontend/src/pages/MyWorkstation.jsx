@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { jobsApi, PAUSE_REASONS } from '../api/jobs';
 import { uidsApi } from '../api/uids';
+import { batchesApi } from '../api/batches';
 import { useAuth } from '../store/AuthContext';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
@@ -520,6 +521,344 @@ function TimerCell({ label, value, color }) {
   );
 }
 
+/* ── Bunch grinding (SG-DLT) ──────────────────────────────────────────────────
+   For the SG-DLT bunch-grinding machine the operator manually LOADS several
+   bars at once (a "bunch") onto the machine, runs them together, then closes
+   the whole bunch. This panel REPLACES the single active-job card + queue for
+   SG-DLT stations only. Bars in a single bunch must share one operation_name
+   (the backend rejects mixed steps with STEP_MISMATCH).
+   ──────────────────────────────────────────────────────────────────────────── */
+
+function BunchBarRow({ uid, idx, selected, disabled, onToggle }) {
+  return (
+    <label
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '12px 16px',
+        borderTop: idx ? '1px solid var(--border-card, #e3ebde)' : 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.45 : 1,
+        background: selected ? 'var(--bg-soft-blue, #eaf0f7)' : 'transparent',
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={selected}
+        disabled={disabled}
+        onChange={onToggle}
+        style={{ width: 18, height: 18, accentColor: '#3b82f6', flex: '0 0 auto' }}
+      />
+      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.02em', color: T_PRIMARY, minWidth: 64 }}>
+        {pick(uid, 'uid_code') || pick(uid, 'uid_id')}
+      </div>
+      {pick(uid, 'operation_name') && (
+        <span
+          style={{
+            fontFamily: MONO,
+            fontSize: 9.5,
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            color: T_SECONDARY,
+            background: 'var(--bg-muted, #f4f7f2)',
+            border: '1px solid var(--border-card, #e3ebde)',
+            borderRadius: 6,
+            padding: '3px 7px',
+          }}
+        >
+          {pick(uid, 'operation_name')}
+        </span>
+      )}
+      <div style={{ flex: 1 }} />
+      {pick(uid, 'size_mm') != null && (
+        <Mono style={{ fontSize: 12, color: T_SECONDARY }}>{pick(uid, 'size_mm')}mm</Mono>
+      )}
+      {pick(uid, 'storage_code') && (
+        <Mono style={{ fontSize: 11, color: T_MUTED }}>{pick(uid, 'storage_code')}</Mono>
+      )}
+    </label>
+  );
+}
+
+function BunchGrindingPanel({ unitId, nowMs, canAct }) {
+  const { data: activeData, refetch: refetchActive } = usePolling(
+    () => (unitId == null ? Promise.resolve(null) : batchesApi.grindingActiveBatch(unitId).then((r) => r.data)),
+    [unitId],
+    { interval: 20000 }
+  );
+  const { data: queueData, refetch: refetchQueue } = usePolling(
+    () => batchesApi.grindingQueue().then((r) => r.data),
+    [],
+    { interval: 20000 }
+  );
+
+  const activeBatch = activeData || null;
+  const bedLengthMm = pick(queueData || {}, 'bedLengthMm');
+  const queueUids = useMemo(() => (queueData && Array.isArray(queueData.uids) ? queueData.uids : []), [queueData]);
+
+  const [selected, setSelected] = useState({}); // uid_id -> true
+  const [selectedOp, setSelectedOp] = useState(null); // the operation_name the current selection is locked to
+  const [busy, setBusy] = useState(false);
+  const [opError, setOpError] = useState(null);
+
+  // Clear any stale selection if the underlying queue no longer contains it.
+  useEffect(() => {
+    setSelected((prev) => {
+      const next = {};
+      for (const u of queueUids) {
+        const id = String(pick(u, 'uid_id'));
+        if (prev[id]) next[id] = true;
+      }
+      return next;
+    });
+  }, [queueUids]);
+
+  const selectedIds = useMemo(() => Object.keys(selected).filter((k) => selected[k]), [selected]);
+  const selectedCount = selectedIds.length;
+
+  // Reset the operation lock once nothing is selected.
+  useEffect(() => {
+    if (selectedCount === 0 && selectedOp != null) setSelectedOp(null);
+  }, [selectedCount, selectedOp]);
+
+  const combinedLength = useMemo(() => {
+    let sum = 0;
+    for (const u of queueUids) {
+      const id = String(pick(u, 'uid_id'));
+      if (selected[id]) sum += Number(pick(u, 'size_mm')) || 0;
+    }
+    return sum;
+  }, [queueUids, selected]);
+
+  const overflow = bedLengthMm != null && combinedLength > Number(bedLengthMm);
+
+  // Group queued bars by operation_name (bars in a bunch must share one step).
+  const groups = useMemo(() => {
+    const map = new Map();
+    for (const u of queueUids) {
+      const op = pick(u, 'operation_name') || 'Unspecified';
+      if (!map.has(op)) map.set(op, []);
+      map.get(op).push(u);
+    }
+    return Array.from(map.entries()); // [opName, uids[]]
+  }, [queueUids]);
+
+  function toggle(uid) {
+    const id = String(pick(uid, 'uid_id'));
+    const op = pick(uid, 'operation_name');
+    setOpError(null);
+    setSelected((prev) => {
+      const next = { ...prev };
+      if (next[id]) {
+        delete next[id];
+      } else {
+        next[id] = true;
+        if (selectedOp == null) setSelectedOp(op);
+      }
+      return next;
+    });
+  }
+
+  async function load() {
+    if (!selectedCount || overflow) return;
+    setBusy(true);
+    setOpError(null);
+    try {
+      await batchesApi.grindingLoadBatch(unitId, selectedIds);
+      setSelected({});
+      setSelectedOp(null);
+      await Promise.all([refetchActive(), refetchQueue()]);
+    } catch (err) {
+      setOpError(err?.message || 'Could not load the bunch — please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function closeBunch() {
+    if (!activeBatch) return;
+    setBusy(true);
+    setOpError(null);
+    try {
+      await batchesApi.grindingCloseBatch(pick(activeBatch, 'id'));
+      await Promise.all([refetchActive(), refetchQueue()]);
+    } catch (err) {
+      setOpError(err?.message || 'Could not close the bunch — please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /* ── Active bunch on the machine ── */
+  if (activeBatch) {
+    const bars = Array.isArray(pick(activeBatch, 'uids')) ? pick(activeBatch, 'uids') : [];
+    const combined = pick(activeBatch, 'combined_length_mm');
+    const elapsed = elapsedFrom(pick(activeBatch, 'started_at'), nowMs);
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+        {opError && (
+          <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, borderLeft: '4px solid var(--status-danger, #e5484d)' }}>
+            <Icon name="alert" size={18} color="#e5484d" />
+            <span style={{ fontFamily: SANS, fontSize: 13, color: 'var(--status-danger-dark, #c0392b)', flex: 1 }}>{opError}</span>
+          </div>
+        )}
+        <div className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: '4px solid #22a06b' }}>
+          <div style={{ padding: '18px 22px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <StatusPill status="in_progress" label="BUNCH RUNNING" />
+              <Mono style={{ fontSize: 11, color: T_SECONDARY }}>{pick(activeBatch, 'operation_name') || ''}</Mono>
+            </div>
+            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 30, letterSpacing: '-0.03em', color: T_PRIMARY, marginTop: 12, lineHeight: 1 }}>
+              {pick(activeBatch, 'batch_number') || 'Bunch'}
+            </div>
+            <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 6 }}>
+              {bars.length} {bars.length === 1 ? 'bar' : 'bars'} loaded
+            </div>
+          </div>
+
+          {/* loaded bars */}
+          <div style={{ borderTop: '1px solid var(--border-card, #e3ebde)' }}>
+            {bars.map((b, i) => (
+              <div
+                key={pick(b, 'uid_id') ?? i}
+                style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 22px', borderTop: i ? '1px solid var(--border-card, #e3ebde)' : 'none' }}
+              >
+                <Mono style={{ fontSize: 12, color: T_MUTED, width: 18 }}>{i + 1}.</Mono>
+                <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.02em', color: T_PRIMARY, minWidth: 64 }}>
+                  {pick(b, 'uid_code') || pick(b, 'uid_id')}
+                </div>
+                {pick(b, 'set_number') != null && <Mono style={{ fontSize: 11, color: T_MUTED }}>Set {pick(b, 'set_number')}</Mono>}
+                <div style={{ flex: 1 }} />
+                {pick(b, 'size_mm') != null && <Mono style={{ fontSize: 12, color: T_SECONDARY }}>{pick(b, 'size_mm')}mm</Mono>}
+              </div>
+            ))}
+          </div>
+
+          {/* timers + bed usage */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1, background: 'var(--border-card, #e3ebde)', borderTop: '1px solid var(--border-card, #e3ebde)' }}>
+            <TimerCell label="Running for" value={fmtHMS(elapsed)} color="#22a06b" />
+            <div style={{ background: 'var(--bg-card, #fff)', padding: '16px 22px' }}>
+              <Label>Bed usage</Label>
+              <div style={{ fontFamily: MONO, fontWeight: 600, fontSize: 30, color: T_PRIMARY, marginTop: 6, lineHeight: 1 }}>
+                {combined != null ? combined : '—'}{bedLengthMm != null ? ` / ${bedLengthMm}` : ''} mm
+              </div>
+            </div>
+          </div>
+
+          {/* actions */}
+          <div style={{ padding: '16px 22px', borderTop: '1px solid var(--border-card, #e3ebde)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            {!canAct ? (
+              <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY }}>Read-only — you do not have permission to act on this machine.</div>
+            ) : (
+              <button className="btn btn-primary" style={{ height: 56, flex: 1, justifyContent: 'center', fontSize: 14 }} disabled={busy} onClick={closeBunch}>
+                <Icon name="check" size={20} />{busy ? 'Closing…' : 'Close bunch'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── No active bunch: load one from the queue ── */
+  const empty = queueUids.length === 0;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {opError && (
+        <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, borderLeft: '4px solid var(--status-danger, #e5484d)' }}>
+          <Icon name="alert" size={18} color="#e5484d" />
+          <span style={{ fontFamily: SANS, fontSize: 13, color: 'var(--status-danger-dark, #c0392b)', flex: 1 }}>{opError}</span>
+        </div>
+      )}
+
+      <div className="card" style={{ padding: 28, textAlign: 'center' }}>
+        <StatusPill status="idle" label="MACHINE EMPTY" />
+        <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 10 }}>
+          No bunch loaded. Select bars of the same operation below and load them together.
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 18px', borderBottom: empty ? 'none' : '1px solid var(--border-card, #e3ebde)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Icon name="list" size={16} color={T_SECONDARY} />
+          <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 14, letterSpacing: '-0.02em', color: T_PRIMARY }}>
+            Bars waiting for bunch grinding
+          </span>
+          <Mono style={{ fontSize: 11, color: T_MUTED }}>
+            ({queueUids.length} {queueUids.length === 1 ? 'bar' : 'bars'})
+          </Mono>
+        </div>
+
+        {empty ? (
+          <div style={{ padding: '24px 18px', fontFamily: SANS, fontSize: 13, color: T_SECONDARY, textAlign: 'center' }}>
+            No bars waiting for bunch grinding.
+          </div>
+        ) : (
+          groups.map(([opName, uids], gi) => {
+            // Once a selection has started, lock to that operation; others disabled.
+            const opLocked = selectedOp != null && opName !== selectedOp;
+            return (
+              <div key={opName} style={{ borderTop: gi ? '4px solid var(--bg-muted, #f4f7f2)' : 'none' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 16px', background: 'var(--bg-muted, #f4f7f2)' }}>
+                  <Label style={{ color: T_SECONDARY }}>{opName}</Label>
+                  <Mono style={{ fontSize: 10.5, color: T_MUTED }}>· {uids.length}</Mono>
+                  {opLocked && (
+                    <Mono style={{ fontSize: 10, color: T_MUTED, marginLeft: 'auto' }}>locked — different step</Mono>
+                  )}
+                </div>
+                {uids.map((u, i) => {
+                  const id = String(pick(u, 'uid_id'));
+                  return (
+                    <BunchBarRow
+                      key={id ?? i}
+                      uid={u}
+                      idx={i}
+                      selected={!!selected[id]}
+                      disabled={!canAct || busy || (opLocked && !selected[id])}
+                      onToggle={() => toggle(u)}
+                    />
+                  );
+                })}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* tally + load action */}
+      {!empty && (
+        <div className="card" style={{ padding: '16px 22px', display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <Label>Selected</Label>
+            <div style={{ fontFamily: MONO, fontWeight: 700, fontSize: 16, color: overflow ? 'var(--status-danger, #e5484d)' : T_PRIMARY, marginTop: 4 }}>
+              {selectedCount} {selectedCount === 1 ? 'bar' : 'bars'} · {combinedLength}{bedLengthMm != null ? ` / ${bedLengthMm}` : ''} mm
+            </div>
+            {overflow && (
+              <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--status-danger-dark, #c0392b)', marginTop: 4 }}>
+                Exceeds bed length — remove a bar before loading.
+              </div>
+            )}
+          </div>
+          <div style={{ flex: 1 }} />
+          {canAct && (
+            <button
+              className="btn btn-primary"
+              style={{ height: 52, minWidth: 220, justifyContent: 'center', fontSize: 14 }}
+              disabled={busy || selectedCount === 0 || overflow}
+              onClick={load}
+            >
+              <Icon name="play" size={18} />
+              {busy ? 'Loading…' : `Load bunch (${selectedCount} ${selectedCount === 1 ? 'bar' : 'bars'} · ${combinedLength} mm)`}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Queue ───────────────────────────────────────────────────────────────── */
 
 function QueueRow({ job, idx, nowMs, canAct, onStart, pending }) {
@@ -590,6 +929,11 @@ export default function MyWorkstation() {
   }, [stations, activeStation]);
 
   const station = stations.find((s) => s.code === activeStation) || stations[0] || null;
+
+  // SG-DLT bunch-grinding stations use a different model: the operator loads
+  // several bars at once. Detect by the jobs' workstation type.
+  const isBunch = (station?.jobs || []).some((j) => pick(j, 'workstation_type_code') === 'SG-DLT');
+  const unitId = pick(station?.jobs?.[0] || {}, 'workstation_unit_id');
 
   // Within a station: the active (in-progress/paused) job vs. queued jobs.
   const activeJob = useMemo(
@@ -747,7 +1091,12 @@ export default function MyWorkstation() {
                 <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 18, letterSpacing: '-0.02em', color: T_PRIMARY }}>
                   {station.name}
                   {station.name !== station.code && <span style={{ fontFamily: MONO, fontWeight: 500, fontSize: 13, color: T_MUTED }}>{' '}· {station.code}</span>}
-                  {activeJob && (
+                  {isBunch && (
+                    <span style={{ fontFamily: SANS, fontWeight: 500, fontSize: 14, color: T_SECONDARY }}>
+                      {' '}— Bunch grinding
+                    </span>
+                  )}
+                  {!isBunch && activeJob && (
                     <span style={{ fontFamily: SANS, fontWeight: 500, fontSize: 14, color: T_SECONDARY }}>
                       {' '}— {pick(activeJob, 'operation', 'operation_name', 'step_name') || 'Active job'}
                       {jobStep(activeJob) != null ? ` · Step ${jobStep(activeJob)}` : ''}
@@ -756,55 +1105,61 @@ export default function MyWorkstation() {
                 </div>
               </div>
 
-              {activeJob ? (
-                <ActiveJobCard
-                  job={activeJob}
-                  nowMs={nowMs}
-                  canAct={canAct}
-                  pendingAction={pendingFor(activeJob)}
-                  onStart={() => handleStart(activeJob)}
-                  onResume={() => handleResume(activeJob)}
-                  onPause={() => setPauseFor(activeJob)}
-                  onClose={() => setCloseFor(activeJob)}
-                />
+              {isBunch ? (
+                <BunchGrindingPanel unitId={unitId} nowMs={nowMs} canAct={canAct} />
               ) : (
-                <div className="card" style={{ padding: 28, textAlign: 'center' }}>
-                  <StatusPill status="idle" />
-                  <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 10 }}>
-                    No active job at this workstation. Start the next job from the queue below.
-                  </div>
-                </div>
-              )}
-
-              {/* queue */}
-              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 18px', borderBottom: queue.length ? '1px solid var(--border-card, #e3ebde)' : 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Icon name="list" size={16} color={T_SECONDARY} />
-                  <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 14, letterSpacing: '-0.02em', color: T_PRIMARY }}>
-                    Queue — {station.name}
-                  </span>
-                  <Mono style={{ fontSize: 11, color: T_MUTED }}>
-                    ({queue.length} {queue.length === 1 ? 'UID' : 'UIDs'} waiting)
-                  </Mono>
-                </div>
-                {queue.length === 0 ? (
-                  <div style={{ padding: '20px 18px', fontFamily: SANS, fontSize: 13, color: T_SECONDARY }}>
-                    Queue is clear — no UIDs waiting at this workstation.
-                  </div>
-                ) : (
-                  queue.map((job, i) => (
-                    <QueueRow
-                      key={jobId(job) ?? i}
-                      job={job}
-                      idx={i}
+                <>
+                  {activeJob ? (
+                    <ActiveJobCard
+                      job={activeJob}
                       nowMs={nowMs}
-                      canAct={canAct && !activeJob}
-                      pending={pendingFor(job, 'start')}
-                      onStart={() => handleStart(job)}
+                      canAct={canAct}
+                      pendingAction={pendingFor(activeJob)}
+                      onStart={() => handleStart(activeJob)}
+                      onResume={() => handleResume(activeJob)}
+                      onPause={() => setPauseFor(activeJob)}
+                      onClose={() => setCloseFor(activeJob)}
                     />
-                  ))
-                )}
-              </div>
+                  ) : (
+                    <div className="card" style={{ padding: 28, textAlign: 'center' }}>
+                      <StatusPill status="idle" />
+                      <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 10 }}>
+                        No active job at this workstation. Start the next job from the queue below.
+                      </div>
+                    </div>
+                  )}
+
+                  {/* queue */}
+                  <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                    <div style={{ padding: '14px 18px', borderBottom: queue.length ? '1px solid var(--border-card, #e3ebde)' : 'none', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Icon name="list" size={16} color={T_SECONDARY} />
+                      <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 14, letterSpacing: '-0.02em', color: T_PRIMARY }}>
+                        Queue — {station.name}
+                      </span>
+                      <Mono style={{ fontSize: 11, color: T_MUTED }}>
+                        ({queue.length} {queue.length === 1 ? 'UID' : 'UIDs'} waiting)
+                      </Mono>
+                    </div>
+                    {queue.length === 0 ? (
+                      <div style={{ padding: '20px 18px', fontFamily: SANS, fontSize: 13, color: T_SECONDARY }}>
+                        Queue is clear — no UIDs waiting at this workstation.
+                      </div>
+                    ) : (
+                      queue.map((job, i) => (
+                        <QueueRow
+                          key={jobId(job) ?? i}
+                          job={job}
+                          idx={i}
+                          nowMs={nowMs}
+                          canAct={canAct && !activeJob}
+                          pending={pendingFor(job, 'start')}
+                          onStart={() => handleStart(job)}
+                        />
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </>
