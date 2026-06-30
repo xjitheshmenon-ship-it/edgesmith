@@ -538,10 +538,10 @@ export default function JobAssignment() {
       setActionError(null);
       try {
         await workstationAssignmentsApi.assign({
-          shift_id: shiftId,
-          operator_id: opId,
-          workstation_code: ws.code,
-          override: !qualified || undefined,
+          shiftId,
+          employeeId: opId,
+          workstationCode: ws.code,
+          overrideBadgeWarning: !qualified || undefined,
         });
         if (myReq === reqRef.current) await refetch();
       } catch (err) {

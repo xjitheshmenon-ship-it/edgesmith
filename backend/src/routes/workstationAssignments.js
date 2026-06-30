@@ -38,10 +38,22 @@ router.get('/', async (req, res) => {
  * assigned to Supervisor/Manager/Admin roles — never Operator, no override.
  */
 router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
-  const { shiftId, employeeId, workstationTypeId, overrideBadgeWarning, overrideReason } = req.body;
+  const b = req.body || {};
+  // Tolerate camelCase or snake_case, and accept a workstation code or id.
+  const shiftId = b.shiftId ?? b.shift_id;
+  const employeeId = b.employeeId ?? b.employee_id ?? b.operatorId ?? b.operator_id;
+  let workstationTypeId = b.workstationTypeId ?? b.workstation_type_id;
+  const workstationCode = b.workstationCode ?? b.workstation_code;
+  const overrideBadgeWarning = b.overrideBadgeWarning ?? b.override ?? b.override_badge_warning;
+  const overrideReason = b.overrideReason ?? b.override_reason;
+
+  if (!workstationTypeId && workstationCode) {
+    const { rows: codeRows } = await query(`SELECT id FROM workstation_types WHERE code = $1`, [workstationCode]);
+    if (codeRows[0]) workstationTypeId = codeRows[0].id;
+  }
 
   if (!shiftId || !employeeId || !workstationTypeId) {
-    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'shiftId, employeeId, workstationTypeId are required.' } });
+    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'shiftId, employeeId, and a workstation (code or id) are required.' } });
   }
 
   const result = await withTransaction(async (client) => {
