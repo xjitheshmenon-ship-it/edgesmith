@@ -20,6 +20,14 @@ import MoLinking from './pages/MoLinking';
 import MasterLists from './pages/MasterLists';
 import UsersRoles from './pages/UsersRoles';
 import Receiving from './pages/Receiving';
+import ShiftManagement from './pages/ShiftManagement';
+import TemperingParameters from './pages/TemperingParameters';
+import BackupRestore from './pages/BackupRestore';
+import ShopfloorDisplay from './pages/ShopfloorDisplay';
+import EmployeeProfiles from './pages/EmployeeProfiles';
+import JobAssignment from './pages/JobAssignment';
+import Reports from './pages/Reports';
+import CycleBuilder from './pages/CycleBuilder';
 
 /* Route keys built on the new foundation map to their component; everything
    else renders the Placeholder until rebuilt. */
@@ -38,6 +46,13 @@ const PAGES = {
   masters: MasterLists,
   users: UsersRoles,
   receiving: Receiving,
+  shift: ShiftManagement,
+  jobs: JobAssignment,
+  reports: Reports,
+  cycle: CycleBuilder,
+  temper: TemperingParameters,
+  employees: EmployeeProfiles,
+  backup: BackupRestore,
 };
 
 const ALL_KEYS = NAV.flatMap(([, items]) => items.map(([key]) => key));
@@ -81,9 +96,11 @@ export default function App() {
         <BrowserRouter basename={import.meta.env.BASE_URL}>
           <Routes>
             <Route path="/login" element={<Login />} />
+            {/* Shopfloor Display is full-screen — rendered OUTSIDE the AppShell. */}
+            <Route path="/shopfloor" element={<RequireAuth><ShopfloorDisplay /></RequireAuth>} />
             <Route element={<RequireAuth><AppShell /></RequireAuth>}>
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
-              {ALL_KEYS.map((key) => (
+              {ALL_KEYS.filter((key) => key !== 'shopfloor').map((key) => (
                 <Route key={key} path={`/${key}`} element={<PageRoute routeKey={key} />} />
               ))}
               <Route path="/uid/:code" element={<UidRoute />} />
