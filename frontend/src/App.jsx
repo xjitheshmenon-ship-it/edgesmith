@@ -6,11 +6,36 @@ import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
 import Placeholder from './pages/Placeholder';
 import Dashboard from './pages/Dashboard';
+import UidCreation from './pages/UidCreation';
+import UidDetail from './pages/UidDetail';
+import ProductionFloor from './pages/ProductionFloor';
+import MyWorkstation from './pages/MyWorkstation';
+import BatchManagement from './pages/BatchManagement';
+import QC from './pages/QC';
+import RawMaterialIntake from './pages/RawMaterialIntake';
+import JoiningOperation from './pages/JoiningOperation';
+import ContractorDispatch from './pages/ContractorDispatch';
+import ServiceLookup from './pages/ServiceLookup';
+import MoLinking from './pages/MoLinking';
+import MasterLists from './pages/MasterLists';
+import UsersRoles from './pages/UsersRoles';
 
 /* Route keys built on the new foundation map to their component; everything
    else renders the Placeholder until rebuilt. */
 const PAGES = {
   dashboard: Dashboard,
+  uid: UidCreation,
+  floor: ProductionFloor,
+  jobexec: MyWorkstation,
+  batch: BatchManagement,
+  qc: QC,
+  intake: RawMaterialIntake,
+  joining: JoiningOperation,
+  dispatch: ContractorDispatch,
+  service: ServiceLookup,
+  mo: MoLinking,
+  masters: MasterLists,
+  users: UsersRoles,
 };
 
 const ALL_KEYS = NAV.flatMap(([, items]) => items.map(([key]) => key));
@@ -43,7 +68,8 @@ function PageRoute({ routeKey }) {
 /* UID detail drill-in (the `uid` route also supports /uid/:code). */
 function UidRoute() {
   const { code } = useParams();
-  return <Placeholder routeKey="uid" detailCode={code} />;
+  void code; // read by UidDetail via useParams()
+  return <UidDetail />;
 }
 
 export default function App() {
