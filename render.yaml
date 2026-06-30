@@ -13,12 +13,12 @@ services:
         fromDatabase:
           name: edgesmith-db
           property: connectionString
-      - key: SECRET_KEY
+      - key: JWT_SECRET
         generateValue: true
-      - key: CORS_ORIGINS
+      - key: JWT_EXPIRES_IN
+        value: 8h
+      - key: CORS_ALLOWED_ORIGIN
         value: https://xjitheshmenon-ship-it.github.io
-      - key: ACCESS_TOKEN_EXPIRE_MINUTES
-        value: 480
 
 databases:
   - name: edgesmith-db
