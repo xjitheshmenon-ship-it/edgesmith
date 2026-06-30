@@ -28,6 +28,12 @@ router.get('/', requireRole(['admin', 'manager', 'supervisor']), async (req, res
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await query(
     `SELECT e.id, e.employee_code, e.full_name, e.username, e.role, e.status, l.code AS location_code,
+            COALESCE((SELECT array_agg(DISTINCT wt.code)
+                      FROM employee_badges eb
+                      JOIN badge_types bt ON bt.id = eb.badge_type_id
+                      JOIN workstation_types wt ON wt.id = bt.workstation_type_id
+                      WHERE eb.employee_id = e.id
+                        AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)), '{}') AS badges,
             (SELECT COUNT(*) FROM employee_badges eb WHERE eb.employee_id = e.id) AS badge_count,
             (SELECT COUNT(*) FROM employee_badges eb WHERE eb.employee_id = e.id AND eb.expiry_date < CURRENT_DATE) AS expired_badges,
             (SELECT COUNT(*) FROM employee_badges eb WHERE eb.employee_id = e.id AND eb.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days') AS expiring_badges

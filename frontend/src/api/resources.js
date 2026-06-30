@@ -176,4 +176,6 @@ export const workstationAssignmentsApi = {
   unassigned: (shiftId, location) => api.get('/workstation-assignments/unassigned', { shift_id: shiftId, location }),
   assign: (payload) => api.post('/workstation-assignments', payload),
   unassign: (id) => api.delete(`/workstation-assignments/${id}`),
+  eligibleOperators: (workstationCode, location) =>
+    api.get('/workstation-assignments/eligible-operators', { workstation_code: workstationCode, location }),
 };

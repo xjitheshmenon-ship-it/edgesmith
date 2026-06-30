@@ -136,4 +136,43 @@ router.get('/my-workstations', async (req, res) => {
   return res.json({ success: true, data: rows });
 });
 
+/**
+ * GET /api/v1/workstation-assignments/eligible-operators?workstation_code=&location=
+ * Operators who may be assigned to a workstation: if the workstation type has a
+ * badge requirement, only operators holding a valid (non-expired) badge for it;
+ * otherwise all on-location operators. Used to filter the assign picker so only
+ * certified operators are offered.
+ */
+router.get('/eligible-operators', async (req, res) => {
+  const { workstation_code, workstation_type_id, location } = req.query;
+  let typeId = workstation_type_id;
+  if (!typeId && workstation_code) {
+    const { rows } = await query(`SELECT id FROM workstation_types WHERE code = $1`, [workstation_code]);
+    if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'WORKSTATION_NOT_FOUND', message: 'Unknown workstation.' } });
+    typeId = rows[0].id;
+  }
+  if (!typeId) return res.status(400).json({ success: false, error: { code: 'MISSING_WORKSTATION', message: 'workstation_code or workstation_type_id is required.' } });
+
+  const { rows: btRows } = await query(`SELECT name FROM badge_types WHERE workstation_type_id = $1 LIMIT 1`, [typeId]);
+  const requiresBadge = btRows.length > 0;
+
+  const params = [];
+  let p = 1;
+  const conds = [`e.role = 'operator'`, `e.status = 'active'`];
+  if (location && location !== 'both') { conds.push(`(l.code = $${p++} OR e.location_id IS NULL)`); params.push(location); }
+  if (requiresBadge) {
+    conds.push(`EXISTS (SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
+                        WHERE eb.employee_id = e.id AND bt.workstation_type_id = $${p++}
+                          AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE))`);
+    params.push(typeId);
+  }
+  const { rows: ops } = await query(
+    `SELECT e.id, e.employee_code, e.full_name FROM employees e
+     LEFT JOIN locations l ON l.id = e.location_id
+     WHERE ${conds.join(' AND ')} ORDER BY e.full_name`,
+    params
+  );
+  return res.json({ success: true, data: { requiresBadge, badgeName: btRows[0]?.name || null, operators: ops } });
+});
+
 module.exports = router;
