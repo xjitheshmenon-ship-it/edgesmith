@@ -11,7 +11,7 @@ router.use(authenticate, auditContext);
 const QC_STEPS = ['7', '12', '26'];
 
 /** GET /api/v1/qc/pending */
-router.get('/pending', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+router.get('/pending', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
   const { rows } = await query(
     `SELECT u.uid_code, u.current_step, u.priority, sl.qc_result, sl.qc_value, sl.id AS step_log_id,
             EXTRACT(EPOCH FROM (now() - sl.started_at)) AS waiting_seconds
