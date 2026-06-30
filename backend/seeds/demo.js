@@ -59,11 +59,41 @@ async function seedFaridabadItemsIfEmpty() {
   console.log(`✓ Seeded ${farDist.length} Faridabad items (top-up).`);
 }
 
+// Non-destructive top-up: give existing demo welds a block BOM (and alloy/MS
+// refs) when none exist yet, so the Joining page's BOM view has sample data
+// without requiring a full DB reset.
+async function backfillWeldBomIfEmpty() {
+  const { rows: bomCnt } = await query(`SELECT count(*)::int AS c FROM faridabad_weld_bom`);
+  if (bomCnt[0].c > 0) return; // already populated
+  const { rows: welds } = await query(`SELECT id, alloy_intake_id, ms_intake_id FROM faridabad_weld_log ORDER BY id`);
+  if (!welds.length) return; // nothing to backfill
+  const alloyIntakes = (await query(`SELECT id FROM raw_material_intakes WHERE material_type='alloy_steel' ORDER BY id`)).rows;
+  const msIntakes = (await query(`SELECT id FROM raw_material_intakes WHERE material_type='ms' ORDER BY id`)).rows;
+  if (!alloyIntakes.length || !msIntakes.length) return;
+  let n = 0;
+  for (let i = 0; i < welds.length; i++) {
+    const w = welds[i];
+    const alloyId = w.alloy_intake_id || alloyIntakes[i % alloyIntakes.length].id;
+    const msId = w.ms_intake_id || msIntakes[i % msIntakes.length].id;
+    if (!w.alloy_intake_id || !w.ms_intake_id) {
+      await query(`UPDATE faridabad_weld_log SET alloy_intake_id = $1, ms_intake_id = $2 WHERE id = $3`, [alloyId, msId, w.id]);
+    }
+    await query(
+      `INSERT INTO faridabad_weld_bom (weld_log_id, component_type, intake_id, dimensions_mm, quantity)
+       VALUES ($1,'alloy',$2,'1200 x 185 x 80',1), ($1,'ms',$3,'1200 x 90 x 20',2)`,
+      [w.id, alloyId, msId]
+    );
+    n++;
+  }
+  console.log(`✓ Backfilled block BOM for ${n} demo welds (top-up).`);
+}
+
 async function main() {
   console.log('Seeding comprehensive DEMO data (SEED_DEMO=true)...\n');
 
   // Runs regardless of the main guard below.
   await seedFaridabadItemsIfEmpty();
+  await backfillWeldBomIfEmpty();
 
   const exists = await query(`SELECT id FROM contractor_dispatches WHERE batch_reference = $1`, [DEMO_DISPATCH_REF]);
   if (exists.rows[0]) {
@@ -185,15 +215,34 @@ async function main() {
       );
     }
 
-    // weld log (a few welds, mix of dispatched/not)
+    // weld log (a few welds, mix of dispatched/not), each with a block BOM
     const weldUnit = (await one(`SELECT id FROM workstation_units WHERE unit_code='WB-1'`, [], 'a weld bench')).id;
+    const demoAlloyIntakes = (await q(`SELECT id FROM raw_material_intakes WHERE material_type='alloy_steel' AND heat_number LIKE 'DEMO-%' ORDER BY id`)).rows;
+    const demoMsIntakes = (await q(`SELECT id FROM raw_material_intakes WHERE material_type='ms' AND heat_number LIKE 'DEMO-%' ORDER BY id`)).rows;
     for (let i = 0; i < 6; i++) {
       // Faridabad block input is 1200×185×80mm (rolled to 4500×190×19mm output).
-      await q(
-        `INSERT INTO faridabad_weld_log (cycle_type_id, operator_id, workstation_unit_id, size_mm, net_work_seconds, started_at, closed_at, dispatched)
-         VALUES ($1,$2,$3,1200,900, now() - interval '3 hours', now() - interval '2 hours', $4)`,
-        [eat.id, supFar, weldUnit, i < 4]
+      const alloyIntakeId = demoAlloyIntakes.length ? demoAlloyIntakes[i % demoAlloyIntakes.length].id : null;
+      const msIntakeId = demoMsIntakes.length ? demoMsIntakes[i % demoMsIntakes.length].id : null;
+      const weld = await ins(
+        `INSERT INTO faridabad_weld_log (cycle_type_id, alloy_intake_id, ms_intake_id, operator_id, workstation_unit_id, size_mm, net_work_seconds, started_at, closed_at, dispatched)
+         VALUES ($1,$2,$3,$4,$5,1200,900, now() - interval '3 hours', now() - interval '2 hours', $6) RETURNING id`,
+        [eat.id, alloyIntakeId, msIntakeId, supFar, weldUnit, i < 4]
       );
+      // Block bill of materials: one alloy billet + two MS plates.
+      if (alloyIntakeId) {
+        await q(
+          `INSERT INTO faridabad_weld_bom (weld_log_id, component_type, intake_id, dimensions_mm, quantity)
+           VALUES ($1,'alloy',$2,'1200 x 185 x 80',1)`,
+          [weld.id, alloyIntakeId]
+        );
+      }
+      if (msIntakeId) {
+        await q(
+          `INSERT INTO faridabad_weld_bom (weld_log_id, component_type, intake_id, dimensions_mm, quantity)
+           VALUES ($1,'ms',$2,'1200 x 90 x 20',2)`,
+          [weld.id, msIntakeId]
+        );
+      }
     }
 
     // dispatches: pending, partial, fully-received (the demo key)
