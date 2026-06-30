@@ -474,6 +474,10 @@ function ScheduleTab({ location, canManage }) {
   const [anchor, setAnchor] = useState(() => weekStart(new Date()));
   const [publishing, setPublishing] = useState(false);
   const [pubMsg, setPubMsg] = useState(null);
+  const [editing, setEditing] = useState(null); // { date: Date, shiftNumber, cell }
+
+  const singleLocation = location !== 'both';
+  const canEdit = canManage && singleLocation;
 
   const days = useMemo(() => {
     const start = weekStart(anchor);
@@ -495,6 +499,23 @@ function ScheduleTab({ location, canManage }) {
     [location, from, to],
     { interval: 60000 }
   );
+
+  // Roster for the cell editor — supervisors + operators at this location.
+  const { data: rosterData } = usePolling(
+    async () => {
+      if (!canEdit) return { supervisors: [], operators: [] };
+      const loc = location === 'both' ? undefined : location;
+      const [sup, ops] = await Promise.all([
+        employeesApi.list({ role: 'supervisor', location: loc }).then((r) => r.data).catch(() => []),
+        employeesApi.list({ role: 'operator', location: loc }).then((r) => r.data).catch(() => []),
+      ]);
+      return { supervisors: sup || [], operators: ops || [] };
+    },
+    [location, canEdit],
+    { interval: 300000 }
+  );
+  const supervisors = rosterData?.supervisors || [];
+  const operators = rosterData?.operators || [];
 
   const rows = data || [];
 
@@ -604,8 +625,14 @@ function ScheduleTab({ location, canManage }) {
                   </td>
                   {days.map((d) => {
                     const cell = byCell[`${isoDate(d)}|${sn}`];
+                    const clickable = canEdit;
                     return (
-                      <td key={isoDate(d)} style={cellStyle()}>
+                      <td
+                        key={isoDate(d)}
+                        style={{ ...cellStyle(), cursor: clickable ? 'pointer' : 'default' }}
+                        onClick={clickable ? () => setEditing({ date: d, shiftNumber: sn, cell: cell || null }) : undefined}
+                        title={clickable ? (cell ? 'Edit shift assignment' : 'Add shift assignment') : undefined}
+                      >
                         {cell ? (
                           <div
                             style={{
@@ -623,6 +650,8 @@ function ScheduleTab({ location, canManage }) {
                               {cell.published ? '' : ' · draft'}
                             </div>
                           </div>
+                        ) : clickable ? (
+                          <div style={{ fontFamily: MONO, fontSize: 16, color: 'var(--text-muted, #9bb4d4)', textAlign: 'center', lineHeight: 1 }}>+</div>
                         ) : (
                           <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted, #9bb4d4)', textAlign: 'center' }}>—</div>
                         )}
@@ -639,7 +668,180 @@ function ScheduleTab({ location, canManage }) {
         <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>
           Published schedule only. Editing and publishing are restricted to Manager / Admin.
         </div>
+      ) : !singleLocation ? (
+        <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>
+          Select a single factory (Dharmapuri or Faridabad) in the top bar to edit and publish its schedule.
+        </div>
+      ) : (
+        <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>
+          Click any cell to assign a supervisor and operators. New entries stay as drafts until you publish.
+        </div>
+      )}
+
+      {editing ? (
+        <ScheduleCellEditor
+          key={`${isoDate(editing.date)}|${editing.shiftNumber}`}
+          date={editing.date}
+          shiftNumber={editing.shiftNumber}
+          cell={editing.cell}
+          locationCode={location}
+          supervisors={supervisors}
+          operators={operators}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); refetch(); }}
+        />
       ) : null}
+    </div>
+  );
+}
+
+/* Editor modal — upserts one schedule cell (supervisor + operators). */
+function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors, operators, onClose, onSaved }) {
+  const [supervisorId, setSupervisorId] = useState(cell?.supervisor_id || '');
+  const [operatorIds, setOperatorIds] = useState(() =>
+    Array.isArray(cell?.operator_ids) ? cell.operator_ids.map(String) : []
+  );
+  const [opFilter, setOpFilter] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const win = SHIFT_WINDOWS[shiftNumber];
+  const filteredOps = useMemo(() => {
+    const q = opFilter.trim().toLowerCase();
+    if (!q) return operators;
+    return operators.filter(
+      (o) => (o.full_name || '').toLowerCase().includes(q) || (o.employee_code || '').toLowerCase().includes(q)
+    );
+  }, [operators, opFilter]);
+
+  function toggleOp(id) {
+    const sid = String(id);
+    setOperatorIds((prev) => (prev.includes(sid) ? prev.filter((x) => x !== sid) : [...prev, sid]));
+  }
+
+  async function save() {
+    setSaving(true);
+    setErr(null);
+    try {
+      await shiftsApi.setSchedule({
+        shiftDate: isoDate(date),
+        shiftNumber,
+        locationCode,
+        supervisorId: supervisorId || null,
+        operatorIds,
+      });
+      onSaved?.();
+    } catch (e) {
+      setErr(e?.message || 'Could not save the schedule entry.');
+      setSaving(false);
+    }
+  }
+
+  async function clearEntry() {
+    setSaving(true);
+    setErr(null);
+    try {
+      await shiftsApi.setSchedule({
+        shiftDate: isoDate(date),
+        shiftNumber,
+        locationCode,
+        supervisorId: null,
+        operatorIds: [],
+      });
+      onSaved?.();
+    } catch (e) {
+      setErr(e?.message || 'Could not clear the schedule entry.');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(10,29,58,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 20 }}
+      className="cp-fade-in"
+    >
+      <div className="card" style={{ width: 'min(520px, 100%)', maxHeight: '88vh', overflowY: 'auto', padding: 24, boxShadow: 'var(--shadow-modal)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 17, letterSpacing: '-0.02em', color: 'var(--text-primary)' }}>
+            Shift {shiftNumber} · {fmtDate(date)}
+          </div>
+          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', display: 'flex', cursor: 'pointer' }}>
+            <Icon name="close" size={18} />
+          </button>
+        </div>
+        <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', marginBottom: 16 }}>
+          {win ? `${win.start}–${win.end}` : ''}{cell?.published ? ' · published' : cell ? ' · draft' : ''}
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <label className="form-label" htmlFor="sched-sup">Supervisor on duty</label>
+          <select id="sched-sup" className="form-select" value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)}>
+            <option value="">— unassigned —</option>
+            {supervisors.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.full_name} {s.employee_code ? `(${s.employee_code})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <SectionLabel>Operators ({operatorIds.length} selected)</SectionLabel>
+          {operatorIds.length ? (
+            <button type="button" onClick={() => setOperatorIds([])} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 10.5, color: 'var(--text-secondary)' }}>
+              clear all
+            </button>
+          ) : null}
+        </div>
+        <input
+          className="form-input"
+          style={{ height: 36, marginBottom: 8 }}
+          placeholder="Filter operators…"
+          value={opFilter}
+          onChange={(e) => setOpFilter(e.target.value)}
+        />
+        <div style={{ border: '1px solid var(--border-card, #e3ebde)', borderRadius: 'var(--radius-md, 9px)', maxHeight: 240, overflowY: 'auto' }}>
+          {filteredOps.length === 0 ? (
+            <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary)', padding: '14px 12px' }}>
+              No operators found.
+            </div>
+          ) : (
+            filteredOps.map((o) => {
+              const checked = operatorIds.includes(String(o.id));
+              return (
+                <label
+                  key={o.id}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--bg-muted, #f4f7f2)', cursor: 'pointer' }}
+                >
+                  <input type="checkbox" checked={checked} onChange={() => toggleOp(o.id)} />
+                  <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{o.full_name}</span>
+                  {o.employee_code ? (
+                    <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted, #9bb4d4)' }}>{o.employee_code}</span>
+                  ) : null}
+                </label>
+              );
+            })
+          )}
+        </div>
+
+        {err ? (
+          <div style={{ marginTop: 12, fontFamily: SANS, fontSize: 12.5, fontWeight: 600, color: 'var(--status-danger, #e5484d)' }}>{err}</div>
+        ) : null}
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" type="button" onClick={save} disabled={saving}>
+            <Icon name="check" size={15} />
+            {saving ? 'Saving…' : 'Save assignment'}
+          </button>
+          <button className="btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
+          {cell ? (
+            <button className="btn" type="button" onClick={clearEntry} disabled={saving} style={{ marginLeft: 'auto', color: 'var(--status-danger, #e5484d)' }}>
+              <Icon name="close" size={14} />
+              Clear cell
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
