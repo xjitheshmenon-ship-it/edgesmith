@@ -10,7 +10,6 @@ const CHROME = '#11305f';
 const LOCATIONS = [
   { key: 'dharmapuri', label: 'Dharmapuri', color: '#3b82f6' },
   { key: 'faridabad', label: 'Faridabad', color: '#d97a2b' },
-  { key: 'both', label: 'Both', color: '#5d7fae' },
 ];
 
 /* Current shift number + remaining time (06–14 / 14–22 / 22–06). */
