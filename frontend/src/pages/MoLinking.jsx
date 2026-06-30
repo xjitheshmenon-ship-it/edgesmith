@@ -112,7 +112,7 @@ function FulfilmentBar({ dispatched, required }) {
 }
 
 // ── UID search picker: server-capped, search-driven (NOT a dump) ──
-function UidPicker({ selected, onToggle, mo }) {
+function UidPicker({ selected, onToggle, onSelectMany, remaining, mo }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [result, setResult] = useState({ items: [], total: 0 });
@@ -186,9 +186,34 @@ function UidPicker({ selected, onToggle, mo }) {
         <ErrorBanner message={error} />
       ) : (
         <>
-          <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-muted-2, #7d96bb)', marginBottom: 8 }}>
-            {loading ? 'searching…' : `showing ${items.length} of ${total}`}
-            {total > items.length ? ' · refine search to narrow' : ''}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+            <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-muted-2, #7d96bb)' }}>
+              {loading ? 'searching…' : `showing ${items.length} of ${total}`}
+              {total > items.length ? ' · refine search to narrow' : ''}
+            </div>
+            {/* Auto-select fills up to the MO's remaining quantity; manual checkboxes still work. */}
+            {onSelectMany && items.length > 0 ? (
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => {
+                    const want = remaining > 0 ? remaining : items.length;
+                    const codes = items
+                      .filter((u) => String(u.status || u.uid_status || '').toLowerCase() !== 'done')
+                      .map((u) => u.uidCode || u.uid_code || u.uid || u.code)
+                      .slice(0, want);
+                    onSelectMany(codes);
+                  }}
+                  title={remaining > 0 ? `Select up to the ${remaining} still needed` : 'Select all shown'}
+                >
+                  Auto-select{remaining > 0 ? ` ${Math.min(remaining, items.length)}` : ''}
+                </button>
+                {selected.length ? (
+                  <button type="button" className="btn btn-sm" onClick={() => onSelectMany([])}>Clear</button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           {!loading && items.length === 0 ? (
@@ -320,7 +345,13 @@ function MoDetail({ mo, onClose, onLinked }) {
         ) : (
           <div>
             <SectionTitle>Link UIDs to {moNumber(mo)}</SectionTitle>
-            <UidPicker selected={selected} onToggle={toggle} mo={mo} />
+            <UidPicker
+              selected={selected}
+              onToggle={toggle}
+              onSelectMany={setSelected}
+              remaining={Math.max(0, (Number(moQty(mo)) || 0) - (Number(moLinked(mo)) || 0))}
+              mo={mo}
+            />
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 13, cursor: 'pointer', fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)' }}>
               <input type="checkbox" checked={applyMoValues} onChange={(e) => setApplyMoValues(e.target.checked)} style={{ accentColor: 'var(--ink-650, #15366a)' }} />
