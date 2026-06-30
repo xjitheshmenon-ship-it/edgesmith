@@ -22,5 +22,12 @@ if [ "${AUTO_MIGRATE:-true}" = "true" ]; then
   node seeds/seed.js
 fi
 
+# Optional sample data so a fresh install has something to click through.
+# Idempotent; set SEED_DEMO=true once, then back to false. Off by default.
+if [ "${SEED_DEMO:-false}" = "true" ]; then
+  echo "[entrypoint] seeding demo data..."
+  node seeds/demo.js
+fi
+
 # exec so node becomes PID 1 and receives Render's stop signals directly.
 exec node app.js

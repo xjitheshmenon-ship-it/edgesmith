@@ -2,6 +2,7 @@ import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useApp } from '../store/AppContext';
 import { reportsApi } from '../api/resources';
 import { ApiError } from '../api/client';
+import { downloadCSV, downloadPDF } from '../utils/exporters';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, LocationBadge } from '../components/common/Badges';
 
@@ -245,6 +246,13 @@ export default function Reports() {
 
   const activeReport = REPORTS.find((r) => r.id === activeId);
 
+  // Flatten the currently-displayed report into { columns, rows } for export.
+  // Recomputes only when the active report or its fetched data changes.
+  const exportData = useMemo(
+    () => (loading || error ? null : buildExport(activeId, data, traceValue)),
+    [activeId, data, traceValue, loading, error]
+  );
+
   const buildFilters = useCallback(() => {
     const f = { location };
     if (activeReport?.dateAware) {
@@ -438,13 +446,24 @@ export default function Reports() {
 
         {/* Selected report content */}
         <div>
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 18, letterSpacing: '-0.02em', color: 'var(--text-primary, #15366a)' }}>
-              {activeReport?.name}
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, marginBottom: 14 }}>
+            <div>
+              <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 18, letterSpacing: '-0.02em', color: 'var(--text-primary, #15366a)' }}>
+                {activeReport?.name}
+              </div>
+              <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)', marginTop: 2 }}>
+                {activeReport?.desc}
+              </div>
             </div>
-            <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)', marginTop: 2 }}>
-              {activeReport?.desc}
-            </div>
+            <ExportButtons
+              report={activeReport}
+              exportData={exportData}
+              location={location}
+              locationLabel={locationLabel}
+              dateFrom={dateFrom}
+              dateTo={dateTo}
+              traceValue={traceValue}
+            />
           </div>
 
           {loading ? (
@@ -456,6 +475,313 @@ export default function Reports() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ── export derivation ──────────────────────────────────────────────────────
+   For the currently-displayed report, derive flat { columns, rows } that mirror
+   exactly what is on screen (respecting the active location + filters baked into
+   `data`). Bar/chart visualisations are exported as label + value rows. Cell
+   values are plain strings/numbers so they serialise cleanly to CSV and PDF.
+   Returns null when there is nothing to export (empty report).
+   ──────────────────────────────────────────────────────────────────────────── */
+
+function buildExport(reportId, data, traceValue) {
+  switch (reportId) {
+    case 'production': {
+      const stations = asArray(pick(data, 'workstations', 'stations'), 'workstations', 'stations');
+      const trend = asArray(pick(data, 'trend', 'daily', 'series'), 'trend', 'daily');
+      const rows = [
+        ...stations.map((s, i) => ({
+          category: 'Workstation throughput',
+          label: fmt(pick(s, 'name', 'code', 'workstation') ?? `Station ${i + 1}`),
+          value: num(pick(s, 'pieces', 'count', 'throughput')),
+        })),
+        ...trend.map((t, i) => ({
+          category: 'Output trend',
+          label: String(pick(t, 'date', 'period', 'label') ?? i),
+          value: num(pick(t, 'count', 'value', 'dispatched')),
+        })),
+      ];
+      return rows.length
+        ? { columns: [{ key: 'category', label: 'Section' }, { key: 'label', label: 'Item' }, { key: 'value', label: 'Value' }], rows }
+        : null;
+    }
+
+    case 'wip': {
+      const byStorage = asArray(pick(data, 'by_storage', 'storage', 'locations'), 'by_storage', 'storage');
+      const ageBuckets = asArray(pick(data, 'age_distribution', 'age_buckets', 'ages'), 'age_distribution', 'age_buckets');
+      const holds = asArray(pick(data, 'holds', 'on_hold', 'holds_by_reason'), 'holds', 'on_hold');
+      const rows = [
+        ...byStorage.map((s, i) => ({
+          category: 'By storage location',
+          label: fmt(pick(s, 'name', 'code', 'storage') ?? `Loc ${i + 1}`),
+          value: num(pick(s, 'count', 'value')),
+        })),
+        ...ageBuckets.map((b, i) => ({
+          category: 'Age distribution',
+          label: fmt(pick(b, 'bucket', 'label', 'range') ?? `Bucket ${i + 1}`),
+          value: num(pick(b, 'count', 'value')),
+        })),
+        ...holds.map((h) => ({
+          category: 'On hold by reason',
+          label: fmt(pick(h, 'reason', 'hold_reason', 'label')),
+          value: num(pick(h, 'count', 'value')),
+        })),
+      ];
+      return rows.length
+        ? { columns: [{ key: 'category', label: 'Section' }, { key: 'label', label: 'Item' }, { key: 'value', label: 'UIDs' }], rows }
+        : null;
+    }
+
+    case 'furnace': {
+      const batches = asArray(pick(data, 'batches', 'rows', 'log'), 'batches', 'rows');
+      const rows = batches.map((b) => ({
+        batch: fmt(pick(b, 'batch_number', 'batch', 'batch_no')),
+        step: fmt(pick(b, 'tempering_step', 'step')),
+        cycle: fmt(pick(b, 'cycle_code', 'cycle')),
+        uids: fmt(pick(b, 'uid_count', 'uids')),
+        target_temp: fmt(pick(b, 'target_temp', 'target_temperature')),
+        actual_temp: fmt(pick(b, 'actual_temp', 'actual_temperature')),
+        temp_dev: fmt(pick(b, 'temp_deviation', 'temperature_deviation')),
+        target_soak: fmt(pick(b, 'target_soak', 'target_soak_time')),
+        actual_soak: fmt(pick(b, 'actual_soak', 'actual_soak_time')),
+        soak_dev: fmt(pick(b, 'soak_deviation')),
+        flag: pick(b, 'deviation_flag', 'deviation', 'out_of_tolerance') ? 'DEVIATION' : 'OK',
+        date: fmt(pick(b, 'date', 'run_date', 'created_at')),
+        operator: fmt(pick(b, 'operator', 'operator_name')),
+      }));
+      return rows.length
+        ? {
+            columns: [
+              { key: 'batch', label: 'Batch' },
+              { key: 'step', label: 'Temper step' },
+              { key: 'cycle', label: 'Cycle' },
+              { key: 'uids', label: 'UIDs' },
+              { key: 'target_temp', label: 'Tgt °C' },
+              { key: 'actual_temp', label: 'Act °C' },
+              { key: 'temp_dev', label: 'Δ°C' },
+              { key: 'target_soak', label: 'Tgt soak' },
+              { key: 'actual_soak', label: 'Act soak' },
+              { key: 'soak_dev', label: 'Δ soak' },
+              { key: 'flag', label: 'Flag' },
+              { key: 'date', label: 'Date' },
+              { key: 'operator', label: 'Operator' },
+            ],
+            rows,
+            orientation: 'landscape',
+          }
+        : null;
+    }
+
+    case 'scrap': {
+      const byReason = asArray(pick(data, 'scrap_by_reason', 'by_reason', 'reasons'), 'scrap_by_reason', 'by_reason');
+      const byPattern = asArray(pick(data, 'yield_by_pattern', 'patterns', 'by_pattern'), 'yield_by_pattern', 'patterns');
+      const trend = asArray(pick(data, 'scrap_trend', 'trend'), 'scrap_trend', 'trend');
+      const rows = [
+        ...byReason.map((r) => ({
+          category: 'Scrap by reason',
+          label: fmt(pick(r, 'reason', 'label')),
+          value: num(pick(r, 'length', 'count', 'value')),
+        })),
+        ...byPattern.map((p) => ({
+          category: 'Yield per pattern',
+          label: fmt(pick(p, 'pattern', 'name', 'code')),
+          value: `in ${num(pick(p, 'input_length', 'input'))} / out ${num(pick(p, 'output_length', 'output'))} / yield ${fmt(pick(p, 'yield_pct', 'yield'))}%`,
+        })),
+        ...trend.map((t, i) => ({
+          category: 'Scrap trend',
+          label: String(pick(t, 'date', 'period', 'label') ?? i),
+          value: num(pick(t, 'scrap', 'value', 'count')),
+        })),
+      ];
+      return rows.length
+        ? { columns: [{ key: 'category', label: 'Section' }, { key: 'label', label: 'Item' }, { key: 'value', label: 'Value' }], rows }
+        : null;
+    }
+
+    case 'moFulfilment': {
+      const mos = asArray(pick(data, 'mos', 'orders', 'rows'), 'mos', 'orders');
+      const rows = mos.map((m) => {
+        const required = num(pick(m, 'required_qty', 'required', 'qty'));
+        const dispatched = num(pick(m, 'dispatched', 'uids_dispatched'));
+        const remaining = pick(m, 'remaining') ?? Math.max(0, required - dispatched);
+        const pct = pick(m, 'pct_complete', 'percent_complete') ?? (required ? Math.round((dispatched / required) * 100) : 0);
+        const status = pick(m, 'overdue') ? 'OVERDUE' : fmt(pick(m, 'status'));
+        return {
+          mo: fmt(pick(m, 'mo_number', 'mo', 'code')),
+          customer: fmt(pick(m, 'customer', 'customer_name')),
+          required,
+          linked: fmt(pick(m, 'linked_uids', 'linked')),
+          dispatched,
+          remaining,
+          progress: `${num(pct)}%`,
+          status,
+        };
+      });
+      return rows.length
+        ? {
+            columns: [
+              { key: 'mo', label: 'MO' },
+              { key: 'customer', label: 'Customer' },
+              { key: 'required', label: 'Req' },
+              { key: 'linked', label: 'Linked' },
+              { key: 'dispatched', label: 'Dispatched' },
+              { key: 'remaining', label: 'Remaining' },
+              { key: 'progress', label: '% complete' },
+              { key: 'status', label: 'Status' },
+            ],
+            rows,
+          }
+        : null;
+    }
+
+    case 'quality': {
+      const steps = asArray(pick(data, 'by_step', 'steps', 'qc_steps'), 'by_step', 'steps');
+      const failures = asArray(pick(data, 'failures', 'failures_by_reason', 'by_reason'), 'failures', 'failures_by_reason');
+      const rows = [
+        ...steps.map((s) => {
+          const pass = num(pick(s, 'pass', 'passed', 'pass_count'));
+          const fail = num(pick(s, 'fail', 'failed', 'fail_count'));
+          const total = pass + fail || 1;
+          return {
+            category: 'Pass / fail per step',
+            label: fmt(pick(s, 'step_name', 'step', 'name', 'code')),
+            value: `${Math.round((pass / total) * 100)}% pass (${pass}/${pass + fail})`,
+          };
+        }),
+        ...failures.map((f) => ({
+          category: 'Failures by reason',
+          label: fmt(pick(f, 'label', 'reason', 'step')),
+          value: num(pick(f, 'count', 'value')),
+        })),
+      ];
+      return rows.length
+        ? { columns: [{ key: 'category', label: 'Section' }, { key: 'label', label: 'Item' }, { key: 'value', label: 'Result' }], rows }
+        : null;
+    }
+
+    case 'traceability': {
+      if (!traceValue || !traceValue.trim()) return null;
+      const uids = asArray(pick(data, 'uids', 'rows', 'results'), 'uids', 'rows');
+      const rows = uids.map((u) => ({
+        uid: fmt(pick(u, 'uid_code', 'uid', 'code')),
+        status: fmt(pick(u, 'status', 'current_status')),
+        location: fmt(pick(u, 'current_location', 'location', 'storage_code')),
+        mo: fmt(pick(u, 'mo_number', 'mo')),
+        dispatch_date: fmt(pick(u, 'dispatch_date', 'dispatched_at')),
+        history: fmt(pick(u, 'step_history_summary', 'history', 'last_step')),
+      }));
+      return rows.length
+        ? {
+            columns: [
+              { key: 'uid', label: 'UID' },
+              { key: 'status', label: 'Status' },
+              { key: 'location', label: 'Current location' },
+              { key: 'mo', label: 'MO' },
+              { key: 'dispatch_date', label: 'Dispatch date' },
+              { key: 'history', label: 'Step history' },
+            ],
+            rows,
+            orientation: 'landscape',
+          }
+        : null;
+    }
+
+    case 'shift': {
+      const shifts = asArray(pick(data, 'shifts', 'rows', 'by_shift'), 'shifts', 'rows');
+      const rows = shifts.map((s) => {
+        const output = num(pick(s, 'output', 'pieces', 'count'));
+        const staff = num(pick(s, 'staff', 'staff_count', 'headcount'));
+        return {
+          shift: fmt(pick(s, 'shift_name', 'shift', 'name')),
+          date: fmt(pick(s, 'date')),
+          staff: staff || '—',
+          output,
+          per_head: staff ? (output / staff).toFixed(1) : '—',
+        };
+      });
+      return rows.length
+        ? {
+            columns: [
+              { key: 'shift', label: 'Shift' },
+              { key: 'date', label: 'Date' },
+              { key: 'staff', label: 'Staff' },
+              { key: 'output', label: 'Output' },
+              { key: 'per_head', label: 'Per head' },
+            ],
+            rows,
+          }
+        : null;
+    }
+
+    case 'capacity': {
+      const stations = asArray(pick(data, 'workstations', 'stations', 'rows'), 'workstations', 'stations');
+      const rows = stations.map((s) => {
+        const used = num(pick(s, 'used', 'used_capacity', 'load'));
+        const cap = num(pick(s, 'capacity', 'total_capacity'), 0);
+        const pct = pick(s, 'utilisation_pct', 'utilisation') != null
+          ? num(pick(s, 'utilisation_pct', 'utilisation'))
+          : cap ? Math.round((used / cap) * 100) : 0;
+        return {
+          workstation: fmt(pick(s, 'name', 'code', 'workstation')),
+          used: used || '—',
+          capacity: cap || '—',
+          utilisation: `${pct}%`,
+        };
+      });
+      return rows.length
+        ? {
+            columns: [
+              { key: 'workstation', label: 'Workstation' },
+              { key: 'used', label: 'Used' },
+              { key: 'capacity', label: 'Capacity' },
+              { key: 'utilisation', label: 'Utilisation %' },
+            ],
+            rows,
+          }
+        : null;
+    }
+
+    default:
+      return null;
+  }
+}
+
+/* Export toolbar shown in the report header. Hidden entirely when there is
+   nothing to export so we never produce an empty file. */
+function ExportButtons({ report, exportData, location, locationLabel, dateFrom, dateTo, traceValue }) {
+  if (!exportData || !exportData.rows.length) return null;
+
+  const slug = (s) => String(s || 'all').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'all';
+  const filename = `report-${report.id}-${slug(location)}`;
+  const title = report.name;
+  const subtitleParts = [`Location: ${locationLabel || location || 'All'}`];
+  if (report.dateAware) subtitleParts.push(`${dateFrom} → ${dateTo}`);
+  if (report.id === 'traceability' && traceValue?.trim()) subtitleParts.push(`Search: ${traceValue.trim()}`);
+  const subtitle = subtitleParts.join('  ·  ');
+
+  const onCSV = () => downloadCSV(filename, exportData.columns, exportData.rows);
+  const onPDF = () =>
+    downloadPDF(filename, {
+      title,
+      subtitle,
+      columns: exportData.columns,
+      rows: exportData.rows,
+      orientation: exportData.orientation || 'portrait',
+    });
+
+  return (
+    <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+      <button className="btn btn-sm" type="button" onClick={onCSV} title="Export the rows shown to CSV">
+        <Icon name="doc" size={14} />
+        Export CSV
+      </button>
+      <button className="btn btn-sm" type="button" onClick={onPDF} title="Export the rows shown to PDF">
+        <Icon name="doc" size={14} />
+        Export PDF
+      </button>
     </div>
   );
 }
