@@ -175,4 +175,48 @@ router.get('/eligible-operators', async (req, res) => {
   return res.json({ success: true, data: { requiresBadge, badgeName: btRows[0]?.name || null, operators: ops } });
 });
 
+/**
+ * GET /api/v1/workstation-assignments/eligible-workstations?employee_id=&location=
+ * The inverse of eligible-operators: the workstation types an operator may be
+ * assigned to — machines they hold a valid badge for, plus machines with no
+ * badge requirement. Furnace (heat_treatment) steps are excluded (supervisor
+ * batch runs, never operator-allotted). Used by the Job Assignment operator
+ * picker so clicking an operator shows only the machines they can run.
+ */
+router.get('/eligible-workstations', async (req, res) => {
+  const { employee_id, location } = req.query;
+  if (!employee_id) {
+    return res.status(400).json({ success: false, error: { code: 'MISSING_EMPLOYEE', message: 'employee_id is required.' } });
+  }
+
+  const params = [employee_id];
+  let p = 2;
+  const conds = [`wt.status = 'active'`, `wt.category <> 'heat_treatment'`];
+  if (location && location !== 'both') {
+    // Workstation types may carry a location; include unscoped ones too.
+    conds.push(`(l.code = $${p++} OR wt.location_id IS NULL)`);
+    params.push(location);
+  }
+
+  const { rows } = await query(
+    `SELECT wt.code, wt.name, wt.category,
+            EXISTS (SELECT 1 FROM badge_types bt WHERE bt.workstation_type_id = wt.id) AS requires_badge,
+            EXISTS (SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
+                    WHERE eb.employee_id = $1 AND bt.workstation_type_id = wt.id
+                      AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)) AS has_badge
+     FROM workstation_types wt
+     LEFT JOIN locations l ON l.id = wt.location_id
+     WHERE ${conds.join(' AND ')}
+     ORDER BY wt.code`,
+    params
+  );
+
+  // Eligible = no badge requirement, or the operator holds the badge.
+  const eligible = rows
+    .filter((r) => !r.requires_badge || r.has_badge)
+    .map((r) => ({ code: r.code, name: r.name, category: r.category, requiresBadge: r.requires_badge, hasBadge: r.has_badge }));
+
+  return res.json({ success: true, data: eligible });
+});
+
 module.exports = router;
