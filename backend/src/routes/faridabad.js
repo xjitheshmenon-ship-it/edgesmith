@@ -213,6 +213,124 @@ router.post('/dispatches', requireRole(['admin', 'manager']), async (req, res) =
   return res.status(201).json({ success: true, data: result });
 });
 
+// ── Faridabad work items moving through the 10-step FAR cycle ────────────────
+
+/** Load the current FAR cycle steps as an ordered list with workstation info. */
+async function farSteps() {
+  const { rows } = await query(
+    `SELECT cs.step_number, cs.sequence_order, cs.operation_name, wt.code AS ws_code, wt.name AS ws_name
+     FROM cycle_steps cs
+     JOIN cycle_versions cv ON cv.id = cs.cycle_version_id
+     JOIN cycle_types ct ON ct.id = cv.cycle_type_id
+     JOIN workstation_types wt ON wt.id = cs.workstation_type_id
+     WHERE ct.code = 'FAR' AND cv.is_current
+     ORDER BY cs.sequence_order`
+  );
+  return rows;
+}
+
+/** GET /faridabad/floor — active items grouped by their current workstation. */
+router.get('/floor', async (req, res) => {
+  const steps = await farSteps();
+  const byStep = Object.fromEntries(steps.map((s) => [s.step_number, s]));
+  const { rows: items } = await query(
+    `SELECT fi.id, fi.size_mm, fi.current_step, fi.status, fi.priority, fi.started_at,
+            ct.code AS cycle_code, e.full_name AS operator_name
+     FROM faridabad_items fi
+     JOIN cycle_types ct ON ct.id = fi.cycle_type_id
+     LEFT JOIN employees e ON e.id = fi.current_operator_id
+     WHERE fi.status <> 'done'
+     ORDER BY CASE fi.priority WHEN 'High' THEN 0 WHEN 'Normal' THEN 1 ELSE 2 END, fi.created_at`
+  );
+  const groups = new Map();
+  for (const s of steps) {
+    if (!groups.has(s.ws_code)) groups.set(s.ws_code, { code: s.ws_code, name: s.ws_name, items: [] });
+  }
+  for (const it of items) {
+    const s = byStep[it.current_step];
+    if (!s) continue;
+    const g = groups.get(s.ws_code);
+    g.items.push({ ...it, operation_name: s.operation_name, ws_code: s.ws_code, ws_name: s.ws_name });
+  }
+  return res.json({ success: true, data: Array.from(groups.values()) });
+});
+
+/** POST /faridabad/items — create an item entering the FAR cycle at step 1. */
+router.post('/items', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { cycleCode, sizeMm, priority } = req.body || {};
+  const { rows: ct } = await query(`SELECT id FROM cycle_types WHERE code = $1`, [cycleCode || 'EAT']);
+  if (!ct[0]) return res.status(400).json({ success: false, error: { code: 'UNKNOWN_CYCLE', message: 'Unknown cycle type.' } });
+  const { rows } = await query(
+    `INSERT INTO faridabad_items (cycle_type_id, size_mm, priority) VALUES ($1,$2,$3) RETURNING *`,
+    [ct[0].id, sizeMm || null, priority || 'Normal']
+  );
+  await req.audit({ tableName: 'faridabad_items', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
+  return res.status(201).json({ success: true, data: rows[0] });
+});
+
+/** POST /faridabad/items/:id/start — begin the operation at the current step. */
+router.post('/items/:id/start', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { rows } = await query(
+    `UPDATE faridabad_items SET status = 'in_progress', started_at = now(), current_operator_id = $1, updated_at = now()
+     WHERE id = $2 AND status <> 'done' RETURNING *`,
+    [req.user.sub, req.params.id]
+  );
+  if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'ITEM_NOT_FOUND', message: 'Item not found or already done.' } });
+  return res.json({ success: true, data: rows[0] });
+});
+
+/**
+ * POST /faridabad/items/:id/close — finish the current operation and advance.
+ * For the MS Cutting step, body carries { sheet, pieces } and the balance is
+ * calculated + recorded; the operator never measures leftover material.
+ * body: { sheet?, pieces? }
+ */
+router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { sheet, pieces } = req.body || {};
+  const result = await withTransaction(async (client) => {
+    const { rows: itRows } = await client.query(`SELECT * FROM faridabad_items WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const item = itRows[0];
+    if (!item) throw Object.assign(new Error('Item not found'), { status: 404, code: 'ITEM_NOT_FOUND' });
+
+    const steps = await farSteps();
+    const idx = steps.findIndex((s) => s.step_number === item.current_step);
+    const step = steps[idx];
+    const isMsCutting = step && /MS Cutting/i.test(step.operation_name);
+
+    let balance = null;
+    let runId = null;
+    if (isMsCutting && sheet && Array.isArray(pieces) && pieces.length) {
+      balance = calculateMsBalance(sheet, pieces);
+      const { rows: runRows } = await client.query(
+        `INSERT INTO ms_sheet_cutting_runs (sheet_length_mm, sheet_width_mm, sheet_height_mm, pieces, strips, total_balance_weight_kg, operator_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+        [sheet.length_mm, sheet.width_mm, sheet.height_mm, JSON.stringify(pieces), JSON.stringify(balance.strips), balance.totalBalanceWeightKg, req.user.sub]
+      );
+      runId = runRows[0].id;
+    }
+
+    const netSeconds = item.started_at ? Math.floor((Date.now() - new Date(item.started_at).getTime()) / 1000) : null;
+    await client.query(
+      `INSERT INTO faridabad_item_logs (item_id, step_number, operation_name, operator_id, started_at, closed_at, net_work_seconds, ms_cutting_run_id)
+       VALUES ($1,$2,$3,$4,$5, now(), $6, $7)`,
+      [item.id, item.current_step, step ? step.operation_name : null, req.user.sub, item.started_at, netSeconds, runId]
+    );
+
+    const next = steps[idx + 1];
+    if (next) {
+      await client.query(
+        `UPDATE faridabad_items SET current_step = $1, status = 'queued', started_at = NULL, current_operator_id = NULL, updated_at = now() WHERE id = $2`,
+        [next.step_number, item.id]
+      );
+    } else {
+      await client.query(`UPDATE faridabad_items SET status = 'done', started_at = NULL, updated_at = now() WHERE id = $1`, [item.id]);
+    }
+    await req.audit({ tableName: 'faridabad_items', recordId: item.id, action: 'UPDATE', after: { closedStep: item.current_step, advancedTo: next ? next.step_number : 'done' } });
+    return { itemId: item.id, advancedTo: next ? next.step_number : 'done', balance };
+  });
+  return res.json({ success: true, data: result });
+});
+
 // ── Batch Management — two-leg dispatch journey ──────────────────────────────
 
 const ROLLING_ALERT_DAYS = 15;

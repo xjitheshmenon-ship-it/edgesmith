@@ -17,6 +17,11 @@ export const faridabadApi = {
   logWeld: (payload) => api.post('/faridabad/weld', payload),
   dispatches: () => api.get('/faridabad/dispatches'),
   createDispatch: (payload) => api.post('/faridabad/dispatches', payload),
+  // Work items moving through the 10-step FAR cycle (floor + workstation)
+  floor: () => api.get('/faridabad/floor'),
+  createItem: (payload) => api.post('/faridabad/items', payload),
+  startItem: (id) => api.post(`/faridabad/items/${id}/start`),
+  closeItem: (id, payload) => api.post(`/faridabad/items/${id}/close`, payload),
   // Batch Management — two-leg dispatch journey
   batches: () => api.get('/faridabad/batches'),
   dispatchOnward: (id, payload) => api.post(`/faridabad/batches/${id}/dispatch-onward`, payload),
