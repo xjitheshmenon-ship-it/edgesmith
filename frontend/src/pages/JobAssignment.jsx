@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { useApp } from '../store/AppContext';
 import { useAuth } from '../store/AuthContext';
@@ -335,7 +335,31 @@ function OperatorCard({ op, assignments, allWorkstations, dragging, onDrop, onUn
 /* ── assign-via-click picker (fallback to drag-and-drop) ─────────────────── */
 
 function AssignPicker({ ws, operators, onPick, onClose, busy }) {
-  const badge = requiredBadge(ws);
+  const { location } = useApp();
+  const [elig, setElig] = useState(null); // { requiresBadge, badgeName, operators: [] }
+  const [showAll, setShowAll] = useState(false);
+  const [loadErr, setLoadErr] = useState(null);
+
+  useEffect(() => {
+    let live = true;
+    setElig(null); setLoadErr(null); setShowAll(false);
+    workstationAssignmentsApi
+      .eligibleOperators(ws.code, location)
+      .then((r) => { if (live) setElig(r.data); })
+      .catch((e) => { if (live) setLoadErr(e.message || 'Could not load eligible operators.'); });
+    return () => { live = false; };
+  }, [ws.code, location]);
+
+  const requiresBadge = !!elig?.requiresBadge;
+  const badgeName = elig?.badgeName || requiredBadge(ws);
+  const eligibleIds = new Set((elig?.operators || []).map((o) => String(o.id)));
+  // Default: only certified operators. Override reveals everyone (NEEDS marked).
+  const shown = !elig
+    ? []
+    : showAll || !requiresBadge
+      ? operators
+      : operators.filter((op) => eligibleIds.has(String(pick(op, 'id', 'employee_id', 'user_id'))));
+
   return (
     <div
       onMouseDown={onClose}
@@ -346,7 +370,7 @@ function AssignPicker({ ws, operators, onPick, onClose, busy }) {
           <div>
             <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, color: T_PRIMARY }}>Assign {ws.code}</div>
             <div style={{ fontFamily: SANS, fontSize: 12, color: T_SECONDARY, marginTop: 2 }}>
-              {badge ? `Requires ${badge}` : 'No badge requirement'} · queue {ws.queued}
+              {requiresBadge ? `Requires ${badgeName} · certified operators only` : 'No badge requirement'} · queue {ws.queued}
             </div>
           </div>
           <button onClick={onClose} className="btn btn-sm" style={{ width: 32, padding: 0, justifyContent: 'center' }} aria-label="Close">
@@ -354,11 +378,17 @@ function AssignPicker({ ws, operators, onPick, onClose, busy }) {
           </button>
         </div>
         <div style={{ padding: '14px 16px', maxHeight: '60vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {operators.length === 0 ? (
-            <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, padding: 12 }}>No operators on shift.</div>
+          {loadErr ? (
+            <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--status-danger, #e5484d)', padding: 12 }}>{loadErr}</div>
+          ) : !elig ? (
+            <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, padding: 12 }}>Loading eligible operators…</div>
+          ) : shown.length === 0 ? (
+            <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, padding: 12 }}>
+              {requiresBadge ? `No certified operators on shift for ${badgeName}.` : 'No operators on shift.'}
+            </div>
           ) : (
-            operators.map((op) => {
-              const ok = operatorHoldsBadge(op, badge);
+            shown.map((op) => {
+              const ok = !requiresBadge || eligibleIds.has(String(pick(op, 'id', 'employee_id', 'user_id')));
               return (
                 <button
                   key={pick(op, 'id', 'employee_id', 'user_id')}
@@ -377,12 +407,23 @@ function AssignPicker({ ws, operators, onPick, onClose, busy }) {
                   {ok ? (
                     <span className="badge" style={{ background: 'rgba(34,160,107,0.14)', color: 'var(--status-success, #22a06b)' }}>✓ QUALIFIED</span>
                   ) : (
-                    <span className="badge" style={{ background: 'rgba(217,122,43,0.16)', color: 'var(--status-warning, #d97a2b)' }}>⚠ NEEDS {badge}</span>
+                    <span className="badge" style={{ background: 'rgba(217,122,43,0.16)', color: 'var(--status-warning, #d97a2b)' }}>⚠ NEEDS {badgeName}</span>
                   )}
                 </button>
               );
             })
           )}
+          {/* Supervisor override: badge is a warning, not a hard block. */}
+          {requiresBadge && elig ? (
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ alignSelf: 'flex-start', marginTop: 4 }}
+              onClick={() => setShowAll((v) => !v)}
+            >
+              {showAll ? 'Show certified only' : 'Show all operators (override)'}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
