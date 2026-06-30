@@ -87,37 +87,58 @@ export const masterApi = {
   workstationUnits: () => api.get('/master/workstation-units'),
   createWorkstationUnit: (p) => api.post('/master/workstation-units', p),
   updateWorkstationUnit: (id, p) => api.patch(`/master/workstation-units/${id}`, p),
+  archiveWorkstationUnit: (id) => api.delete(`/master/workstation-units/${id}`),
 
   products: () => api.get('/master/products'),
   createProduct: (p) => api.post('/master/products', p),
+  updateProduct: (id, p) => api.patch(`/master/products/${id}`, p),
+  archiveProduct: (id) => api.delete(`/master/products/${id}`),
 
   sizes: () => api.get('/master/sizes'),
   createSize: (p) => api.post('/master/sizes', p),
+  updateSize: (id, p) => api.patch(`/master/sizes/${id}`, p),
+  archiveSize: (id) => api.delete(`/master/sizes/${id}`),
 
   designs: () => api.get('/master/designs'),
   createDesign: (p) => api.post('/master/designs', p),
+  updateDesign: (id, p) => api.patch(`/master/designs/${id}`, p),
+  archiveDesign: (id) => api.delete(`/master/designs/${id}`),
   designValidityMatrix: () => api.get('/master/designs/validity-matrix'),
 
   suppliers: () => api.get('/master/suppliers'),
   createSupplier: (p) => api.post('/master/suppliers', p),
+  updateSupplier: (id, p) => api.patch(`/master/suppliers/${id}`, p),
+  archiveSupplier: (id) => api.delete(`/master/suppliers/${id}`),
 
   contractors: () => api.get('/master/contractors'),
   createContractor: (p) => api.post('/master/contractors', p),
+  updateContractor: (id, p) => api.patch(`/master/contractors/${id}`, p),
+  archiveContractor: (id) => api.delete(`/master/contractors/${id}`),
 
   colorCodes: () => api.get('/master/color-codes'),
   createColorCode: (p) => api.post('/master/color-codes', p),
+  updateColorCode: (id, p) => api.patch(`/master/color-codes/${id}`, p),
+  archiveColorCode: (id) => api.delete(`/master/color-codes/${id}`),
 
   truckCapacity: () => api.get('/master/truck-capacity'),
   createTruckCapacity: (p) => api.post('/master/truck-capacity', p),
+  updateTruckCapacity: (id, p) => api.patch(`/master/truck-capacity/${id}`, p),
+  archiveTruckCapacity: (id) => api.delete(`/master/truck-capacity/${id}`),
 
   gradeCycleMap: () => api.get('/master/grade-cycle-map'),
   createGradeCycleMap: (p) => api.post('/master/grade-cycle-map', p),
+  updateGradeCycleMap: (id, p) => api.patch(`/master/grade-cycle-map/${id}`, p),
+  archiveGradeCycleMap: (id) => api.delete(`/master/grade-cycle-map/${id}`),
 
   conversionPatterns: () => api.get('/master/conversion-patterns'),
   createConversionPattern: (p) => api.post('/master/conversion-patterns', p),
+  updateConversionPattern: (id, p) => api.patch(`/master/conversion-patterns/${id}`, p),
+  archiveConversionPattern: (id) => api.delete(`/master/conversion-patterns/${id}`),
 
   storageLocations: () => api.get('/master/storage-locations'),
   createStorageLocation: (p) => api.post('/master/storage-locations', p),
+  updateStorageLocation: (id, p) => api.patch(`/master/storage-locations/${id}`, p),
+  archiveStorageLocation: (id) => api.delete(`/master/storage-locations/${id}`),
 
   grindingRules: () => api.get('/master/grinding-rules'),
   updateGrindingRule: (id, p) => api.patch(`/master/grinding-rules/${id}`, p),

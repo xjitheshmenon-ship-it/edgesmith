@@ -122,6 +122,42 @@ router.post('/designs', requireRole(['admin']), async (req, res) => {
   return res.status(201).json({ success: true, data: rows[0] });
 });
 
+router.patch('/designs/:id', requireRole(['admin']), async (req, res) => {
+  const { code, description, status, validSizeIds } = req.body;
+  const sets = [];
+  const values = [];
+  if (code !== undefined) { values.push(code); sets.push(`code = $${values.length}`); }
+  if (description !== undefined) { values.push(description); sets.push(`description = $${values.length}`); }
+  if (status !== undefined) { values.push(status); sets.push(`status = $${values.length}`); }
+  let design;
+  if (sets.length) {
+    values.push(req.params.id);
+    const { rows } = await query(`UPDATE designs SET ${sets.join(', ')} WHERE id = $${values.length} RETURNING *`, values);
+    if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Design not found.' } });
+    design = rows[0];
+  } else {
+    const { rows } = await query(`SELECT * FROM designs WHERE id = $1`, [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Design not found.' } });
+    design = rows[0];
+  }
+  // Replace the valid-sizes set when provided.
+  if (Array.isArray(validSizeIds)) {
+    await query(`DELETE FROM design_valid_sizes WHERE design_id = $1`, [design.id]);
+    for (const sizeId of validSizeIds) {
+      await query(`INSERT INTO design_valid_sizes (design_id, size_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, [design.id, sizeId]);
+    }
+  }
+  await req.audit({ tableName: 'designs', recordId: design.id, action: 'UPDATE', after: design });
+  return res.json({ success: true, data: design });
+});
+
+router.delete('/designs/:id', requireRole(['admin']), async (req, res) => {
+  const { rows } = await query(`UPDATE designs SET status = 'archived' WHERE id = $1 RETURNING *`, [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Design not found.' } });
+  await req.audit({ tableName: 'designs', recordId: req.params.id, action: 'UPDATE', after: { status: 'archived' } });
+  return res.json({ success: true, data: rows[0] });
+});
+
 router.get('/designs/validity-matrix', async (req, res) => {
   const { rows } = await query(
     `SELECT sz.size_mm, d.code AS design_code, true AS valid

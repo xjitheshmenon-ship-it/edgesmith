@@ -66,7 +66,7 @@ export default function UidCreation() {
   const { isManager, isAdmin } = useAuth();
   const canBulk = isManager || isAdmin;
 
-  const [mode, setMode] = useState('billet'); // 'billet' | 'bulk'
+  const [mode, setMode] = useState('block'); // 'block' | 'bulk'
 
   return (
     <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
@@ -78,19 +78,19 @@ export default function UidCreation() {
             <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: 'var(--text-primary)' }}>UID Creation</div>
           </div>
           <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-            BSW-01 · Dharmapuri — the UID birth point. Each billet is cut into pieces and every piece gets a UID.
+            BSW-01 · Dharmapuri — the UID birth point. Each block is cut into pieces and every piece gets a UID.
           </div>
         </div>
         {canBulk && (
           <div className="tab-strip">
-            <button className={mode === 'billet' ? 'active' : ''} onClick={() => setMode('billet')}>From billet</button>
+            <button className={mode === 'block' ? 'active' : ''} onClick={() => setMode('block')}>From block</button>
             <button className={mode === 'bulk' ? 'active' : ''} onClick={() => setMode('bulk')}>Bulk create</button>
           </div>
         )}
       </div>
 
       <div style={{ marginTop: 22 }}>
-        {mode === 'billet'
+        {mode === 'block'
           ? <BilletFlow />
           : <BulkFlow />}
       </div>
@@ -119,9 +119,12 @@ function BilletFlow() {
   const cycles = ref?.cycles || [];
   const designs = ref?.designs || [];
   const mos = ref?.mos || [];
+  const sizes = ref?.sizes || [];
 
   const [eventId, setEventId] = useState('');
-  const [billetRef, setBilletRef] = useState('');
+  // Blocks are NOT individually traceable (rolling erases identity) — a block is
+  // just dimensions. So there is no per-block selector; the receiving event
+  // carries the batch traceability that flows onto each UID.
   const [billetLength, setBilletLength] = useState('');
   const [cutCount, setCutCount] = useState(2);
   const [pieces, setPieces] = useState(() => makePieces(2));
@@ -166,7 +169,7 @@ function BilletFlow() {
   const scrapNegative = scrap != null && scrap < 0;
 
   const piecesValid = pieces.every((p) => p.cycle && Number(p.size) > 0);
-  const formValid = eventId && billetRef && piecesValid && !scrapNegative;
+  const formValid = eventId && piecesValid && !scrapNegative;
 
   async function runPreview() {
     setError(null);
@@ -202,29 +205,47 @@ function BilletFlow() {
     }
   }
 
+  // Map a piece size (mm) to a sizeId from the master list, when one matches.
+  const sizeIdFor = (mm) => {
+    const m = sizes.find((s) => Number(s.size_mm ?? s.sizeMm) === Number(mm));
+    return m ? m.id : undefined;
+  };
+
   async function confirmCreate() {
     setError(null);
     if (!formValid || scrapNegative) return;
     setSubmitting(true);
     try {
-      const payload = {
-        location: 'dharmapuri',
-        workstation: 'BSW-01',
-        receiving_event_id: selectedEvent ? (selectedEvent.id ?? selectedEvent.receiving_id) : undefined,
-        billet_ref: billetRef,
-        billet_length_mm: Number(billetLength) || undefined,
-        cut_count: cutCount,
-        priority,
-        design_id: designId || undefined,
-        mo_id: moId || undefined,
-        pieces: pieces.map((p) => ({ cycle: p.cycle, size_mm: Number(p.size) })),
-      };
-      const res = await uidsApi.bulkCreate(payload);
-      const created = res.data;
-      const count = Array.isArray(created) ? created.length : (created?.count ?? pieces.length);
-      setSuccess({ count, codes: extractCreatedCodes(created) });
+      const recvId = selectedEvent ? (selectedEvent.id ?? selectedEvent.receiving_id) : undefined;
+      const dispatchId = selectedEvent ? (selectedEvent.dispatch_batch_id ?? selectedEvent.dispatchBatchId) : undefined;
+      // The backend creates `quantity` UIDs for one cycle + size at a time, so
+      // group the cut pieces by (cycle, size) and create each group. Each UID
+      // inherits the receiving event's batch traceability.
+      const groups = {};
+      for (const p of pieces) {
+        const sizeId = sizeIdFor(p.size);
+        const key = `${p.cycle}|${sizeId ?? ''}`;
+        (groups[key] = groups[key] || { cycleCode: p.cycle, sizeId, quantity: 0 }).quantity++;
+      }
+      let total = 0;
+      const allCodes = [];
+      for (const g of Object.values(groups)) {
+        const res = await uidsApi.bulkCreate({
+          cycleCode: g.cycleCode,
+          quantity: g.quantity,
+          sizeId: g.sizeId,
+          designId: designId || undefined,
+          moId: moId || undefined,
+          priority,
+          receivingEventId: recvId,
+          dispatchBatchId: dispatchId,
+        });
+        const created = res.data;
+        total += Array.isArray(created) ? created.length : (created?.count ?? g.quantity);
+        extractCreatedCodes(created).forEach((c) => allCodes.push(c));
+      }
+      setSuccess({ count: total, codes: allCodes });
       setPreview(null);
-      setBilletRef('');
       setBilletLength('');
     } catch (err) {
       setError(err);
@@ -233,16 +254,11 @@ function BilletFlow() {
     }
   }
 
-  const billetOptions = useMemo(() => {
-    const total = selectedEvent?.billet_count ?? selectedEvent?.billets ?? selectedEvent?.billets_total ?? 0;
-    return Array.from({ length: total }, (_, i) => i + 1);
-  }, [selectedEvent]);
-
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.15fr) minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
       {/* FORM */}
       <div className="card" style={{ padding: 22 }}>
-        <SectionTitle icon="inbox" sub="Material traceability from Faridabad is carried onto every UID created here.">Create UIDs from a billet</SectionTitle>
+        <SectionTitle icon="inbox" sub="Material traceability from Faridabad is carried onto every UID created here.">Create UIDs from a block</SectionTitle>
 
         <ErrorBanner error={error} onClose={() => setError(null)} />
         {success && (
@@ -259,7 +275,7 @@ function BilletFlow() {
         <div style={{ display: 'grid', gap: 16 }}>
           <div>
             <Label>Receiving event</Label>
-            <select className="form-select" value={eventId} onChange={(e) => { setEventId(e.target.value); setBilletRef(''); setPreview(null); }}>
+            <select className="form-select" value={eventId} onChange={(e) => { setEventId(e.target.value); setPreview(null); }}>
               <option value="">Select a receiving event…</option>
               {events.map((ev) => {
                 const id = ev.id ?? ev.receiving_id;
@@ -269,7 +285,7 @@ function BilletFlow() {
                     {(ev.ref || ev.reference || ev.event_ref || `RCV-${id}`)}
                     {ev.contractor || ev.rolling_contractor ? ` · ${ev.contractor || ev.rolling_contractor}` : ''}
                     {ev.date || ev.received_at ? ` · ${String(ev.date || ev.received_at).slice(0, 10)}` : ''}
-                    {remaining != null ? ` · ${remaining} billets` : ''}
+                    {remaining != null ? ` · ${remaining} blocks` : ''}
                   </option>
                 );
               })}
@@ -277,19 +293,11 @@ function BilletFlow() {
             {events.length === 0 && <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--text-secondary)', marginTop: 6 }}>No receiving events available.</div>}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div>
-              <Label>Billet within event</Label>
-              <select className="form-select" value={billetRef} onChange={(e) => { setBilletRef(e.target.value); setPreview(null); }} disabled={!eventId}>
-                <option value="">Select billet…</option>
-                {billetOptions.map((n) => (
-                  <option key={n} value={n}>Billet {n}{billetOptions.length ? ` of ${billetOptions.length}` : ''}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <Label>Billet length (mm)</Label>
-              <input className="form-input" type="number" min="0" placeholder="e.g. 3600" value={billetLength} onChange={(e) => { setBilletLength(e.target.value); setPreview(null); }} />
+          <div>
+            <Label>Block length (mm) — optional</Label>
+            <input className="form-input" type="number" min="0" placeholder="e.g. 4500" value={billetLength} onChange={(e) => { setBilletLength(e.target.value); setPreview(null); }} />
+            <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--text-secondary)', marginTop: 5 }}>
+              Blocks aren't individually tracked — this is just the dimension used to estimate scrap from the cut.
             </div>
           </div>
 
@@ -426,15 +434,12 @@ function BulkFlow() {
     setSubmitting(true);
     try {
       const payload = {
-        location: 'dharmapuri',
-        workstation: 'BSW-01',
-        cycle,
+        cycleCode: cycle,
         quantity: qtyNum,
-        size_mm: Number(size) || undefined,
-        design_id: designId || undefined,
+        designId: designId || undefined,
         priority,
-        mo_id: moId || undefined,
-        traceability: null, // bulk planning — material fields linked to a receiving event later
+        moId: moId || undefined,
+        // bulk planning — material traceability is linked to a receiving event later
       };
       const res = await uidsApi.bulkCreate(payload);
       const created = res.data;
@@ -448,7 +453,7 @@ function BulkFlow() {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.15fr) minmax(0, 1fr)', gap: 18, alignItems: 'start' }}>
       <div className="card" style={{ padding: 22 }}>
-        <SectionTitle icon="stack" sub="No billet reference — material traceability is left blank, to be linked to a receiving event later.">Bulk UID creation</SectionTitle>
+        <SectionTitle icon="stack" sub="No block reference — material traceability is left blank, to be linked to a receiving event later.">Bulk UID creation</SectionTitle>
 
         <ErrorBanner error={error} onClose={() => setError(null)} />
         {success && (
