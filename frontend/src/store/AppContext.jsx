@@ -22,7 +22,9 @@ export function AppProvider({ children }) {
     if (user && !canSwitchLocation) {
       return user.location_id === 1 ? 'dharmapuri' : 'faridabad';
     }
-    return localStorage.getItem('cpcms_location') || 'dharmapuri';
+    // Only two factories now — migrate any legacy 'both' to Dharmapuri.
+    const stored = localStorage.getItem('cpcms_location');
+    return stored === 'faridabad' ? 'faridabad' : 'dharmapuri';
   });
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('cpcms_sidebar_collapsed') === 'true');
@@ -77,7 +79,7 @@ export function AppProvider({ children }) {
     location,
     setLocation,
     canSwitchLocation,
-    locationLabel: location === 'dharmapuri' ? 'Dharmapuri' : location === 'faridabad' ? 'Faridabad' : 'Both',
+    locationLabel: location === 'faridabad' ? 'Faridabad' : 'Dharmapuri',
     sidebarCollapsed,
     toggleSidebar,
     online,
