@@ -8,12 +8,14 @@ export const NAV = [
   ['OVERVIEW', [
     ['dashboard', 'Dashboard', 'grid', 'dashboardAlerts'],
     ['shopfloor', 'Shopfloor Display', 'monitor', null],
+    // Production Floor + My Workstation are shared across both factories — the
+    // topbar factory toggle selects which factory's data is shown.
+    ['floor', 'Production Floor', 'factory', 'onHoldUids'],
+    ['jobexec', 'My Workstation', 'timer', null],
   ]],
   ['FARIDABAD', [
     ['intake', 'Raw Material Intake', 'inbox', null],
     ['joining', 'Joining Operation', 'link', null],
-    ['farfloor', 'Faridabad Production Floor', 'grid', null],
-    ['farstation', 'Faridabad My Workstation', 'clock', null],
     ['farbatch', 'Faridabad Batch Management', 'stack', null],
     // Contractor Dispatch retired — dispatch creation now lives in Faridabad
     // Batch Management. The /dispatch route stays registered for old links.
@@ -21,8 +23,6 @@ export const NAV = [
   ['DHARMAPURI', [
     ['receiving', 'Receiving', 'download', 'expectedArrivals'],
     ['uid', 'UID Creation', 'tag', null],
-    ['floor', 'Production Floor', 'factory', 'onHoldUids'],
-    ['jobexec', 'My Workstation', 'timer', null],
     ['batch', 'Batch Management', 'stack', 'activeBatches'],
     ['qc', 'QC', 'check', 'pendingQc'],
   ]],
@@ -50,7 +50,7 @@ export const SECTIONS_BY_ROLE = {
   admin: ['OVERVIEW', 'FARIDABAD', 'DHARMAPURI', 'OPERATIONS', 'CONFIGURATION'],
   manager: ['OVERVIEW', 'FARIDABAD', 'DHARMAPURI', 'OPERATIONS', 'CONFIGURATION'],
   supervisor: ['OVERVIEW', 'DHARMAPURI', 'OPERATIONS'],
-  operator: ['DHARMAPURI'], // operators land on My Workstation/QC only — filtered further below
+  operator: ['OVERVIEW', 'DHARMAPURI'], // filtered to My Workstation/QC below
   service: [],
   shopfloor: [],
 };
