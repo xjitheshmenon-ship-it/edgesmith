@@ -12,10 +12,11 @@ export const NAV = [
   ['FARIDABAD', [
     ['intake', 'Raw Material Intake', 'inbox', null],
     ['joining', 'Joining Operation', 'link', null],
-    ['dispatch', 'Contractor Dispatch', 'truck', 'pendingDispatch'],
     ['farfloor', 'Faridabad Production Floor', 'grid', null],
     ['farstation', 'Faridabad My Workstation', 'clock', null],
     ['farbatch', 'Faridabad Batch Management', 'stack', null],
+    // Contractor Dispatch retired — dispatch creation now lives in Faridabad
+    // Batch Management. The /dispatch route stays registered for old links.
   ]],
   ['DHARMAPURI', [
     ['receiving', 'Receiving', 'download', 'expectedArrivals'],
