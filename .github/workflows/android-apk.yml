@@ -1,0 +1,53 @@
+name: Build Android APK
+
+# Manually triggered: Actions tab → "Build Android APK" → Run workflow.
+# Produces an installable debug APK as a downloadable artifact.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Capacitor 8 requires JDK 21 for the Android Gradle build.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build web assets (points at the Render API, root base path)
+        working-directory: frontend
+        env:
+          # The APK bundles the web build, so the API base must be absolute.
+          # Override via repo Actions variable VITE_API_BASE_URL if the backend URL differs.
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || 'https://edgesmith-backend.onrender.com/api/v1' }}
+        run: npm run build
+
+      - name: Add Android platform
+        working-directory: frontend
+        run: npx cap add android
+
+      - name: Sync web assets into the Android project
+        working-directory: frontend
+        run: npx cap sync android
+
+      - name: Assemble debug APK
+        working-directory: frontend/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpcms-android-apk
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

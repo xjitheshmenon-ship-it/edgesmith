@@ -24,10 +24,15 @@ const app = express();
 // CORS_ALLOWED_ORIGIN may be a single origin or a comma-separated list (e.g.
 // the GitHub Pages site plus a custom domain). credentials:true is required so
 // the browser sends/receives the httpOnly auth cookie cross-origin.
+// The Capacitor Android app serves its WebView from these fixed local origins;
+// always allow them so the packaged APK can reach the API (it authenticates
+// via the Bearer token, not the cookie).
+const NATIVE_APP_ORIGINS = ['capacitor://localhost', 'https://localhost', 'http://localhost'];
 const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGIN || 'http://localhost:5173')
   .split(',')
   .map((o) => o.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+  .concat(NATIVE_APP_ORIGINS);
 app.use(cors({
   origin(origin, cb) {
     // Allow same-origin / non-browser callers (no Origin header) and any

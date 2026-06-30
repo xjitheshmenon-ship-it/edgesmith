@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { authApi } from '../api/auth';
-import { ApiError } from '../api/client';
+import { ApiError, setAuthToken } from '../api/client';
 
 const AuthContext = createContext(null);
 
@@ -29,6 +29,7 @@ export function AuthProvider({ children }) {
       setLoading(true);
       try {
         const res = await authApi.login(username, password);
+        if (res.data.token) setAuthToken(res.data.token); // Bearer fallback for the native app
         persistUser(res.data.user);
         return res.data.user;
       } finally {
@@ -44,6 +45,7 @@ export function AuthProvider({ children }) {
     } catch {
       // ignore network errors on logout — clear local state regardless
     }
+    setAuthToken(null);
     persistUser(null);
   }, [persistUser]);
 
@@ -56,9 +58,11 @@ export function AuthProvider({ children }) {
     const REFRESH_INTERVAL_MS = 7.5 * 60 * 60 * 1000; // refresh every 7.5h (30min before 8h expiry)
     refreshTimerRef.current = setInterval(async () => {
       try {
-        await authApi.refresh();
+        const r = await authApi.refresh();
+        if (r?.data?.token) setAuthToken(r.data.token); // keep the Bearer token fresh too
       } catch (err) {
         if (err instanceof ApiError && err.status === 401) {
+          setAuthToken(null);
           persistUser(null);
         }
       }
