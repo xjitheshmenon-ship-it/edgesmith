@@ -19,6 +19,7 @@ import ServiceLookup from './pages/ServiceLookup';
 import MoLinking from './pages/MoLinking';
 import MasterLists from './pages/MasterLists';
 import UsersRoles from './pages/UsersRoles';
+import Receiving from './pages/Receiving';
 
 /* Route keys built on the new foundation map to their component; everything
    else renders the Placeholder until rebuilt. */
@@ -36,6 +37,7 @@ const PAGES = {
   mo: MoLinking,
   masters: MasterLists,
   users: UsersRoles,
+  receiving: Receiving,
 };
 
 const ALL_KEYS = NAV.flatMap(([, items]) => items.map(([key]) => key));
