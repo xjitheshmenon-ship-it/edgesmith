@@ -1,215 +1,359 @@
-// Job-execution timing: start / pause / resume / complete events per UID, plus
-// the admin-tunable pause threshold. Events feed an active/paused-seconds
-// computation derived by walking the ordered start/pause/resume/complete trail.
-import { Router } from 'express';
-import { query, one } from '../db/pool.js';
-import { asyncHandler } from '../middleware/error.js';
-import { requireAuth, requireAdmin, HttpError } from '../middleware/auth.js';
+const express = require('express');
+const { query, withTransaction } = require('../config/database');
+const { authenticate } = require('../middleware/auth');
+const { requireRole } = require('../middleware/rbac');
+const { auditContext } = require('../middleware/audit');
+const { currentShiftNumber } = require('../config/shifts');
 
-const router = Router();
+const router = express.Router();
+router.use(authenticate, auditContext);
 
-const DEFAULT_MAX_PAUSE_MINUTES = 30;
+const PAUSE_REASONS = ['Break', 'Machine issue', 'Material not ready', 'Waiting for supervisor', 'Other'];
 
-const EVENT_SELECT = `
-  SELECT e.id, e.uid_id, e.cycle_step_id, e.workstation_id, e.operator_id,
-         e.event_type, e.reason, e.created_at,
-         op.username AS op_username, op.full_name AS op_full_name
-    FROM job_events e
-    LEFT JOIN users op ON op.id = e.operator_id
-`;
+/**
+ * GET /api/v1/jobs?shift_id=X
+ * Operators see only their own jobs (enforced server-side regardless of
+ * what the frontend requests). Supervisor/Manager/Admin see all jobs for
+ * the shift, optionally filtered by operator_id.
+ */
+router.get('/', async (req, res) => {
+  const { shift_id, operator_id } = req.query;
+  const conditions = [];
+  const params = [];
+  let p = 1;
 
-function eventOut(e) {
-  return {
-    id: e.id,
-    uid_id: e.uid_id,
-    cycle_step_id: e.cycle_step_id,
-    workstation_id: e.workstation_id,
-    operator_id: e.operator_id,
-    operator_name: e.op_full_name || e.op_username || null,
-    event_type: e.event_type,
-    reason: e.reason,
-    created_at: e.created_at,
-  };
-}
+  if (shift_id) { conditions.push(`j.shift_id = $${p++}`); params.push(shift_id); }
 
-// Resolve a UID's current step + the workstation that step runs on.
-async function loadUidContext(uidId) {
-  const id = parseInt(uidId, 10);
-  if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid UID id');
-  const ctx = await one(
-    `SELECT u.id AS uid_id, u.current_step_id, cs.workstation_id
-       FROM uids u
-       LEFT JOIN cycle_steps cs ON cs.id = u.current_step_id
-      WHERE u.id = $1`,
-    [id]
-  );
-  if (!ctx) throw new HttpError(404, 'UID not found');
-  return ctx;
-}
-
-// Insert a job_event for the UID's current step and return the enriched row.
-async function recordEvent(uidId, eventType, operatorId, reason) {
-  const ctx = await loadUidContext(uidId);
-  const created = await one(
-    `INSERT INTO job_events (uid_id, cycle_step_id, workstation_id, operator_id, event_type, reason)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-    [ctx.uid_id, ctx.current_step_id, ctx.workstation_id, operatorId, eventType, reason ?? null]
-  );
-  const row = await one(`${EVENT_SELECT} WHERE e.id = $1`, [created.id]);
-  return eventOut(row);
-}
-
-// Walk the ordered events accumulating active-work and paused seconds.
-// start/resume open an active interval; pause/complete close it. The gap
-// between a pause and the next resume counts as paused time. Robust to
-// malformed sequences (double starts, missing resume, etc.).
-function computeTiming(events) {
-  let active = 0;
-  let paused = 0;
-  let activeOpenedAt = null; // timestamp ms when current active interval began
-  let pausedOpenedAt = null; // timestamp ms when current pause began
-
-  for (const e of events) {
-    const t = new Date(e.created_at).getTime();
-    if (!Number.isFinite(t)) continue;
-    switch (e.event_type) {
-      case 'start':
-      case 'resume':
-        // Closing any open pause interval.
-        if (pausedOpenedAt != null) {
-          paused += Math.max(0, t - pausedOpenedAt);
-          pausedOpenedAt = null;
-        }
-        // Open a fresh active interval (ignore if one is already open).
-        if (activeOpenedAt == null) activeOpenedAt = t;
-        break;
-      case 'pause':
-        if (activeOpenedAt != null) {
-          active += Math.max(0, t - activeOpenedAt);
-          activeOpenedAt = null;
-        }
-        if (pausedOpenedAt == null) pausedOpenedAt = t;
-        break;
-      case 'complete':
-        if (activeOpenedAt != null) {
-          active += Math.max(0, t - activeOpenedAt);
-          activeOpenedAt = null;
-        }
-        if (pausedOpenedAt != null) {
-          paused += Math.max(0, t - pausedOpenedAt);
-          pausedOpenedAt = null;
-        }
-        break;
-      default:
-        break;
-    }
+  if (req.user.role === 'operator') {
+    conditions.push(`j.operator_id = $${p++}`);
+    params.push(req.user.sub);
+  } else if (operator_id) {
+    conditions.push(`j.operator_id = $${p++}`);
+    params.push(operator_id);
   }
 
-  return {
-    active_seconds: Math.round(active / 1000),
-    paused_seconds: Math.round(paused / 1000),
-  };
-}
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const { rows } = await query(
+    `SELECT j.*, u.uid_code, wu.unit_code, e.full_name AS operator_name,
+            wl.size_mm AS faridabad_size_mm, wl.cycle_type_id AS faridabad_cycle_type_id
+     FROM jobs j
+     LEFT JOIN uids u ON u.id = j.uid_id
+     LEFT JOIN workstation_units wu ON wu.id = j.workstation_unit_id
+     LEFT JOIN employees e ON e.id = j.operator_id
+     LEFT JOIN faridabad_weld_log wl ON wl.id = j.weld_log_id
+     ${where}
+     ORDER BY CASE WHEN j.status = 'in_progress' THEN 0 WHEN j.status = 'paused' THEN 1 ELSE 2 END, j.created_at ASC`,
+    params
+  );
+  return res.json({ success: true, data: rows });
+});
 
-function statusFromLast(events) {
-  if (!events.length) return 'idle';
-  const last = events[events.length - 1].event_type;
-  if (last === 'start' || last === 'resume') return 'running';
-  if (last === 'pause') return 'paused';
-  if (last === 'complete') return 'complete';
-  return 'idle';
-}
+/**
+ * POST /api/v1/jobs
+ * Manual job creation/assignment by Supervisor/Manager/Admin.
+ * body: { shiftId, uidId?, weldLogId?, cycleStepId, workstationUnitId, operatorId }
+ */
+router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const { shiftId, uidId, weldLogId, cycleStepId, workstationUnitId, operatorId } = req.body;
+  const { rows } = await query(
+    `INSERT INTO jobs (shift_id, uid_id, weld_log_id, cycle_step_id, workstation_unit_id, operator_id, status, assigned_by, assignment_type)
+     VALUES ($1,$2,$3,$4,$5,$6,'queued',$7,'manual') RETURNING *`,
+    [shiftId, uidId || null, weldLogId || null, cycleStepId || null, workstationUnitId || null, operatorId, req.user.sub]
+  );
+  await req.audit({ tableName: 'jobs', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
+  return res.status(201).json({ success: true, data: rows[0] });
+});
 
-async function readMaxPauseMinutes() {
-  const row = await one('SELECT value FROM app_settings WHERE key = $1', ['max_pause_minutes']);
-  if (!row || row.value == null) return DEFAULT_MAX_PAUSE_MINUTES;
-  const n = Number(row.value);
-  return Number.isFinite(n) ? n : DEFAULT_MAX_PAUSE_MINUTES;
-}
+/** DELETE /api/v1/jobs/:id — return to unassigned queue */
+router.delete('/:id', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const { rows } = await query(`UPDATE jobs SET operator_id = NULL, status = 'queued' WHERE id = $1 RETURNING *`, [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'JOB_NOT_FOUND', message: 'Job not found.' } });
+  await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: { unassigned: true } });
+  return res.json({ success: true, data: rows[0] });
+});
 
-// ── Timing events ───────────────────────────────────────────────────────────
-router.post(
-  '/:uidId/start',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const event = await recordEvent(req.params.uidId, 'start', req.user.id, null);
-    res.json(event);
-  })
-);
+/**
+ * POST /api/v1/jobs/:id/start
+ * Begins the timer. Records started_at on the job AND opens a uid_step_logs row
+ * (Dharmapuri) so timing survives independently of jobs (jobs reset each shift,
+ * step_logs are the permanent record per the instructions).
+ */
+router.post('/:id/start', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const result = await withTransaction(async (client) => {
+    const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const job = jobRows[0];
+    if (!job) throw Object.assign(new Error('Job not found'), { status: 404, code: 'JOB_NOT_FOUND' });
+    if (req.user.role === 'operator' && job.operator_id !== req.user.sub) {
+      throw Object.assign(new Error('Not your job'), { status: 403, code: 'NOT_YOUR_JOB' });
+    }
 
-router.post(
-  '/:uidId/pause',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const reason = (req.body || {}).reason ?? null;
-    const event = await recordEvent(req.params.uidId, 'pause', req.user.id, reason);
-    res.json(event);
-  })
-);
+    await client.query(`UPDATE jobs SET status = 'in_progress' WHERE id = $1`, [job.id]);
 
-router.post(
-  '/:uidId/resume',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const event = await recordEvent(req.params.uidId, 'resume', req.user.id, null);
-    res.json(event);
-  })
-);
+    if (job.uid_id) {
+      const { rows: uidRow } = await client.query(`SELECT current_step FROM uids WHERE id = $1`, [job.uid_id]);
+      await client.query(
+        `INSERT INTO uid_step_logs (uid_id, step_number, workstation_unit_id, operator_id, shift_id, started_at)
+         VALUES ($1,$2,$3,$4,$5, now())`,
+        [job.uid_id, uidRow[0].current_step, job.workstation_unit_id, job.operator_id, job.shift_id]
+      );
+    } else if (job.weld_log_id) {
+      await client.query(`UPDATE faridabad_weld_log SET started_at = now() WHERE id = $1`, [job.weld_log_id]);
+    }
 
-router.post(
-  '/:uidId/complete',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const reason = (req.body || {}).reason ?? null;
-    const event = await recordEvent(req.params.uidId, 'complete', req.user.id, reason);
-    res.json(event);
-  })
-);
+    return job;
+  });
 
-router.get(
-  '/:uidId/events',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const id = parseInt(req.params.uidId, 10);
-    if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid UID id');
-    const rows = await query(
-      `${EVENT_SELECT} WHERE e.uid_id = $1 ORDER BY e.created_at ASC, e.id ASC`,
-      [id]
-    );
-    const { active_seconds, paused_seconds } = computeTiming(rows);
-    res.json({
-      events: rows.map(eventOut),
-      active_seconds,
-      paused_seconds,
-      status: statusFromLast(rows),
+  await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: { status: 'in_progress' } });
+  return res.json({ success: true, data: result });
+});
+
+/**
+ * POST /api/v1/jobs/:id/pause
+ * body: { reason, notes? } — reason is mandatory, must be one of PAUSE_REASONS.
+ */
+router.post('/:id/pause', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { reason, notes } = req.body;
+  if (!reason || !PAUSE_REASONS.includes(reason)) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'INVALID_REASON', message: `reason is required and must be one of: ${PAUSE_REASONS.join(', ')}` },
     });
-  })
-);
+  }
 
-// ── Pause threshold setting ─────────────────────────────────────────────────
-router.get(
-  '/settings/pause-threshold',
-  requireAuth,
-  asyncHandler(async (req, res) => {
-    const max_pause_minutes = await readMaxPauseMinutes();
-    res.json({ max_pause_minutes });
-  })
-);
+  const result = await withTransaction(async (client) => {
+    const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const job = jobRows[0];
+    if (!job) throw Object.assign(new Error('Job not found'), { status: 404, code: 'JOB_NOT_FOUND' });
 
-router.put(
-  '/settings/pause-threshold',
-  requireAdmin,
-  asyncHandler(async (req, res) => {
-    const raw = (req.body || {}).max_pause_minutes;
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) throw new HttpError(400, 'max_pause_minutes must be a non-negative number');
-    await query(
-      `INSERT INTO app_settings (key, value) VALUES ($1, $2::jsonb)
-       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-      ['max_pause_minutes', JSON.stringify(n)]
+    await client.query(`UPDATE jobs SET status = 'paused' WHERE id = $1`, [job.id]);
+
+    if (job.uid_id) {
+      const { rows: logRows } = await client.query(
+        `SELECT id FROM uid_step_logs WHERE uid_id = $1 AND closed_at IS NULL ORDER BY id DESC LIMIT 1`,
+        [job.uid_id]
+      );
+      if (logRows[0]) {
+        await client.query(
+          `INSERT INTO uid_pauses (step_log_id, paused_at, reason, notes) VALUES ($1, now(), $2, $3)`,
+          [logRows[0].id, reason, notes || null]
+        );
+      }
+    }
+
+    return job;
+  });
+
+  await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: { status: 'paused', reason } });
+  return res.json({ success: true, data: result });
+});
+
+/** POST /api/v1/jobs/:id/resume */
+router.post('/:id/resume', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const result = await withTransaction(async (client) => {
+    const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const job = jobRows[0];
+    if (!job) throw Object.assign(new Error('Job not found'), { status: 404, code: 'JOB_NOT_FOUND' });
+
+    await client.query(`UPDATE jobs SET status = 'in_progress' WHERE id = $1`, [job.id]);
+
+    if (job.uid_id) {
+      const { rows: logRows } = await client.query(
+        `SELECT id FROM uid_step_logs WHERE uid_id = $1 AND closed_at IS NULL ORDER BY id DESC LIMIT 1`,
+        [job.uid_id]
+      );
+      if (logRows[0]) {
+        await client.query(
+          `UPDATE uid_pauses SET resumed_at = now(), duration_seconds = EXTRACT(EPOCH FROM (now() - paused_at))::int
+           WHERE step_log_id = $1 AND resumed_at IS NULL`,
+          [logRows[0].id]
+        );
+      }
+    }
+
+    return job;
+  });
+
+  await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: { status: 'in_progress' } });
+  return res.json({ success: true, data: result });
+});
+
+/**
+ * POST /api/v1/jobs/:id/close
+ * The unified "Close Job" action. Delegates to uidsController.advanceUid logic
+ * for Dharmapuri UID jobs, or closes a Faridabad weld log entry and increments
+ * the running tally for size+cycle jobs.
+ * body: { qcResult?, qcType?, qcValue?, notes?, actualTempC?, actualSoakMin? }
+ */
+router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { qcResult, qcType, qcValue, notes } = req.body;
+
+  const result = await withTransaction(async (client) => {
+    const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const job = jobRows[0];
+    if (!job) throw Object.assign(new Error('Job not found'), { status: 404, code: 'JOB_NOT_FOUND' });
+
+    if (job.weld_log_id) {
+      // Faridabad: close the weld log entry, compute net work time
+      const { rows: weldRows } = await client.query(`SELECT * FROM faridabad_weld_log WHERE id = $1`, [job.weld_log_id]);
+      const weld = weldRows[0];
+      const netSeconds = weld.started_at
+        ? Math.floor((Date.now() - new Date(weld.started_at).getTime()) / 1000)
+        : null;
+      await client.query(
+        `UPDATE faridabad_weld_log SET closed_at = now(), net_work_seconds = $1 WHERE id = $2`,
+        [netSeconds, job.weld_log_id]
+      );
+      await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
+      return { type: 'faridabad', weldLogId: job.weld_log_id, netSeconds };
+    }
+
+    if (job.uid_id) {
+      const { rows: uidRows } = await client.query(`SELECT * FROM uids WHERE id = $1 FOR UPDATE`, [job.uid_id]);
+      const uid = uidRows[0];
+      if (uid.status === 'hold') {
+        throw Object.assign(new Error('UID is on hold'), { status: 409, code: 'UID_ON_HOLD' });
+      }
+
+      const { rows: logRows } = await client.query(
+        `SELECT * FROM uid_step_logs WHERE uid_id = $1 AND closed_at IS NULL ORDER BY id DESC LIMIT 1`,
+        [job.uid_id]
+      );
+      const log = logRows[0];
+      const netSeconds = log && log.started_at
+        ? Math.floor((Date.now() - new Date(log.started_at).getTime()) / 1000)
+        : null;
+
+      const { rows: stepRows } = await client.query(
+        `SELECT * FROM cycle_steps WHERE cycle_version_id = $1 AND step_number = $2`,
+        [uid.cycle_version_id, uid.current_step]
+      );
+      const currentStepDef = stepRows[0];
+
+      const { rows: allSteps } = await client.query(
+        `SELECT step_number, sequence_order, dest_storage_id FROM cycle_steps WHERE cycle_version_id = $1 ORDER BY sequence_order`,
+        [uid.cycle_version_id]
+      );
+      const idx = allSteps.findIndex((s) => s.step_number === uid.current_step);
+      const nextStepDef = allSteps[idx + 1];
+
+      // Design lock check before Step 16
+      if (nextStepDef && nextStepDef.step_number === '16' && !uid.design_id) {
+        await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [
+          'Design not confirmed — required before Converting (Step 16)', uid.id,
+        ]);
+        if (log) await client.query(`UPDATE uid_step_logs SET closed_at = now(), net_work_seconds = $1 WHERE id = $2`, [netSeconds, log.id]);
+        await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
+        return { type: 'held', uidCode: uid.uid_code };
+      }
+
+      if (log) {
+        await client.query(
+          `UPDATE uid_step_logs SET closed_at = now(), net_work_seconds = $1, qc_result = $2, qc_check_type = $3, qc_value = $4, notes = $5
+           WHERE id = $6`,
+          [netSeconds, qcResult || null, qcType || null, qcValue || null, notes || null, log.id]
+        );
+      }
+
+      if (qcResult === 'Fail') {
+        await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, ['QC failed at step ' + uid.current_step, uid.id]);
+        await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
+        return { type: 'qc_failed', uidCode: uid.uid_code };
+      }
+
+      if (!nextStepDef) {
+        await client.query(`UPDATE uids SET status = 'done' WHERE id = $1`, [uid.id]);
+      } else {
+        await client.query(`UPDATE uids SET current_step = $1, current_storage_id = $2 WHERE id = $3`, [
+          nextStepDef.step_number, currentStepDef.dest_storage_id, uid.id,
+        ]);
+      }
+
+      await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
+      return { type: 'advanced', uidCode: uid.uid_code, netSeconds, nextStep: nextStepDef ? nextStepDef.step_number : null };
+    }
+
+    throw Object.assign(new Error('Job has neither uid_id nor weld_log_id'), { status: 500, code: 'INVALID_JOB' });
+  });
+
+  await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: result });
+  return res.json({ success: true, data: result });
+});
+
+/**
+ * POST /api/v1/jobs/auto-assign
+ * body: { shiftId, workstationTypeId? } — assigns queued jobs to operators
+ * who are assigned to the relevant workstation this shift, respecting
+ * capacity (available slots) and badge requirements.
+ */
+router.post('/auto-assign', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const { shiftId } = req.body;
+
+  const result = await withTransaction(async (client) => {
+    // Find operators assigned to a workstation this shift, with their badges
+    const { rows: assignments } = await client.query(
+      `SELECT wa.employee_id, wa.workstation_type_id, wt.code AS workstation_code
+       FROM workstation_assignments wa
+       JOIN workstation_types wt ON wt.id = wa.workstation_type_id
+       WHERE wa.shift_id = $1 AND wa.unassigned_at IS NULL`,
+      [shiftId]
     );
-    res.json({ max_pause_minutes: n });
-  })
-);
 
-export default router;
+    // Find queued UIDs at steps matching those workstations, priority+FIFO order
+    const { rows: queue } = await client.query(
+      `SELECT u.id AS uid_id, u.uid_code, u.priority, u.created_at, cs.id AS cycle_step_id,
+              cs.workstation_type_id, wt.code AS workstation_code
+       FROM uids u
+       JOIN cycle_versions cv ON cv.id = u.cycle_version_id
+       JOIN cycle_steps cs ON cs.cycle_version_id = u.cycle_version_id AND cs.step_number = u.current_step
+       JOIN workstation_types wt ON wt.id = cs.workstation_type_id
+       WHERE u.status = 'active'
+         AND u.id NOT IN (SELECT uid_id FROM jobs WHERE uid_id IS NOT NULL AND status IN ('queued','in_progress','paused'))
+       ORDER BY CASE u.priority WHEN 'High' THEN 0 WHEN 'Normal' THEN 1 ELSE 2 END, u.created_at ASC`
+    );
+
+    const operatorsByWs = {};
+    assignments.forEach((a) => {
+      operatorsByWs[a.workstation_code] = operatorsByWs[a.workstation_code] || [];
+      operatorsByWs[a.workstation_code].push(a.employee_id);
+    });
+
+    const proposed = [];
+    const roundRobinIdx = {};
+
+    for (const item of queue) {
+      const ops = operatorsByWs[item.workstation_code];
+      if (!ops || !ops.length) continue; // no operator covers this workstation
+      roundRobinIdx[item.workstation_code] = roundRobinIdx[item.workstation_code] || 0;
+      const operatorId = ops[roundRobinIdx[item.workstation_code] % ops.length];
+      roundRobinIdx[item.workstation_code]++;
+
+      proposed.push({ uidId: item.uid_id, uidCode: item.uid_code, cycleStepId: item.cycle_step_id, operatorId });
+    }
+
+    return proposed;
+  });
+
+  return res.json({ success: true, data: { proposed: result, count: result.length } });
+});
+
+/** POST /api/v1/jobs/auto-assign/commit — body: { assignments: [{uidId, cycleStepId, operatorId, shiftId}] } */
+router.post('/auto-assign/commit', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const { assignments, shiftId } = req.body;
+  const created = await withTransaction(async (client) => {
+    const rows = [];
+    for (const a of assignments) {
+      const { rows: r } = await client.query(
+        `INSERT INTO jobs (shift_id, uid_id, cycle_step_id, operator_id, status, assigned_by, assignment_type)
+         VALUES ($1,$2,$3,$4,'queued',$5,'auto') RETURNING *`,
+        [shiftId, a.uidId, a.cycleStepId, a.operatorId, req.user.sub]
+      );
+      rows.push(r[0]);
+    }
+    return rows;
+  });
+  await req.audit({ tableName: 'jobs', recordId: 'bulk', action: 'INSERT', after: { count: created.length, autoAssign: true } });
+  return res.status(201).json({ success: true, data: created });
+});
+
+module.exports = router;
+module.exports.PAUSE_REASONS = PAUSE_REASONS;
