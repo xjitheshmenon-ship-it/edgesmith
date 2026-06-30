@@ -1,9 +1,21 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePolling } from '../hooks/usePolling';
+import { useApp } from '../store/AppContext';
 import { uidsApi } from '../api/uids';
 import { alertsApi } from '../api/resources';
 import { batchesApi } from '../api/batches';
+
+/* Which factory a workstation belongs to — FAR-* and the welding bench are
+   Faridabad; everything else is Dharmapuri. */
+const FACTORIES = [
+  { key: 'dharmapuri', label: 'Dharmapuri' },
+  { key: 'faridabad', label: 'Faridabad' },
+];
+function isFaridabadStation(code) {
+  const c = String(code || '').toUpperCase();
+  return c.startsWith('FAR-') || c.startsWith('WELD');
+}
 
 /* ── dark wall-display palette ─────────────────────────────────────────── */
 const C = {
@@ -220,39 +232,49 @@ function FurnaceCard({ batch, now }) {
 export default function ShopfloorDisplay() {
   const navigate = useNavigate();
   const now = useClock();
+  const { location } = useApp();
+
+  // Which factory's floor is on the wall. Seeded from the app location toggle
+  // (unless it's 'both'); switchable here for the full-screen display.
+  const [factory, setFactory] = useState(() => (location === 'faridabad' ? 'faridabad' : 'dharmapuri'));
 
   const { data, loading } = usePolling(async () => {
-    const [wip, stations, batches, alerts] = await Promise.all([
-      uidsApi.wipSummary().then((r) => r.data).catch(() => ({})),
+    const [summary, stations, batches, alerts] = await Promise.all([
+      uidsApi.shopfloorSummary(factory).then((r) => r.data).catch(() => ({})),
       uidsApi.stationSummary().then((r) => r.data).catch(() => []),
       batchesApi.furnaceList().then((r) => r.data).catch(() => []),
       alertsApi.list().then((r) => r.data).catch(() => []),
     ]);
     return {
-      wip: wip || {},
+      summary: summary || {},
       stations: Array.isArray(stations) ? stations : [],
       batches: Array.isArray(batches) ? batches : batches?.batches || [],
       alerts: Array.isArray(alerts) ? alerts : [],
     };
-  });
+  }, [factory]);
 
-  const wip = data?.wip || {};
+  const summary = data?.summary || {};
   const stations = data?.stations || [];
   const batches = data?.batches || [];
+  const isFaridabad = factory === 'faridabad';
 
-  const g = (...keys) => { for (const k of keys) if (wip[k] != null) return wip[k]; return null; };
-  const activeCount = g('active', 'active_uids', 'total_active');
-  const holdCount = g('on_hold', 'hold', 'on_hold_uids');
-  const furnaceCount = g('in_furnace', 'furnace', 'furnace_running');
+  const activeCount = Number(summary.active) || 0;
+  const holdCount = Number(summary.hold) || 0;
+  const pausedCount = Number(summary.paused) || 0;
 
-  // Per-station running / queued counts. stationSummary carries active_count;
-  // a *-Q queue count is used for queued where present.
-  const stationCards = stations.map((s) => ({
-    code: pick(s, 'code', 'workstation_code') || '—',
-    name: pick(s, 'name', 'label') || '',
-    running: Number(pick(s, 'active_count', 'running', 'in_progress')) || 0,
-    queued: Number(pick(s, 'queued_count', 'queued', 'waiting')) || 0,
-  }));
+  // Per-station running / queued counts, filtered to the selected factory.
+  const stationCards = stations
+    .filter((s) => isFaridabadStation(pick(s, 'code', 'workstation_code')) === isFaridabad)
+    .map((s) => ({
+      code: pick(s, 'code', 'workstation_code') || '—',
+      name: pick(s, 'name', 'label') || '',
+      running: Number(pick(s, 'active_count', 'running', 'in_progress')) || 0,
+      queued: Number(pick(s, 'queued_count', 'queued', 'waiting')) || 0,
+    }));
+
+  // Furnace batches are a Dharmapuri concept — hide the strip for Faridabad.
+  const showFurnace = !isFaridabad && batches.length > 0;
+  const factoryLabel = (FACTORIES.find((f) => f.key === factory) || FACTORIES[0]).label;
 
   // live clock parts
   const dateStr = now.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
@@ -275,10 +297,41 @@ export default function ShopfloorDisplay() {
         {/* Header bar */}
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexWrap: 'wrap' }}>
           <div>
-            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 34, letterSpacing: '-0.03em', color: C.text }}>
-              EDGESMITH TOOLING — DHARMAPURI
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+              <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 34, letterSpacing: '-0.03em', color: C.text }}>
+                EDGESMITH
+              </div>
+              {/* Factory toggle */}
+              <div style={{ display: 'inline-flex', background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10, padding: 4, gap: 4 }}>
+                {FACTORIES.map((f) => {
+                  const on = f.key === factory;
+                  return (
+                    <button
+                      key={f.key}
+                      type="button"
+                      onClick={() => setFactory(f.key)}
+                      style={{
+                        fontFamily: MONO,
+                        fontSize: 13,
+                        letterSpacing: '0.08em',
+                        textTransform: 'uppercase',
+                        color: on ? C.bg : C.muted,
+                        background: on ? C.running : 'transparent',
+                        border: 'none',
+                        borderRadius: 7,
+                        padding: '8px 16px',
+                        cursor: 'pointer',
+                        fontWeight: on ? 700 : 500,
+                      }}
+                    >
+                      {f.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: MONO, fontSize: 14, letterSpacing: '0.14em', textTransform: 'uppercase', color: C.muted }}>{factoryLabel}</span>
               <span style={{ fontFamily: SANS, fontSize: 16, color: C.muted }}>{dateStr}</span>
               <span style={{ fontFamily: MONO, fontSize: 28, fontWeight: 700, color: C.text, letterSpacing: '0.04em' }}>{timeStr}</span>
               <span
@@ -322,8 +375,8 @@ export default function ShopfloorDisplay() {
         {/* Three big stats */}
         <div style={{ display: 'flex', gap: 18, marginTop: 24, flexWrap: 'wrap' }}>
           <BigStat label="Active" value={activeCount} color={C.running} />
-          <BigStat label="On Hold" value={holdCount} color={C.hold} />
-          <BigStat label="In Furnace" value={furnaceCount} color={C.furnace} />
+          <BigStat label="Hold" value={holdCount} color={C.hold} />
+          <BigStat label="Pause" value={pausedCount} color={C.furnace} />
         </div>
 
         {/* Workstation grid */}
@@ -360,7 +413,7 @@ export default function ShopfloorDisplay() {
         </div>
 
         {/* Furnace batch strip */}
-        {batches.length > 0 && (
+        {showFurnace && (
           <div style={{ marginTop: 32 }}>
             <div
               style={{
