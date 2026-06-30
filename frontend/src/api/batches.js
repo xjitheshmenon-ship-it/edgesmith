@@ -11,4 +11,10 @@ export const batchesApi = {
   grindingMachines: () => api.get('/grinding/machines'),
   validateGrindingCombination: (barLengthsMm, machineCode) => api.post('/grinding/validate-combination', { barLengthsMm, machineCode }),
   bunchGrindingCapacity: (barLengthMm) => api.post('/grinding/bunch-capacity', { barLengthMm }),
+
+  // Bunch grinding (SG-DLT): operator loads several bars onto the machine at once.
+  grindingQueue: () => api.get('/grinding/queue'),
+  grindingActiveBatch: (workstationUnitId) => api.get('/grinding/batches/active', { workstation_unit_id: workstationUnitId }),
+  grindingLoadBatch: (workstationUnitId, uidIds) => api.post('/grinding/batches', { workstationUnitId, uidIds }),
+  grindingCloseBatch: (id) => api.post(`/grinding/batches/${id}/close`),
 };

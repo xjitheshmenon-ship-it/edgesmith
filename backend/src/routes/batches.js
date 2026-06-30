@@ -306,6 +306,179 @@ grindingRouter.post('/bunch-capacity', async (req, res) => {
   return res.json({ success: true, data: result });
 });
 
+/**
+ * Bunch grinding (SG-DLT only): the operator manually loads several bars onto
+ * the machine at once, taken from the source storage. A bunch's combined bar
+ * length must fit the 3000mm bed.
+ */
+const BUNCH_MACHINE = 'SG-DLT';
+
+/** GET /grinding/queue — UIDs waiting at the SG-DLT bunch step, not already in an open bunch. */
+grindingRouter.get('/queue', async (req, res) => {
+  const { rows } = await query(
+    `SELECT u.id AS uid_id, u.uid_code, u.priority, u.current_storage_id,
+            sz.size_mm, sl.code AS storage_code, cs.id AS cycle_step_id, cs.operation_name
+     FROM uids u
+     JOIN cycle_steps cs ON cs.cycle_version_id = u.cycle_version_id AND cs.step_number = u.current_step
+     JOIN workstation_types wt ON wt.id = cs.workstation_type_id
+     LEFT JOIN sizes sz ON sz.id = u.size_id
+     LEFT JOIN storage_locations sl ON sl.id = u.current_storage_id
+     WHERE wt.code = $1 AND u.status = 'active'
+       AND u.id NOT IN (
+         SELECT pbu.uid_id FROM production_batch_uids pbu
+         JOIN production_batches pb ON pb.id = pbu.production_batch_id
+         WHERE pb.status <> 'complete'
+       )
+     ORDER BY CASE u.priority WHEN 'High' THEN 0 WHEN 'Normal' THEN 1 ELSE 2 END, u.created_at`,
+    [BUNCH_MACHINE]
+  );
+  // bed length for the running combined-length check
+  const { rows: cfg } = await query(
+    `SELECT bed_length_mm, bars_per_set FROM grinding_machine_rules gmr
+     JOIN workstation_types wt ON wt.id = gmr.workstation_type_id WHERE wt.code = $1`,
+    [BUNCH_MACHINE]
+  );
+  return res.json({ success: true, data: { uids: rows, bedLengthMm: cfg[0]?.bed_length_mm || 3000, barsPerSet: cfg[0]?.bars_per_set || null } });
+});
+
+/** GET /grinding/batches/active?workstation_unit_id= — the open bunch on a machine + its UIDs. */
+grindingRouter.get('/batches/active', async (req, res) => {
+  const { workstation_unit_id } = req.query;
+  const { rows } = await query(
+    `SELECT pb.*, wu.unit_code, cs.operation_name, cs.step_number
+     FROM production_batches pb
+     LEFT JOIN workstation_units wu ON wu.id = pb.workstation_unit_id
+     LEFT JOIN cycle_steps cs ON cs.id = pb.cycle_step_id
+     WHERE pb.status = 'running' ${workstation_unit_id ? 'AND pb.workstation_unit_id = $1' : ''}
+     ORDER BY pb.id DESC LIMIT 1`,
+    workstation_unit_id ? [workstation_unit_id] : []
+  );
+  if (!rows[0]) return res.json({ success: true, data: null });
+  const { rows: uids } = await query(
+    `SELECT u.id AS uid_id, u.uid_code, sz.size_mm, pbu.set_number
+     FROM production_batch_uids pbu JOIN uids u ON u.id = pbu.uid_id
+     LEFT JOIN sizes sz ON sz.id = u.size_id
+     WHERE pbu.production_batch_id = $1 ORDER BY pbu.set_number`,
+    [rows[0].id]
+  );
+  return res.json({ success: true, data: { ...rows[0], uids } });
+});
+
+/** POST /grinding/batches — load a bunch onto SG-DLT. body: { workstationUnitId, uidIds: [] } */
+grindingRouter.post('/batches', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { workstationUnitId, uidIds } = req.body;
+  if (!Array.isArray(uidIds) || uidIds.length < 1) {
+    return res.status(400).json({ success: false, error: { code: 'NO_UIDS', message: 'Select at least one bar to bunch.' } });
+  }
+
+  const result = await withTransaction(async (client) => {
+    const { rows: uidRows } = await client.query(
+      `SELECT u.id, u.uid_code, u.current_step, u.cycle_version_id, sz.size_mm
+       FROM uids u LEFT JOIN sizes sz ON sz.id = u.size_id
+       WHERE u.id = ANY($1::bigint[]) FOR UPDATE OF u`,
+      [uidIds]
+    );
+    if (uidRows.length !== uidIds.length) throw Object.assign(new Error('Some bars are no longer available.'), { status: 409, code: 'UID_UNAVAILABLE' });
+
+    // All bars must be at the same step.
+    const step = uidRows[0].current_step;
+    if (!uidRows.every((u) => u.current_step === step)) {
+      throw Object.assign(new Error('All bars in a bunch must be at the same step.'), { status: 400, code: 'STEP_MISMATCH' });
+    }
+
+    const { rows: stepRows } = await client.query(
+      `SELECT cs.id, cs.dest_storage_id FROM cycle_steps cs
+       JOIN workstation_types wt ON wt.id = cs.workstation_type_id
+       WHERE cs.cycle_version_id = $1 AND cs.step_number = $2 AND wt.code = $3`,
+      [uidRows[0].cycle_version_id, step, BUNCH_MACHINE]
+    );
+    if (!stepRows[0]) throw Object.assign(new Error('These bars are not at the SG-DLT bunch step.'), { status: 400, code: 'NOT_BUNCH_STEP' });
+    const cycleStepId = stepRows[0].id;
+
+    const { rows: cfg } = await client.query(
+      `SELECT bed_length_mm, bars_per_set FROM grinding_machine_rules gmr
+       JOIN workstation_types wt ON wt.id = gmr.workstation_type_id WHERE wt.code = $1`,
+      [BUNCH_MACHINE]
+    );
+    const bedLength = cfg[0]?.bed_length_mm || 3000;
+    const combined = uidRows.reduce((sum, u) => sum + (Number(u.size_mm) || 0), 0);
+    if (combined > bedLength) {
+      throw Object.assign(new Error(`Combined length ${combined}mm exceeds the ${bedLength}mm bed.`), { status: 400, code: 'BED_OVERFLOW' });
+    }
+
+    const year = new Date().getFullYear();
+    const { rows: seqRows } = await client.query(`SELECT COUNT(*) AS c FROM production_batches WHERE batch_number LIKE $1`, [`PB-${year}-%`]);
+    const batchNumber = `PB-${year}-${String(Number(seqRows[0].c) + 1).padStart(3, '0')}`;
+
+    const { rows: openShift } = await client.query(
+      `SELECT id FROM shifts WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1`
+    );
+    const shiftId = openShift[0]?.id || null;
+
+    const { rows: batchRows } = await client.query(
+      `INSERT INTO production_batches (batch_number, cycle_step_id, workstation_unit_id, combined_length_mm, status, started_at, operator_id, shift_id)
+       VALUES ($1,$2,$3,$4,'running', now(), $5, $6) RETURNING *`,
+      [batchNumber, cycleStepId, workstationUnitId || null, combined, req.user.sub, shiftId]
+    );
+    const batch = batchRows[0];
+
+    let setNo = 1;
+    for (const u of uidRows) {
+      await client.query(`INSERT INTO production_batch_uids (production_batch_id, uid_id, set_number) VALUES ($1,$2,$3)`, [batch.id, u.id, setNo++]);
+      await client.query(
+        `INSERT INTO uid_step_logs (uid_id, step_number, operation_name, workstation_unit_id, operator_id, shift_id, started_at)
+         VALUES ($1,$2,'Bunch Grinding',$3,$4,$5, now())`,
+        [u.id, step, workstationUnitId || null, req.user.sub, shiftId]
+      );
+    }
+
+    await req.audit({ tableName: 'production_batches', recordId: batch.id, action: 'INSERT', after: { batchNumber, combined, uidCount: uidRows.length } });
+    return { ...batch, combined_length_mm: combined, uid_count: uidRows.length };
+  });
+
+  return res.status(201).json({ success: true, data: result });
+});
+
+/** POST /grinding/batches/:id/close — finish the bunch; every bar advances to the next step. */
+grindingRouter.post('/batches/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const result = await withTransaction(async (client) => {
+    const { rows: batchRows } = await client.query(`SELECT * FROM production_batches WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const batch = batchRows[0];
+    if (!batch) throw Object.assign(new Error('Bunch not found'), { status: 404, code: 'BATCH_NOT_FOUND' });
+    if (batch.status === 'complete') throw Object.assign(new Error('Bunch already closed'), { status: 409, code: 'ALREADY_CLOSED' });
+
+    const { rows: stepRows } = await client.query(`SELECT * FROM cycle_steps WHERE id = $1`, [batch.cycle_step_id]);
+    const step = stepRows[0];
+    const netSeconds = batch.started_at ? Math.floor((Date.now() - new Date(batch.started_at).getTime()) / 1000) : null;
+
+    const { rows: uidRows } = await client.query(`SELECT uid_id FROM production_batch_uids WHERE production_batch_id = $1`, [batch.id]);
+    for (const { uid_id: uidId } of uidRows) {
+      await client.query(
+        `UPDATE uid_step_logs SET closed_at = now(), net_work_seconds = $1, qc_result = 'Pass'
+         WHERE uid_id = $2 AND closed_at IS NULL`,
+        [netSeconds, uidId]
+      );
+      const { rows: uidRow } = await client.query(`SELECT cycle_version_id FROM uids WHERE id = $1`, [uidId]);
+      const { rows: allSteps } = await client.query(
+        `SELECT step_number, sequence_order FROM cycle_steps WHERE cycle_version_id = $1 ORDER BY sequence_order`,
+        [uidRow[0].cycle_version_id]
+      );
+      const idx = allSteps.findIndex((s) => s.step_number === step.step_number);
+      const next = allSteps[idx + 1];
+      if (next) {
+        await client.query(`UPDATE uids SET current_step = $1, current_storage_id = $2 WHERE id = $3`, [next.step_number, step.dest_storage_id, uidId]);
+      } else {
+        await client.query(`UPDATE uids SET status = 'done' WHERE id = $1`, [uidId]);
+      }
+    }
+
+    await client.query(`UPDATE production_batches SET status = 'complete', closed_at = now() WHERE id = $1`, [batch.id]);
+    await req.audit({ tableName: 'production_batches', recordId: batch.id, action: 'UPDATE', after: { status: 'complete', uidCount: uidRows.length } });
+    return { batchId: batch.id, advanced: uidRows.length };
+  });
+  return res.json({ success: true, data: result });
+});
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 router.use('/furnace-batches', furnaceRouter);
