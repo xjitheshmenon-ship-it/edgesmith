@@ -17,6 +17,10 @@ export const faridabadApi = {
   logWeld: (payload) => api.post('/faridabad/weld', payload),
   dispatches: () => api.get('/faridabad/dispatches'),
   createDispatch: (payload) => api.post('/faridabad/dispatches', payload),
+  // MS sheet cutting balance (calculated, never measured)
+  msCuttingCalculate: (sheet, pieces) => api.post('/faridabad/ms-cutting/calculate', { sheet, pieces }),
+  msCuttingRun: (sheet, pieces, msIntakeId) => api.post('/faridabad/ms-cutting/runs', { sheet, pieces, msIntakeId }),
+  msCuttingRuns: () => api.get('/faridabad/ms-cutting/runs'),
 };
 
 export const receivingApi = {

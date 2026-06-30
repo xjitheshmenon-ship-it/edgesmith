@@ -3,6 +3,7 @@ const { query, withTransaction } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
+const { calculateMsBalance } = require('../utils/msBalance');
 
 const router = express.Router();
 router.use(authenticate, auditContext);
@@ -210,6 +211,54 @@ router.post('/dispatches', requireRole(['admin', 'manager']), async (req, res) =
 
   await req.audit({ tableName: 'contractor_dispatches', recordId: result.dispatch.id, action: 'INSERT', after: result.dispatch });
   return res.status(201).json({ success: true, data: result });
+});
+
+// ── MS sheet cutting balance (calculated, never measured) ────────────────────
+
+/** POST /faridabad/ms-cutting/calculate — preview the balance for a cut run. */
+router.post('/ms-cutting/calculate', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { sheet, pieces } = req.body || {};
+  if (!sheet || !Array.isArray(pieces) || !pieces.length) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'sheet dimensions and at least one piece spec are required.' } });
+  }
+  try {
+    const result = calculateMsBalance(sheet, pieces);
+    return res.json({ success: true, data: result });
+  } catch (e) {
+    return res.status(400).json({ success: false, error: { code: 'CALC_ERROR', message: e.message } });
+  }
+});
+
+/** POST /faridabad/ms-cutting/runs — record a cut run with its calculated balance. */
+router.post('/ms-cutting/runs', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { sheet, pieces, msIntakeId } = req.body || {};
+  if (!sheet || !Array.isArray(pieces) || !pieces.length) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'sheet dimensions and piece specs are required.' } });
+  }
+  let balance;
+  try {
+    balance = calculateMsBalance(sheet, pieces);
+  } catch (e) {
+    return res.status(400).json({ success: false, error: { code: 'CALC_ERROR', message: e.message } });
+  }
+  const { rows } = await query(
+    `INSERT INTO ms_sheet_cutting_runs
+       (ms_intake_id, sheet_length_mm, sheet_width_mm, sheet_height_mm, pieces, strips, total_balance_weight_kg, operator_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [msIntakeId || null, sheet.length_mm, sheet.width_mm, sheet.height_mm,
+      JSON.stringify(pieces), JSON.stringify(balance.strips), balance.totalBalanceWeightKg, req.user.sub]
+  );
+  await req.audit({ tableName: 'ms_sheet_cutting_runs', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
+  return res.status(201).json({ success: true, data: { ...rows[0], balance } });
+});
+
+/** GET /faridabad/ms-cutting/runs — recent cut runs with balance weights. */
+router.get('/ms-cutting/runs', async (req, res) => {
+  const { rows } = await query(
+    `SELECT r.*, e.full_name AS operator_name FROM ms_sheet_cutting_runs r
+     LEFT JOIN employees e ON e.id = r.operator_id ORDER BY r.id DESC LIMIT 200`
+  );
+  return res.json({ success: true, data: rows });
 });
 
 module.exports = router;
