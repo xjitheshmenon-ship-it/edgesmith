@@ -91,6 +91,33 @@ function pick(row, keys, fallback = '—') {
   return fallback;
 }
 
+/* camelCase → snake_case (sizeMm → size_mm, contactDetails → contact_details) */
+function toSnake(name) {
+  return name.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`);
+}
+
+/* read a row value tolerating snake_case or camelCase keys */
+function rowValue(row, name) {
+  if (!row) return undefined;
+  const snake = toSnake(name);
+  if (row[name] != null) return row[name];
+  if (row[snake] != null) return row[snake];
+  return undefined;
+}
+
+/* build edit-form initial values from a row, reusing the tab's field defs.
+   Array values (multi-select-ish, e.g. validSizes/childLengths) become
+   comma-separated strings to match the create form's text inputs. */
+function buildEditValues(tab, row) {
+  const out = {};
+  for (const f of tab.fields) {
+    let v = rowValue(row, f.name);
+    if (Array.isArray(v)) v = v.join(', ');
+    out[f.name] = v == null ? '' : v;
+  }
+  return out;
+}
+
 /* generic create-form field renderer */
 function Field({ field, value, onChange }) {
   const common = { value: value ?? '', onChange: (e) => onChange(field.name, e.target.value) };
@@ -128,6 +155,7 @@ const TABS = [
     icon: 'monitor',
     fetch: () => masterApi.workstationTypes().then((r) => r.data),
     create: (p) => masterApi.createWorkstationType(p),
+    update: (id, p) => masterApi.updateWorkstationType(id, p),
     archive: (id) => masterApi.archiveWorkstationType(id),
     columns: ['Code', 'Name', 'Category', 'Location', 'Status', ''],
     renderRow: (row, ctx) => (
@@ -137,7 +165,7 @@ const TABS = [
         <td style={TD}>{pick(row, ['category', 'workstation_category', 'type'])}</td>
         <td style={TD}>{row.location ? <LocationBadge location={row.location} /> : (pick(row, ['site']) === 'both' ? 'Both' : pick(row, ['site']))}</td>
         <td style={TD}>{StatusOf(row)}</td>
-        <td style={{ ...TD, textAlign: 'right' }}>{ctx.archiveBtn(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
       </>
     ),
     fields: [
@@ -153,8 +181,10 @@ const TABS = [
     icon: 'stack',
     fetch: () => masterApi.products().then((r) => r.data),
     create: (p) => masterApi.createProduct(p),
-    columns: ['Product Name', 'Code', 'Valid Cycle Types', 'Default Cycle', 'Status'],
-    renderRow: (row) => {
+    update: (id, p) => masterApi.updateProduct(id, p),
+    archive: (id) => masterApi.archiveProduct(id),
+    columns: ['Product Name', 'Code', 'Valid Cycle Types', 'Default Cycle', 'Status', ''],
+    renderRow: (row, ctx) => {
       const valid = row.validCycleTypes || row.valid_cycle_types || row.cycleTypes;
       return (
         <>
@@ -163,6 +193,7 @@ const TABS = [
           <td style={{ ...TD, fontFamily: MONO, fontSize: 11 }}>{Array.isArray(valid) ? valid.join(', ') : pick(row, ['validCycleTypes', 'valid_cycle_types'])}</td>
           <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['defaultCycleType', 'default_cycle_type'])}</td>
           <td style={TD}>{StatusOf(row)}</td>
+          <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
         </>
       );
     },
@@ -183,12 +214,15 @@ const TABS = [
     icon: 'list',
     fetch: () => masterApi.sizes().then((r) => r.data),
     create: (p) => masterApi.createSize(p),
-    columns: ['Size (mm)', 'Description', 'Status'],
-    renderRow: (row) => (
+    update: (id, p) => masterApi.updateSize(id, p),
+    archive: (id) => masterApi.archiveSize(id),
+    columns: ['Size (mm)', 'Description', 'Status', ''],
+    renderRow: (row, ctx) => (
       <>
         <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['sizeMm', 'size_mm', 'size', 'mm'])}</td>
         <td style={TD}>{pick(row, ['description', 'desc', 'label'])}</td>
         <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
       </>
     ),
     fields: [
@@ -203,9 +237,11 @@ const TABS = [
     icon: 'doc',
     fetch: () => masterApi.designs().then((r) => r.data),
     create: (p) => masterApi.createDesign(p),
+    update: (id, p) => masterApi.updateDesign(id, p),
+    archive: (id) => masterApi.archiveDesign(id),
     extra: 'designMatrix',
-    columns: ['Drawing / Code', 'Description', 'Valid Sizes', 'Status'],
-    renderRow: (row) => {
+    columns: ['Drawing / Code', 'Description', 'Valid Sizes', 'Status', ''],
+    renderRow: (row, ctx) => {
       const sizes = row.validSizes || row.valid_sizes || row.sizes;
       return (
         <>
@@ -213,6 +249,7 @@ const TABS = [
           <td style={TD}>{pick(row, ['description', 'desc'])}</td>
           <td style={{ ...TD, fontFamily: MONO, fontSize: 11 }}>{Array.isArray(sizes) ? sizes.join(', ') : pick(row, ['validSizes', 'valid_sizes'])}</td>
           <td style={TD}>{StatusOf(row)}</td>
+          <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
         </>
       );
     },
@@ -232,13 +269,16 @@ const TABS = [
     icon: 'truck',
     fetch: () => masterApi.suppliers().then((r) => r.data),
     create: (p) => masterApi.createSupplier(p),
-    columns: ['Supplier', 'Material Type', 'Contact', 'Status'],
-    renderRow: (row) => (
+    update: (id, p) => masterApi.updateSupplier(id, p),
+    archive: (id) => masterApi.archiveSupplier(id),
+    columns: ['Supplier', 'Material Type', 'Contact', 'Status', ''],
+    renderRow: (row, ctx) => (
       <>
         <td style={TD}>{pick(row, ['name', 'supplierName', 'supplier_name'])}</td>
         <td style={{ ...TD, textTransform: 'capitalize' }}>{pick(row, ['materialType', 'material_type'])}</td>
         <td style={{ ...TD, fontFamily: MONO, fontSize: 11 }}>{pick(row, ['contact', 'contactDetails', 'contact_details', 'phone'])}</td>
         <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
       </>
     ),
     fields: [
@@ -253,12 +293,15 @@ const TABS = [
     icon: 'people',
     fetch: () => masterApi.contractors().then((r) => r.data),
     create: (p) => masterApi.createContractor(p),
-    columns: ['Contractor', 'Contact', 'Status'],
-    renderRow: (row) => (
+    update: (id, p) => masterApi.updateContractor(id, p),
+    archive: (id) => masterApi.archiveContractor(id),
+    columns: ['Contractor', 'Contact', 'Status', ''],
+    renderRow: (row, ctx) => (
       <>
         <td style={TD}>{pick(row, ['name', 'contractorName', 'contractor_name'])}</td>
         <td style={{ ...TD, fontFamily: MONO, fontSize: 11 }}>{pick(row, ['contact', 'contactDetails', 'contact_details', 'phone'])}</td>
         <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
       </>
     ),
     fields: [
@@ -272,8 +315,10 @@ const TABS = [
     icon: 'flow',
     fetch: () => masterApi.conversionPatterns().then((r) => r.data),
     create: (p) => masterApi.createConversionPattern(p),
-    columns: ['Pattern', 'Input (mm)', 'Child Lengths', 'Cuts', 'Kerf', 'Scrap (mm)'],
-    renderRow: (row) => {
+    update: (id, p) => masterApi.updateConversionPattern(id, p),
+    archive: (id) => masterApi.archiveConversionPattern(id),
+    columns: ['Pattern', 'Input (mm)', 'Child Lengths', 'Cuts', 'Kerf', 'Scrap (mm)', ''],
+    renderRow: (row, ctx) => {
       const children = row.childLengths || row.child_lengths || row.children;
       const childArr = Array.isArray(children) ? children : (typeof children === 'string' ? children.split(',').map((s) => Number(s.trim())).filter((n) => !Number.isNaN(n)) : []);
       const input = Number(pick(row, ['inputLength', 'input_length', 'input'], 0)) || 0;
@@ -288,6 +333,7 @@ const TABS = [
           <td style={{ ...TD, fontFamily: MONO }}>{cuts}</td>
           <td style={{ ...TD, fontFamily: MONO }}>{kerf}</td>
           <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{scrap}</td>
+          <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
         </>
       );
     },
@@ -318,13 +364,16 @@ const TABS = [
     icon: 'db',
     fetch: () => masterApi.storageLocations().then((r) => r.data),
     create: (p) => masterApi.createStorageLocation(p),
-    columns: ['Location Code', 'Name', 'Location', 'Status'],
-    renderRow: (row) => (
+    update: (id, p) => masterApi.updateStorageLocation(id, p),
+    archive: (id) => masterApi.archiveStorageLocation(id),
+    columns: ['Location Code', 'Name', 'Location', 'Status', ''],
+    renderRow: (row, ctx) => (
       <>
         <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['code', 'locationCode', 'location_code'])}</td>
         <td style={TD}>{pick(row, ['name', 'locationName', 'location_name'])}</td>
         <td style={TD}>{row.location ? <LocationBadge location={row.location} /> : pick(row, ['site'])}</td>
         <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
       </>
     ),
     fields: [
@@ -403,14 +452,65 @@ function TabPanel({ tab, canWrite }) {
   const [archivingId, setArchivingId] = useState(null);
   const [actionError, setActionError] = useState(null);
 
+  // inline edit state (only one row editable at a time)
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState(null);
+
   function setField(name, value) {
     setForm((f) => ({ ...f, [name]: value }));
+  }
+
+  function setEditField(name, value) {
+    setEditForm((f) => ({ ...f, [name]: value }));
+  }
+
+  function startEdit(row) {
+    const id = row.id ?? row.code ?? row.uuid;
+    setActionError(null);
+    setEditError(null);
+    setEditingId(id);
+    setEditForm(buildEditValues(tab, row));
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditForm({});
+    setEditError(null);
+  }
+
+  async function saveEdit(e) {
+    if (e) e.preventDefault();
+    if (!tab.update || editingId == null) return;
+    setEditError(null);
+    for (const f of tab.fields) {
+      if (f.required && (editForm[f.name] == null || String(editForm[f.name]).trim() === '')) {
+        setEditError(`${f.label} is required.`);
+        return;
+      }
+    }
+    const payload = tab.transform ? tab.transform(editForm) : { ...editForm };
+    Object.keys(payload).forEach((k) => {
+      if (payload[k] === '' || payload[k] == null) delete payload[k];
+    });
+    setEditSaving(true);
+    try {
+      await tab.update(editingId, payload);
+      await refetch();
+      cancelEdit();
+    } catch (err) {
+      setEditError(err.message || 'Could not save changes. Please check the fields and try again.');
+    } finally {
+      setEditSaving(false);
+    }
   }
 
   async function submit(e) {
     e.preventDefault();
     setFormError(null);
     setFormSuccess(null);
+    cancelEdit();
     for (const f of tab.fields) {
       if (f.required && (form[f.name] == null || String(form[f.name]).trim() === '')) {
         setFormError(`${f.label} is required.`);
@@ -450,16 +550,41 @@ function TabPanel({ tab, canWrite }) {
     }
   }
 
+  const archiveBtn = (row) => {
+    if (!tab.archive || !canWrite) return null;
+    const id = row.id ?? row.code ?? row.uuid;
+    const archived = row.archived ?? row.is_archived ?? row.isArchived;
+    if (archived) return null;
+    return (
+      <button className="btn btn-danger btn-sm" disabled={archivingId === id} onClick={() => archive(row)}>
+        {archivingId === id ? 'Archiving…' : 'Archive'}
+      </button>
+    );
+  };
+
+  const editBtn = (row) => {
+    if (!tab.update || !canWrite) return null;
+    const id = row.id ?? row.code ?? row.uuid;
+    const archived = row.archived ?? row.is_archived ?? row.isArchived;
+    if (archived) return null;
+    return (
+      <button className="btn btn-sm" disabled={editingId === id} onClick={() => startEdit(row)}>
+        Edit
+      </button>
+    );
+  };
+
   const ctx = {
-    archiveBtn: (row) => {
-      if (!tab.archive || !canWrite) return null;
-      const id = row.id ?? row.code ?? row.uuid;
-      const archived = row.archived ?? row.is_archived ?? row.isArchived;
-      if (archived) return null;
+    archiveBtn,
+    rowActions: (row) => {
+      const edit = editBtn(row);
+      const arch = archiveBtn(row);
+      if (!edit && !arch) return null;
       return (
-        <button className="btn btn-danger btn-sm" disabled={archivingId === id} onClick={() => archive(row)}>
-          {archivingId === id ? 'Archiving…' : 'Archive'}
-        </button>
+        <div style={{ display: 'inline-flex', gap: 6, justifyContent: 'flex-end' }}>
+          {edit}
+          {arch}
+        </div>
       );
     },
   };
@@ -486,6 +611,27 @@ function TabPanel({ tab, canWrite }) {
               keyOf={(r, i) => r.id ?? r.code ?? i}
             />
           )}
+
+          {editingId != null && canWrite ? (
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eef2ea' }}>
+              <SectionTitle>Edit {tab.label.replace(/s$/, '')}</SectionTitle>
+              <form onSubmit={saveEdit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {tab.fields.map((f) => (
+                  <Field key={f.name} field={f} value={editForm[f.name]} onChange={setEditField} />
+                ))}
+                {editError ? <div style={{ gridColumn: '1 / -1' }}><ErrorBanner message={editError} /></div> : null}
+                <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8 }}>
+                  <button type="submit" className="btn btn-primary btn-sm" disabled={editSaving}>
+                    <Icon name="check" size={14} color="var(--accent-green, #d4eecb)" />
+                    {editSaving ? 'Saving…' : 'Save changes'}
+                  </button>
+                  <button type="button" className="btn btn-sm" disabled={editSaving} onClick={cancelEdit}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          ) : null}
         </div>
 
         {tab.extra === 'designMatrix' ? (
