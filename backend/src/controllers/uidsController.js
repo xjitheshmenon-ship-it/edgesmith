@@ -499,8 +499,46 @@ async function stationSummary(req, res) {
   return res.json({ success: true, data: rows.map((r) => ({ code: r.code, name: r.name, active_count: Number(r.active_count) })) });
 }
 
+/**
+ * GET /api/v1/uids/summary/shopfloor?location= — Active / Hold / Pause headline
+ * counts for the wall display. Dharmapuri is UID/job based; Faridabad is item
+ * based (no UID hold/pause concept there).
+ */
+async function shopfloorSummary(req, res) {
+  const location = req.query.location;
+  if (location === 'faridabad') {
+    const { rows } = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE status <> 'done') AS active,
+         COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress,
+         0 AS hold, 0 AS paused
+       FROM faridabad_items`
+    );
+    const r = rows[0] || {};
+    return res.json({ success: true, data: { active: Number(r.active) || 0, hold: 0, paused: 0 } });
+  }
+  // Dharmapuri (default): active UIDs, UIDs on hold, paused jobs.
+  const { rows: uidRows } = await query(
+    `SELECT COUNT(*) FILTER (WHERE status = 'active') AS active,
+            COUNT(*) FILTER (WHERE status = 'hold') AS hold
+     FROM uids`
+  );
+  const { rows: jobRows } = await query(
+    `SELECT COUNT(*) AS paused FROM jobs WHERE status = 'paused'`
+  );
+  return res.json({
+    success: true,
+    data: {
+      active: Number(uidRows[0]?.active) || 0,
+      hold: Number(uidRows[0]?.hold) || 0,
+      paused: Number(jobRows[0]?.paused) || 0,
+    },
+  });
+}
+
 module.exports = {
   listUids, getUidDetail, bulkCreateUids, previewGeneration, updateUid,
+  shopfloorSummary,
   advanceUid, holdUid, releaseUid, convertUid, getLineage, wipSummary, stationSummary,
   LOCATION_CODE_TO_ID,
 };

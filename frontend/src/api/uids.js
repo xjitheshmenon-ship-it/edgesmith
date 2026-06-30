@@ -13,4 +13,5 @@ export const uidsApi = {
   lineage: (code) => api.get(`/uids/${code}/lineage`),
   wipSummary: () => api.get('/uids/summary/wip'),
   stationSummary: () => api.get('/uids/summary/stations'),
+  shopfloorSummary: (location) => api.get('/uids/summary/shopfloor', { location }),
 };

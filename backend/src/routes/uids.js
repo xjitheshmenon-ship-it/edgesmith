@@ -12,6 +12,7 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), listAsync(ctrl
 router.get('/preview', listAsync(ctrl.previewGeneration));
 router.get('/summary/wip', listAsync(ctrl.wipSummary));
 router.get('/summary/stations', listAsync(ctrl.stationSummary));
+router.get('/summary/shopfloor', listAsync(ctrl.shopfloorSummary));
 
 router.get('/:code', listAsync(ctrl.getUidDetail));
 router.patch('/:code', requireRole(['admin', 'manager', 'supervisor']), listAsync(ctrl.updateUid));
