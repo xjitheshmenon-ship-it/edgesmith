@@ -9,9 +9,11 @@ COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 
 COPY . .
+RUN chmod +x docker-entrypoint.sh
 
 ENV NODE_ENV=production
 # Render injects PORT at runtime; the app falls back to 3001 locally.
 EXPOSE 3001
 
-CMD ["node", "app.js"]
+# Entrypoint runs idempotent migrate + seed, then starts the server.
+CMD ["./docker-entrypoint.sh"]
