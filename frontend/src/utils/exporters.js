@@ -8,9 +8,6 @@
  *   columns: [{ key, label }]   — column order + headers
  *   rows:    [{ [key]: value }] — one object per row
  */
-import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
-
 /** Trigger a browser download for an in-memory Blob. */
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
@@ -49,7 +46,13 @@ export function downloadCSV(filename, columns, rows) {
  * Download tabular data as a PDF table.
  * opts: { title?, subtitle?, columns, rows, orientation? }
  */
-export function downloadPDF(filename, { title, subtitle, columns, rows, orientation = 'portrait' }) {
+export async function downloadPDF(filename, { title, subtitle, columns, rows, orientation = 'portrait' }) {
+  // Lazy-loaded so jsPDF (~300KB) is only fetched when a PDF is actually exported,
+  // keeping it out of the initial page bundle.
+  const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ]);
   const doc = new jsPDF({ orientation, unit: 'pt', format: 'a4' });
   const marginX = 40;
   let cursorY = 48;

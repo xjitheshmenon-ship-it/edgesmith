@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { useAuth } from '../store/AuthContext';
-import { cyclesApi } from '../api/resources';
+import { cyclesApi, masterApi } from '../api/resources';
+import { downloadJSON, downloadCSV, downloadPDF } from '../utils/exporters';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill } from '../components/common/Badges';
 
@@ -95,6 +96,92 @@ function classifyStep(stepNo, raw) {
   // default: fixed
   const value = num(pick(raw || {}, 'cap', 'capacity', 'capacity_value')) || 1;
   return { kind: 'fixed', value };
+}
+
+/* ───────── editor: step-type vocabulary + export columns ───────── */
+
+// Common step_type values seen in the spec data. Any distinct values found in
+// the loaded steps are merged in (handled in StepsEditor) so nothing is lost.
+const DEFAULT_STEP_TYPES = ['normal', 'heat_treatment', 'grinding', 'qc'];
+const CAPACITY_BASES = ['fixed', 'per_unit'];
+
+// Columns for the CSV / PDF exports of a cycle's current steps.
+const EXPORT_COLUMNS = [
+  { key: 'step_number', label: 'Step #' },
+  { key: 'operation_name', label: 'Operation' },
+  { key: 'workstation', label: 'Workstation' },
+  { key: 'source_storage_code', label: 'Source' },
+  { key: 'dest_storage_code', label: 'Dest' },
+  { key: 'step_type', label: 'Type' },
+  { key: 'capacity_1500', label: 'Cap@1500' },
+  { key: 'capacity_basis', label: 'Basis' },
+  { key: 'min_queue_threshold', label: 'Min Queue' },
+];
+
+// Map a raw API step into a flat row for CSV/PDF export.
+function exportRow(s) {
+  return {
+    step_number: pick(s, 'step_number', 'stepNumber') ?? '',
+    operation_name: pick(s, 'operation_name', 'operation', 'name') ?? '',
+    workstation: pick(s, 'workstation_code', 'workstation', 'workstation_name') ?? '',
+    source_storage_code: pick(s, 'source_storage_code', 'source_storage') ?? '',
+    dest_storage_code: pick(s, 'dest_storage_code', 'dest_storage') ?? '',
+    step_type: pick(s, 'step_type') ?? 'normal',
+    capacity_1500: pick(s, 'capacity_1500', 'capacity') ?? '',
+    capacity_basis: pick(s, 'capacity_basis') ?? 'fixed',
+    min_queue_threshold: pick(s, 'min_queue_threshold') ?? 1,
+  };
+}
+
+/* Map a raw (snake_case) API step into the editor's working row shape. */
+let _rowSeq = 0;
+function toEditorRow(s) {
+  return {
+    _rid: `r${_rowSeq++}`,
+    operationName: pick(s, 'operation_name', 'operation', 'name') ?? '',
+    workstationTypeId: pick(s, 'workstation_type_id', 'workstationTypeId') ?? '',
+    sourceStorageId: pick(s, 'source_storage_id', 'sourceStorageId') ?? '',
+    destStorageId: pick(s, 'dest_storage_id', 'destStorageId') ?? '',
+    stepType: pick(s, 'step_type', 'stepType') ?? 'normal',
+    capacity1500: pick(s, 'capacity_1500', 'capacity') ?? '',
+    capacityBasis: pick(s, 'capacity_basis', 'capacityBasis') ?? 'fixed',
+    minQueueThreshold: pick(s, 'min_queue_threshold', 'minQueueThreshold') ?? 1,
+  };
+}
+
+function blankEditorRow() {
+  return {
+    _rid: `r${_rowSeq++}`,
+    operationName: '',
+    workstationTypeId: '',
+    sourceStorageId: '',
+    destStorageId: '',
+    stepType: 'normal',
+    capacity1500: '',
+    capacityBasis: 'fixed',
+    minQueueThreshold: 1,
+  };
+}
+
+/* Build the camelCase payload the backend expects (1-based numbering recomputed
+   from row order). */
+function rowsToPayload(rows) {
+  return rows.map((r, i) => ({
+    stepNumber: i + 1,
+    sequenceOrder: i + 1,
+    operationName: r.operationName?.trim() || '',
+    workstationTypeId: r.workstationTypeId || null,
+    sourceStorageId: r.sourceStorageId || null,
+    destStorageId: r.destStorageId || null,
+    stepType: r.stepType || 'normal',
+    capacity1500:
+      r.capacity1500 === '' || r.capacity1500 == null ? null : Number(r.capacity1500),
+    capacityBasis: r.capacityBasis || 'fixed',
+    minQueueThreshold:
+      r.minQueueThreshold === '' || r.minQueueThreshold == null
+        ? 1
+        : Number(r.minQueueThreshold),
+  }));
 }
 
 /* ───────────────────────── shared UI ───────────────────────── */
@@ -419,8 +506,18 @@ function StepsEditor({ cycle, canWrite, onSaved }) {
     [cycle.id],
   );
 
-  const steps = useMemo(() => asList(data).map(normalizeStep), [data]);
-  // Per-step capacity drafts: { [stepKey]: {value|base|barsPerSet} }
+  // The /steps endpoint 404s with NO_VERSION for a cycle that has never had a
+  // version published. Treat that as "empty, ready to build" rather than a hard
+  // error so the admin can start adding steps.
+  const noVersion = error && error.code === 'NO_VERSION';
+  const hardError = error && !noVersion;
+
+  // Raw API steps (snake_case) — used for the read-only table and exports.
+  const rawSteps = useMemo(() => asList(data), [data]);
+  const steps = useMemo(() => rawSteps.map(normalizeStep), [rawSteps]);
+  const versionNumber = num(pick(data || {}, 'version', 'version_number')) || cycle.version;
+
+  /* ─── read-only capacity-rule drafts (existing behaviour, preserved) ─── */
   const [capDrafts, setCapDrafts] = useState({});
   const [changeSummary, setChangeSummary] = useState('');
   const [saving, setSaving] = useState(false);
@@ -434,13 +531,11 @@ function StepsEditor({ cycle, canWrite, onSaved }) {
     setCapDrafts((prev) => ({ ...prev, [stepKey]: { ...prev[stepKey], ...patch } }));
   }
 
-  async function save() {
+  async function saveCaps() {
     setSaving(true);
     setSaveErr(null);
     setSaveOk(null);
     try {
-      // Merge capacity drafts back onto each step's raw payload, then PUT.
-      // updateSteps creates a new version automatically (spec PAGE 15).
       const merged = steps.map((s) => {
         const d = capDrafts[s.key];
         const base = { ...s.raw };
@@ -464,23 +559,301 @@ function StepsEditor({ cycle, canWrite, onSaved }) {
     }
   }
 
-  if (loading && !data) return <Empty>Loading steps…</Empty>;
-  if (error) return <ErrorBox error={error} onRetry={refetch} />;
+  if (loading && !data && !error) return <Empty>Loading steps…</Empty>;
+  if (hardError) return <ErrorBox error={error} onRetry={refetch} />;
 
   return (
+    <StepsEditorInner
+      cycle={cycle}
+      canWrite={canWrite}
+      rawSteps={rawSteps}
+      steps={steps}
+      versionNumber={versionNumber}
+      capDrafts={capDrafts}
+      setCapDraft={setCapDraft}
+      dirty={dirty}
+      saving={saving}
+      saveErr={saveErr}
+      saveOk={saveOk}
+      changeSummary={changeSummary}
+      setChangeSummary={setChangeSummary}
+      onSaveCaps={saveCaps}
+      onSavedFull={async () => { await refetch(); onSaved && onSaved(); }}
+    />
+  );
+}
+
+function StepsEditorInner({
+  cycle, canWrite, rawSteps, steps, versionNumber,
+  capDrafts, setCapDraft, dirty, saving, saveErr, saveOk,
+  changeSummary, setChangeSummary, onSaveCaps, onSavedFull,
+}) {
+  const [editing, setEditing] = useState(false);
+
+  /* ─── full step editor (add / edit / reorder / delete) ─── */
+  // Dropdown options for workstation type + storage location selects.
+  const wsTypes = usePolling(() => masterApi.workstationTypes().then((r) => asList(r.data)), []);
+  const storages = usePolling(() => masterApi.storageLocations().then((r) => asList(r.data)), []);
+  const wsOptions = useMemo(
+    () => asList(wsTypes.data).map((w) => ({ id: pick(w, 'id'), label: `${pick(w, 'code') || ''} — ${pick(w, 'name') || ''}`.replace(/^ — | — $/, '') })),
+    [wsTypes.data],
+  );
+  const storageOptions = useMemo(
+    () => asList(storages.data).map((s) => ({ id: pick(s, 'id'), label: `${pick(s, 'code') || ''} — ${pick(s, 'name') || ''}`.replace(/^ — | — $/, '') })),
+    [storages.data],
+  );
+
+  // Step-type vocabulary: defaults plus any distinct values found in the data.
+  const stepTypeOptions = useMemo(() => {
+    const set = new Set(DEFAULT_STEP_TYPES);
+    rawSteps.forEach((s) => { const t = pick(s, 'step_type'); if (t) set.add(t); });
+    return Array.from(set);
+  }, [rawSteps]);
+
+  const [rows, setRows] = useState([]);
+  const [editSummary, setEditSummary] = useState('');
+  const [savingFull, setSavingFull] = useState(false);
+  const [fullErr, setFullErr] = useState(null);
+  const [fullOk, setFullOk] = useState(null);
+
+  function enterEdit() {
+    setRows(rawSteps.map(toEditorRow));
+    setEditSummary('');
+    setFullErr(null);
+    setFullOk(null);
+    setEditing(true);
+  }
+  function cancelEdit() {
+    setEditing(false);
+    setRows([]);
+    setFullErr(null);
+  }
+
+  function patchRow(rid, patch) {
+    setFullOk(null);
+    setRows((prev) => prev.map((r) => (r._rid === rid ? { ...r, ...patch } : r)));
+  }
+  function addRow() {
+    setFullOk(null);
+    setRows((prev) => [...prev, blankEditorRow()]);
+  }
+  function deleteRow(rid) {
+    setRows((prev) => prev.filter((r) => r._rid !== rid));
+  }
+  function moveRow(idx, dir) {
+    setRows((prev) => {
+      const next = [...prev];
+      const j = idx + dir;
+      if (j < 0 || j >= next.length) return prev;
+      [next[idx], next[j]] = [next[j], next[idx]];
+      return next;
+    });
+  }
+
+  async function saveFull() {
+    // Validate: workstation type is required on every row.
+    const missing = rows.findIndex((r) => !r.workstationTypeId);
+    if (missing !== -1) {
+      setFullErr({ message: `Step ${missing + 1} needs a workstation — it is required for every step.`, code: 'WORKSTATION_REQUIRED' });
+      return;
+    }
+    if (rows.length === 0) {
+      setFullErr({ message: 'Add at least one step before saving.', code: 'NO_STEPS' });
+      return;
+    }
+    setSavingFull(true);
+    setFullErr(null);
+    setFullOk(null);
+    try {
+      const payload = rowsToPayload(rows);
+      await cyclesApi.updateSteps(cycle.id, payload, editSummary.trim() || 'Edited cycle steps');
+      setFullOk('Saved — a new version was created.');
+      setEditing(false);
+      setRows([]);
+      await onSavedFull();
+    } catch (err) {
+      setFullErr(err);
+    } finally {
+      setSavingFull(false);
+    }
+  }
+
+  /* ─── exports ─── */
+  function exportJSON() {
+    const payload = {
+      cycle: { id: cycle.id, code: cycle.code, name: cycle.name },
+      version: versionNumber,
+      steps: rawSteps,
+    };
+    downloadJSON(`cycle-${cycle.code || cycle.id}-v${versionNumber}`, payload);
+  }
+  function exportCSV() {
+    downloadCSV(`cycle-${cycle.code || cycle.id}-v${versionNumber}`, EXPORT_COLUMNS, rawSteps.map(exportRow));
+  }
+  function exportPDF() {
+    downloadPDF(`cycle-${cycle.code || cycle.id}-v${versionNumber}`, {
+      title: `${cycle.name} — Cycle Definition (v${versionNumber})`,
+      subtitle: `${cycle.code || ''} · ${rawSteps.length} step${rawSteps.length === 1 ? '' : 's'}`,
+      columns: EXPORT_COLUMNS,
+      rows: rawSteps.map(exportRow),
+      orientation: 'landscape',
+    });
+  }
+
+  const optsLoading = wsTypes.loading || storages.loading;
+  const cellInput = { height: 34, fontSize: 12.5 };
+
+  /* ════════════════════════ edit mode ════════════════════════ */
+  if (editing) {
+    return (
+      <div>
+        <SectionTitle right={<span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--status-blue)' }}>Editing — unsaved draft</span>}>
+          Edit Steps · {cycle.name}
+        </SectionTitle>
+
+        <div style={{ overflowX: 'auto', marginTop: 8 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
+            <thead>
+              <tr>
+                <th style={TH}>#</th>
+                <th style={TH}>Operation</th>
+                <th style={TH}>Workstation *</th>
+                <th style={TH}>Source</th>
+                <th style={TH}>Dest</th>
+                <th style={TH}>Type</th>
+                <th style={TH}>Cap@1500</th>
+                <th style={TH}>Basis</th>
+                <th style={TH}>Min Q</th>
+                <th style={TH} />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={r._rid} style={{ borderTop: '1px solid #eef2ea' }}>
+                  <td style={{ ...TD, fontFamily: MONO, fontWeight: 700 }}>{i + 1}</td>
+                  <td style={TD}>
+                    <input className="form-input" style={{ ...cellInput, minWidth: 150 }} placeholder="Operation name"
+                      value={r.operationName} onChange={(e) => patchRow(r._rid, { operationName: e.target.value })} />
+                  </td>
+                  <td style={TD}>
+                    <select className="form-input" style={{ ...cellInput, minWidth: 150, borderColor: r.workstationTypeId ? undefined : 'var(--status-danger)' }}
+                      value={r.workstationTypeId} onChange={(e) => patchRow(r._rid, { workstationTypeId: e.target.value })}>
+                      <option value="">{optsLoading ? 'Loading…' : 'Select…'}</option>
+                      {wsOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                  </td>
+                  <td style={TD}>
+                    <select className="form-input" style={{ ...cellInput, minWidth: 130 }}
+                      value={r.sourceStorageId} onChange={(e) => patchRow(r._rid, { sourceStorageId: e.target.value })}>
+                      <option value="">None</option>
+                      {storageOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                  </td>
+                  <td style={TD}>
+                    <select className="form-input" style={{ ...cellInput, minWidth: 130 }}
+                      value={r.destStorageId} onChange={(e) => patchRow(r._rid, { destStorageId: e.target.value })}>
+                      <option value="">None</option>
+                      {storageOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                    </select>
+                  </td>
+                  <td style={TD}>
+                    <select className="form-input" style={{ ...cellInput, minWidth: 130 }}
+                      value={r.stepType} onChange={(e) => patchRow(r._rid, { stepType: e.target.value })}>
+                      {stepTypeOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </td>
+                  <td style={TD}>
+                    <input className="form-input" type="number" min="0" style={{ ...cellInput, width: 90 }} placeholder="—"
+                      value={r.capacity1500} onChange={(e) => patchRow(r._rid, { capacity1500: e.target.value })} />
+                  </td>
+                  <td style={TD}>
+                    <select className="form-input" style={{ ...cellInput, minWidth: 100 }}
+                      value={r.capacityBasis} onChange={(e) => patchRow(r._rid, { capacityBasis: e.target.value })}>
+                      {CAPACITY_BASES.map((b) => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </td>
+                  <td style={TD}>
+                    <input className="form-input" type="number" min="1" style={{ ...cellInput, width: 70 }}
+                      value={r.minQueueThreshold} onChange={(e) => patchRow(r._rid, { minQueueThreshold: e.target.value })} />
+                  </td>
+                  <td style={{ ...TD, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <button className="btn btn-sm" style={{ height: 28, padding: '0 8px' }} disabled={i === 0} title="Move up" onClick={() => moveRow(i, -1)}>↑</button>{' '}
+                    <button className="btn btn-sm" style={{ height: 28, padding: '0 8px' }} disabled={i === rows.length - 1} title="Move down" onClick={() => moveRow(i, 1)}>↓</button>{' '}
+                    <button className="btn btn-sm" style={{ height: 28, padding: '0 9px', color: 'var(--status-danger)' }} title="Delete step" onClick={() => deleteRow(r._rid)}>
+                      <Icon name="close" size={13} color="var(--status-danger)" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {rows.length === 0 ? (
+                <tr><td colSpan={10} style={{ ...TD, textAlign: 'center', color: 'var(--text-secondary)' }}>No steps in the draft yet.</td></tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <button className="btn btn-sm" onClick={addRow}>
+            <Icon name="plus" size={14} color="var(--accent-green)" /> {rows.length === 0 ? 'Add first step' : 'Add step'}
+          </button>
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px dashed var(--border-soft)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <label className="form-label">What changed (saved with the new version)</label>
+              <input className="form-input" style={{ height: 40 }} placeholder="e.g. Added grinding + QC steps"
+                value={editSummary} onChange={(e) => setEditSummary(e.target.value)} />
+            </div>
+            <button className="btn btn-primary" disabled={savingFull} onClick={saveFull}>
+              <Icon name="check" size={15} color="var(--accent-green)" />
+              {savingFull ? 'Saving…' : 'Save — Create New Version'}
+            </button>
+            <button className="btn" disabled={savingFull} onClick={cancelEdit}>Cancel</button>
+          </div>
+          {fullErr ? <ErrorBox error={fullErr} /> : null}
+        </div>
+      </div>
+    );
+  }
+
+  /* ════════════════════════ read-only mode ════════════════════════ */
+  const isEmpty = steps.length === 0;
+  return (
     <div>
-      <SectionTitle right={<span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)' }}>Current version v{cycle.version}</span>}>
+      <SectionTitle right={<span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)' }}>Current version v{versionNumber}</span>}>
         Steps · {cycle.name}
       </SectionTitle>
 
-      <ReadOnlyNote>
-        Reorder, add, delete and inline field editing have no dedicated write endpoints in this build —
-        those controls are shown disabled. Capacity rule edits below save through the steps endpoint,
-        which creates a new version automatically.
-      </ReadOnlyNote>
+      {/* action bar: edit + exports */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+        {canWrite ? (
+          <button className="btn btn-primary btn-sm" onClick={enterEdit}>
+            <Icon name="plus" size={14} color="var(--accent-green)" />
+            {isEmpty ? 'Add first step' : 'Edit steps'}
+          </button>
+        ) : null}
+        {!isEmpty ? (
+          <>
+            <span style={{ width: 1, height: 22, background: 'var(--border-soft)', margin: '0 2px' }} />
+            <button className="btn btn-sm" onClick={exportJSON}><Icon name="download" size={13} color="var(--text-secondary)" /> JSON</button>
+            <button className="btn btn-sm" onClick={exportCSV}><Icon name="download" size={13} color="var(--text-secondary)" /> CSV</button>
+            <button className="btn btn-sm" onClick={exportPDF}><Icon name="download" size={13} color="var(--text-secondary)" /> PDF</button>
+          </>
+        ) : null}
+      </div>
 
-      {steps.length === 0 ? (
-        <Empty>This cycle has no steps yet.</Empty>
+      {fullOk ? <div style={{ marginBottom: 12 }}><SuccessBox message={fullOk} /></div> : null}
+
+      {canWrite ? (
+        <ReadOnlyNote>
+          Use <strong>Edit steps</strong> to add, reorder or delete steps. Capacity-rule edits in the table
+          below also save through the steps endpoint — both create a new version automatically.
+        </ReadOnlyNote>
+      ) : null}
+
+      {isEmpty ? (
+        <Empty>This cycle has no steps yet.{canWrite ? ' Use “Add first step” to start building it.' : ''}</Empty>
       ) : (
         <div style={{ overflowX: 'auto', marginTop: 12 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -493,7 +866,6 @@ function StepsEditor({ cycle, canWrite, onSaved }) {
                 <th style={TH}>Dest</th>
                 <th style={TH}>Capacity rule</th>
                 <th style={TH}>Type</th>
-                <th style={TH} />
               </tr>
             </thead>
             <tbody>
@@ -520,18 +892,6 @@ function StepsEditor({ cycle, canWrite, onSaved }) {
                       {!s.isTemper && !s.isSplit ? <span style={{ color: 'var(--text-muted)' }}>—</span> : null}
                     </div>
                   </td>
-                  <td style={{ ...TD, textAlign: 'right' }}>
-                    {canWrite ? (
-                      <button
-                        className="btn btn-sm"
-                        disabled
-                        title={s.uidsHere > 0 ? `Blocked — ${s.uidsHere} UID(s) currently at this step` : 'Delete step (no write endpoint in this build)'}
-                        style={{ height: 28, padding: '0 9px' }}
-                      >
-                        {s.uidsHere > 0 ? `${s.uidsHere} here` : 'Delete'}
-                      </button>
-                    ) : null}
-                  </td>
                 </tr>
               ))}
             </tbody>
@@ -539,7 +899,7 @@ function StepsEditor({ cycle, canWrite, onSaved }) {
         </div>
       )}
 
-      {/* Save bar */}
+      {/* capacity-rule save bar (existing behaviour) */}
       {canWrite && steps.length > 0 ? (
         <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px dashed var(--border-soft)', display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -553,9 +913,9 @@ function StepsEditor({ cycle, canWrite, onSaved }) {
                 onChange={(e) => setChangeSummary(e.target.value)}
               />
             </div>
-            <button className="btn btn-primary" disabled={!dirty || saving} onClick={save}>
+            <button className="btn btn-primary" disabled={!dirty || saving} onClick={onSaveCaps}>
               <Icon name="check" size={15} color="var(--accent-green)" />
-              {saving ? 'Saving…' : 'Save — Create New Version'}
+              {saving ? 'Saving…' : 'Save Capacity — New Version'}
             </button>
           </div>
           {dirty ? (
