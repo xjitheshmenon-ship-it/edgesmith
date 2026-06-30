@@ -15,6 +15,7 @@ import QC from './pages/QC';
 import RawMaterialIntake from './pages/RawMaterialIntake';
 import JoiningOperation from './pages/JoiningOperation';
 import ContractorDispatch from './pages/ContractorDispatch';
+import FaridabadBatchManagement from './pages/FaridabadBatchManagement';
 import ServiceLookup from './pages/ServiceLookup';
 import MoLinking from './pages/MoLinking';
 import MasterLists from './pages/MasterLists';
@@ -41,6 +42,7 @@ const PAGES = {
   intake: RawMaterialIntake,
   joining: JoiningOperation,
   dispatch: ContractorDispatch,
+  farbatch: FaridabadBatchManagement,
   service: ServiceLookup,
   mo: MoLinking,
   masters: MasterLists,
