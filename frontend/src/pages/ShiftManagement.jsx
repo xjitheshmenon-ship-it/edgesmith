@@ -695,39 +695,49 @@ function ScheduleTab({ location, canManage }) {
   );
 }
 
-/* A shift crew is one supervisor + four operators. Slots make that structure
-   obvious instead of a long free-for-all checklist. */
+/* A typical shift crew is one supervisor + four operators, but a shift can hold
+   10–15+ people, so the operator picker is a searchable, multi-select list with
+   a selected-crew summary — not fixed slots. */
 const TARGET_OPERATORS = 4;
 
-/* Editor modal — upserts one schedule cell (1 supervisor + N operator slots). */
+/* Editor drawer — upserts one schedule cell (1 supervisor + N operators).
+   Right-side drawer so large crews stay readable. */
 function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors, operators, onClose, onSaved }) {
   const [supervisorId, setSupervisorId] = useState(cell?.supervisor_id ? String(cell.supervisor_id) : '');
-  // Fixed operator slots — pre-fill from the saved crew, pad to TARGET_OPERATORS.
-  const [slots, setSlots] = useState(() => {
-    const init = Array.isArray(cell?.operator_ids) ? cell.operator_ids.map(String) : [];
-    while (init.length < TARGET_OPERATORS) init.push('');
-    return init;
-  });
+  const [selected, setSelected] = useState(() => new Set(Array.isArray(cell?.operator_ids) ? cell.operator_ids.map(String) : []));
+  const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
 
   const win = SHIFT_WINDOWS[shiftNumber];
-  const chosen = slots.filter(Boolean);
-  const filledCount = chosen.length;
+  const opById = useMemo(() => {
+    const m = {};
+    operators.forEach((o) => { m[String(o.id)] = o; });
+    return m;
+  }, [operators]);
 
-  function setSlot(i, val) {
-    setSlots((prev) => prev.map((s, idx) => (idx === i ? val : s)));
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return operators;
+    return operators.filter((o) =>
+      (o.full_name || '').toLowerCase().includes(q) || (o.employee_code || '').toLowerCase().includes(q)
+    );
+  }, [operators, query]);
+
+  function toggle(id) {
+    const sid = String(id);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(sid)) next.delete(sid); else next.add(sid);
+      return next;
+    });
   }
-  function addSlot() {
-    setSlots((prev) => [...prev, '']);
-  }
-  function removeSlot(i) {
-    setSlots((prev) => (prev.length > TARGET_OPERATORS ? prev.filter((_, idx) => idx !== i) : prev.map((s, idx) => (idx === i ? '' : s))));
-  }
-  // Operators still available for slot i (exclude those picked in other slots).
-  function optionsFor(i) {
-    const takenElsewhere = new Set(slots.filter((s, idx) => idx !== i && s));
-    return operators.filter((o) => !takenElsewhere.has(String(o.id)));
+  function selectAllFiltered() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      filtered.forEach((o) => next.add(String(o.id)));
+      return next;
+    });
   }
 
   async function persist(supId, opIds) {
@@ -748,83 +758,124 @@ function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors
     }
   }
 
-  const save = () => persist(supervisorId, [...new Set(chosen)]);
+  const selectedIds = [...selected];
+  const count = selectedIds.length;
+  const save = () => persist(supervisorId, selectedIds);
   const clearEntry = () => persist(null, []);
 
+  const countColor = count === 0
+    ? 'var(--text-muted, #9bb4d4)'
+    : count >= TARGET_OPERATORS ? 'var(--status-success-dark, #1a7f54)' : 'var(--status-warning, #d97a2b)';
+
   return (
-    <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(10,29,58,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: 20 }}
-      className="cp-fade-in"
-    >
-      <div className="card" style={{ width: 'min(520px, 100%)', maxHeight: '88vh', overflowY: 'auto', padding: 24, boxShadow: 'var(--shadow-modal)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 17, letterSpacing: '-0.02em', color: 'var(--text-primary)' }}>
-            Shift {shiftNumber} · {fmtDate(date)}
-          </div>
-          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', display: 'flex', cursor: 'pointer' }}>
-            <Icon name="close" size={18} />
-          </button>
-        </div>
-        <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', marginBottom: 16 }}>
-          {win ? `${win.start}–${win.end}` : ''}{cell?.published ? ' · published' : cell ? ' · draft' : ''} · crew = 1 supervisor + {TARGET_OPERATORS} operators
-        </div>
-
-        {/* Supervisor (1) */}
-        <div style={{ marginBottom: 18 }}>
-          <label className="form-label" htmlFor="sched-sup">Supervisor on duty</label>
-          <select id="sched-sup" className="form-select" value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)}>
-            <option value="">— select supervisor —</option>
-            {supervisors.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.full_name} {s.employee_code ? `(${s.employee_code})` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Operators (slots) */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <SectionLabel>Operators</SectionLabel>
-          <span style={{ fontFamily: MONO, fontSize: 11, color: filledCount === TARGET_OPERATORS ? 'var(--status-success-dark, #1a7f54)' : 'var(--status-warning, #d97a2b)' }}>
-            {filledCount} / {TARGET_OPERATORS} chosen
-          </span>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {slots.map((val, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted, #9bb4d4)', width: 18, textAlign: 'right' }}>{i + 1}</span>
-              <select
-                className="form-select"
-                style={{ flex: 1 }}
-                value={val}
-                onChange={(e) => setSlot(i, e.target.value)}
-              >
-                <option value="">— empty —</option>
-                {optionsFor(i).map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.full_name} {o.employee_code ? `(${o.employee_code})` : ''}
-                  </option>
-                ))}
-              </select>
-              {val ? (
-                <button type="button" onClick={() => removeSlot(i)} title="Clear slot" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', display: 'flex', cursor: 'pointer' }}>
-                  <Icon name="close" size={15} />
-                </button>
-              ) : (
-                <span style={{ width: 15 }} />
-              )}
+    <div style={{ position: 'fixed', inset: 0, zIndex: 60, display: 'flex', justifyContent: 'flex-end' }} className="cp-fade-in">
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(10,29,58,0.40)' }} />
+      <div
+        className="card"
+        style={{ position: 'relative', width: 'min(460px, 100%)', height: '100%', borderRadius: 0, display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-drawer, var(--shadow-modal))' }}
+      >
+        {/* Header */}
+        <div style={{ padding: '20px 22px 14px', borderBottom: '1px solid var(--border-card, #e3ebde)' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+            <div>
+              <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 17, letterSpacing: '-0.02em', color: 'var(--text-primary)' }}>
+                Shift {shiftNumber} · {fmtDate(date)}
+              </div>
+              <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', marginTop: 4 }}>
+                {win ? `${win.start}–${win.end}` : ''}{cell?.published ? ' · published' : cell ? ' · draft' : ''} · typical crew 1 + {TARGET_OPERATORS}
+              </div>
             </div>
-          ))}
+            <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', display: 'flex', cursor: 'pointer' }}>
+              <Icon name="close" size={18} />
+            </button>
+          </div>
         </div>
-        <button type="button" onClick={addSlot} style={{ marginTop: 8, background: 'none', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, color: 'var(--status-blue, #2563eb)', display: 'flex', alignItems: 'center', gap: 4 }}>
-          <Icon name="plus" size={13} /> Add another operator
-        </button>
 
-        {err ? (
-          <div style={{ marginTop: 12, fontFamily: SANS, fontSize: 12.5, fontWeight: 600, color: 'var(--status-danger, #e5484d)' }}>{err}</div>
-        ) : null}
+        {/* Scrollable body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px 22px' }}>
+          {/* Supervisor */}
+          <div style={{ marginBottom: 18 }}>
+            <label className="form-label" htmlFor="sched-sup">Supervisor on duty</label>
+            <select id="sched-sup" className="form-select" value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)}>
+              <option value="">— select supervisor —</option>
+              {supervisors.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.full_name} {s.employee_code ? `(${s.employee_code})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+          {/* Operators */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <SectionLabel>Operators</SectionLabel>
+            <span style={{ fontFamily: MONO, fontSize: 11, color: countColor }}>{count} selected</span>
+          </div>
+
+          {/* Selected crew chips — quick view + removal for large crews */}
+          {count > 0 ? (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {selectedIds.map((sid) => {
+                const o = opById[sid];
+                return (
+                  <span key={sid} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 8px', borderRadius: 999, background: 'var(--bg-soft-blue, #eaf1fb)', border: '1px solid var(--border-card, #e3ebde)', fontFamily: SANS, fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                    {o ? o.full_name : `#${sid}`}
+                    <button type="button" onClick={() => toggle(sid)} title="Remove" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', display: 'flex', cursor: 'pointer', padding: 0 }}>
+                      <Icon name="close" size={12} />
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {/* Search + bulk actions */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <input
+              className="form-input"
+              style={{ height: 36, flex: 1 }}
+              placeholder="Search operators…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <button type="button" className="btn btn-sm" onClick={selectAllFiltered} disabled={!filtered.length} title="Select all shown">
+              Add all
+            </button>
+            {count ? (
+              <button type="button" className="btn btn-sm" onClick={() => setSelected(new Set())} title="Clear selection">
+                Clear
+              </button>
+            ) : null}
+          </div>
+
+          {/* Checkbox list */}
+          <div style={{ border: '1px solid var(--border-card, #e3ebde)', borderRadius: 'var(--radius-md, 9px)' }}>
+            {filtered.length === 0 ? (
+              <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary)', padding: '14px 12px' }}>No operators found.</div>
+            ) : (
+              filtered.map((o) => {
+                const checked = selected.has(String(o.id));
+                return (
+                  <label
+                    key={o.id}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderBottom: '1px solid var(--bg-muted, #f4f7f2)', cursor: 'pointer', background: checked ? 'var(--bg-soft-blue, #eaf1fb)' : 'transparent' }}
+                  >
+                    <input type="checkbox" checked={checked} onChange={() => toggle(o.id)} />
+                    <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>{o.full_name}</span>
+                    {o.employee_code ? <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted, #9bb4d4)' }}>{o.employee_code}</span> : null}
+                  </label>
+                );
+              })
+            )}
+          </div>
+
+          {err ? (
+            <div style={{ marginTop: 12, fontFamily: SANS, fontSize: 12.5, fontWeight: 600, color: 'var(--status-danger, #e5484d)' }}>{err}</div>
+          ) : null}
+        </div>
+
+        {/* Sticky footer */}
+        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border-card, #e3ebde)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn btn-primary" type="button" onClick={save} disabled={saving}>
             <Icon name="check" size={15} />
             {saving ? 'Saving…' : 'Save crew'}
