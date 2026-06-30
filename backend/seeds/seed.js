@@ -34,6 +34,7 @@ async function main() {
   await seedWorkstationUnits(wsIds);
   await seedStorageLocations(); // idempotent — schema migration already inserts these, this is a safety net
   const cycleVersionId = await seedEatCycle(wsIds);
+  await seedFaridabadCycle();
   await seedTemperingParameters();
   await seedGrindingRules(wsIds);
   await seedColorCodes();
@@ -261,6 +262,78 @@ const TEMPERING_DEFAULTS = [
   ['tempering_3', 150, 60, 5, 5, 35],
   ['tempering_4', 140, 60, 5, 5, 30], // Stress Relief
 ];
+
+/**
+ * Faridabad full cycle — a 10-step cycle defined like EAT/SWAN/OVEN, with its
+ * own Faridabad workstation types. No UIDs flow through it; batches do. Storage
+ * isn't tracked at this granularity, so steps have no source/dest storage.
+ */
+const FAR_WORKSTATIONS = [
+  ['FAR-INTAKE', 'Material Intake', 'intake'],
+  ['FAR-AC', 'Alloy Cutting', 'cutting'],
+  ['FAR-AG', 'Alloy Grinding', 'grinding'],
+  ['FAR-MSC', 'MS Cutting', 'cutting'],
+  ['FAR-MSL', 'MS L Cutting', 'cutting'],
+  ['FAR-MSV', 'MS V Grooving', 'grooving'],
+  ['FAR-DSP', 'Dispatch Staging', 'dispatch'],
+];
+// [stepNumber, operationName, workstationCode]
+const FAR_STEPS = [
+  ['1', 'Alloy Steel Intake', 'FAR-INTAKE'],
+  ['2', 'Alloy Steel Cutting', 'FAR-AC'],
+  ['3', 'Alloy Steel Grinding', 'FAR-AG'],
+  ['4', 'MS Intake', 'FAR-INTAKE'],
+  ['5', 'MS Cutting', 'FAR-MSC'],
+  ['6', 'MS L Cutting', 'FAR-MSL'],
+  ['7', 'MS V Grooving', 'FAR-MSV'],
+  ['8', 'Welding (Joining)', 'WELD-01'],
+  ['9', 'Dispatch to Rolling Contractor', 'FAR-DSP'],
+  ['10', 'Dispatch to Dharmapuri', 'FAR-DSP'],
+];
+
+async function seedFaridabadCycle() {
+  const { rows: locRows } = await query(`SELECT id FROM locations WHERE code = 'faridabad'`);
+  const farLoc = locRows[0]?.id || 2;
+
+  // Faridabad workstation types (idempotent by code).
+  const wsId = {};
+  for (const [code, name, category] of FAR_WORKSTATIONS) {
+    const { rows: ex } = await query(`SELECT id FROM workstation_types WHERE code = $1`, [code]);
+    wsId[code] = ex[0] ? ex[0].id : (await query(
+      `INSERT INTO workstation_types (code, name, category, location_id) VALUES ($1,$2,$3,$4) RETURNING id`,
+      [code, name, category, farLoc]
+    )).rows[0].id;
+  }
+  const { rows: weld } = await query(`SELECT id FROM workstation_types WHERE code = 'WELD-01'`);
+  wsId['WELD-01'] = weld[0]?.id || wsId['FAR-DSP'];
+
+  // FAR cycle type + current version (idempotent).
+  let { rows: ctRows } = await query(`SELECT id FROM cycle_types WHERE code = 'FAR'`);
+  const farCycleId = ctRows[0] ? ctRows[0].id : (await query(
+    `INSERT INTO cycle_types (code, name, location_id, letter) VALUES ('FAR','Faridabad Cycle',$1,'F') RETURNING id`,
+    [farLoc]
+  )).rows[0].id;
+
+  const { rows: verEx } = await query(`SELECT id FROM cycle_versions WHERE cycle_type_id = $1 AND is_current = true`, [farCycleId]);
+  if (verEx.length) {
+    const { rows: sc } = await query(`SELECT COUNT(*) AS c FROM cycle_steps WHERE cycle_version_id = $1`, [verEx[0].id]);
+    if (Number(sc[0].c) > 0) { console.log('✓ Faridabad cycle already seeded, skipping.'); return; }
+  }
+  const versionId = verEx.length ? verEx[0].id : (await query(
+    `INSERT INTO cycle_versions (cycle_type_id, version_number, change_summary, is_current) VALUES ($1,1,'Initial Faridabad cycle',true) RETURNING id`,
+    [farCycleId]
+  )).rows[0].id;
+
+  let seq = 1;
+  for (const [stepNumber, opName, wsCode] of FAR_STEPS) {
+    await query(
+      `INSERT INTO cycle_steps (cycle_version_id, step_number, sequence_order, operation_name, workstation_type_id, step_type)
+       VALUES ($1,$2,$3,$4,$5,'normal')`,
+      [versionId, stepNumber, seq++, opName, wsId[wsCode]]
+    );
+  }
+  console.log(`✓ Seeded Faridabad cycle — ${FAR_STEPS.length} steps (version ${versionId})`);
+}
 
 async function seedTemperingParameters() {
   const { rows: eatRows } = await query(`SELECT id FROM cycle_types WHERE code = 'EAT'`);
