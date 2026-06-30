@@ -34,12 +34,26 @@ router.get('/', async (req, res) => {
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await query(
-    `SELECT j.*, u.uid_code, wu.unit_code, e.full_name AS operator_name,
+    `SELECT j.*, u.uid_code,
+            wu.unit_code, wu.unit_code AS workstation_code, wu.unit_name,
+            wt.name AS workstation_name, wt.code AS workstation_type_code,
+            e.full_name AS operator_name,
+            s.shift_number,
+            sl.started_at, sl.net_work_seconds,
+            cs.operation_name, cs.step_number,
             wl.size_mm AS faridabad_size_mm, wl.cycle_type_id AS faridabad_cycle_type_id
      FROM jobs j
      LEFT JOIN uids u ON u.id = j.uid_id
      LEFT JOIN workstation_units wu ON wu.id = j.workstation_unit_id
+     LEFT JOIN workstation_types wt ON wt.id = wu.workstation_type_id
      LEFT JOIN employees e ON e.id = j.operator_id
+     LEFT JOIN shifts s ON s.id = j.shift_id
+     LEFT JOIN cycle_steps cs ON cs.id = j.cycle_step_id
+     LEFT JOIN LATERAL (
+       SELECT started_at, net_work_seconds FROM uid_step_logs
+       WHERE uid_id = j.uid_id AND closed_at IS NULL
+       ORDER BY id DESC LIMIT 1
+     ) sl ON true
      LEFT JOIN faridabad_weld_log wl ON wl.id = j.weld_log_id
      ${where}
      ORDER BY CASE WHEN j.status = 'in_progress' THEN 0 WHEN j.status = 'paused' THEN 1 ELSE 2 END, j.created_at ASC`,
