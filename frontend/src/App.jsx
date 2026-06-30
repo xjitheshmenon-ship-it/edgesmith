@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/AuthContext';
-import { AppProvider } from './store/AppContext';
+import { AppProvider, useApp } from './store/AppContext';
 import { NAV, SECTIONS_BY_ROLE, OPERATOR_ALLOWED_ROUTES } from './components/layout/nav';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
@@ -34,11 +34,23 @@ import CycleBuilder from './pages/CycleBuilder';
 
 /* Route keys built on the new foundation map to their component; everything
    else renders the Placeholder until rebuilt. */
+/* Production Floor and My Workstation are the same view for both factories —
+   only the data differs — so a single nav entry renders the Dharmapuri or
+   Faridabad variant based on the shared factory toggle in the topbar. */
+function FactoryFloor() {
+  const { location } = useApp();
+  return location === 'faridabad' ? <FaridabadProductionFloor /> : <ProductionFloor />;
+}
+function FactoryWorkstation() {
+  const { location } = useApp();
+  return location === 'faridabad' ? <FaridabadMyWorkstation /> : <MyWorkstation />;
+}
+
 const PAGES = {
   dashboard: Dashboard,
   uid: UidCreation,
-  floor: ProductionFloor,
-  jobexec: MyWorkstation,
+  floor: FactoryFloor,
+  jobexec: FactoryWorkstation,
   batch: BatchManagement,
   qc: QC,
   intake: RawMaterialIntake,
