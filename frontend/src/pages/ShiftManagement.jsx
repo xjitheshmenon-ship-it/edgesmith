@@ -695,31 +695,42 @@ function ScheduleTab({ location, canManage }) {
   );
 }
 
-/* Editor modal — upserts one schedule cell (supervisor + operators). */
+/* A shift crew is one supervisor + four operators. Slots make that structure
+   obvious instead of a long free-for-all checklist. */
+const TARGET_OPERATORS = 4;
+
+/* Editor modal — upserts one schedule cell (1 supervisor + N operator slots). */
 function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors, operators, onClose, onSaved }) {
-  const [supervisorId, setSupervisorId] = useState(cell?.supervisor_id || '');
-  const [operatorIds, setOperatorIds] = useState(() =>
-    Array.isArray(cell?.operator_ids) ? cell.operator_ids.map(String) : []
-  );
-  const [opFilter, setOpFilter] = useState('');
+  const [supervisorId, setSupervisorId] = useState(cell?.supervisor_id ? String(cell.supervisor_id) : '');
+  // Fixed operator slots — pre-fill from the saved crew, pad to TARGET_OPERATORS.
+  const [slots, setSlots] = useState(() => {
+    const init = Array.isArray(cell?.operator_ids) ? cell.operator_ids.map(String) : [];
+    while (init.length < TARGET_OPERATORS) init.push('');
+    return init;
+  });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
 
   const win = SHIFT_WINDOWS[shiftNumber];
-  const filteredOps = useMemo(() => {
-    const q = opFilter.trim().toLowerCase();
-    if (!q) return operators;
-    return operators.filter(
-      (o) => (o.full_name || '').toLowerCase().includes(q) || (o.employee_code || '').toLowerCase().includes(q)
-    );
-  }, [operators, opFilter]);
+  const chosen = slots.filter(Boolean);
+  const filledCount = chosen.length;
 
-  function toggleOp(id) {
-    const sid = String(id);
-    setOperatorIds((prev) => (prev.includes(sid) ? prev.filter((x) => x !== sid) : [...prev, sid]));
+  function setSlot(i, val) {
+    setSlots((prev) => prev.map((s, idx) => (idx === i ? val : s)));
+  }
+  function addSlot() {
+    setSlots((prev) => [...prev, '']);
+  }
+  function removeSlot(i) {
+    setSlots((prev) => (prev.length > TARGET_OPERATORS ? prev.filter((_, idx) => idx !== i) : prev.map((s, idx) => (idx === i ? '' : s))));
+  }
+  // Operators still available for slot i (exclude those picked in other slots).
+  function optionsFor(i) {
+    const takenElsewhere = new Set(slots.filter((s, idx) => idx !== i && s));
+    return operators.filter((o) => !takenElsewhere.has(String(o.id)));
   }
 
-  async function save() {
+  async function persist(supId, opIds) {
     setSaving(true);
     setErr(null);
     try {
@@ -727,8 +738,8 @@ function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors
         shiftDate: isoDate(date),
         shiftNumber,
         locationCode,
-        supervisorId: supervisorId || null,
-        operatorIds,
+        supervisorId: supId || null,
+        operatorIds: opIds,
       });
       onSaved?.();
     } catch (e) {
@@ -737,23 +748,8 @@ function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors
     }
   }
 
-  async function clearEntry() {
-    setSaving(true);
-    setErr(null);
-    try {
-      await shiftsApi.setSchedule({
-        shiftDate: isoDate(date),
-        shiftNumber,
-        locationCode,
-        supervisorId: null,
-        operatorIds: [],
-      });
-      onSaved?.();
-    } catch (e) {
-      setErr(e?.message || 'Could not clear the schedule entry.');
-      setSaving(false);
-    }
-  }
+  const save = () => persist(supervisorId, [...new Set(chosen)]);
+  const clearEntry = () => persist(null, []);
 
   return (
     <div
@@ -770,13 +766,14 @@ function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors
           </button>
         </div>
         <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)', marginBottom: 16 }}>
-          {win ? `${win.start}–${win.end}` : ''}{cell?.published ? ' · published' : cell ? ' · draft' : ''}
+          {win ? `${win.start}–${win.end}` : ''}{cell?.published ? ' · published' : cell ? ' · draft' : ''} · crew = 1 supervisor + {TARGET_OPERATORS} operators
         </div>
 
-        <div style={{ marginBottom: 16 }}>
+        {/* Supervisor (1) */}
+        <div style={{ marginBottom: 18 }}>
           <label className="form-label" htmlFor="sched-sup">Supervisor on duty</label>
           <select id="sched-sup" className="form-select" value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)}>
-            <option value="">— unassigned —</option>
+            <option value="">— select supervisor —</option>
             {supervisors.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.full_name} {s.employee_code ? `(${s.employee_code})` : ''}
@@ -785,44 +782,43 @@ function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors
           </select>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <SectionLabel>Operators ({operatorIds.length} selected)</SectionLabel>
-          {operatorIds.length ? (
-            <button type="button" onClick={() => setOperatorIds([])} style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 10.5, color: 'var(--text-secondary)' }}>
-              clear all
-            </button>
-          ) : null}
+        {/* Operators (slots) */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <SectionLabel>Operators</SectionLabel>
+          <span style={{ fontFamily: MONO, fontSize: 11, color: filledCount === TARGET_OPERATORS ? 'var(--status-success-dark, #1a7f54)' : 'var(--status-warning, #d97a2b)' }}>
+            {filledCount} / {TARGET_OPERATORS} chosen
+          </span>
         </div>
-        <input
-          className="form-input"
-          style={{ height: 36, marginBottom: 8 }}
-          placeholder="Filter operators…"
-          value={opFilter}
-          onChange={(e) => setOpFilter(e.target.value)}
-        />
-        <div style={{ border: '1px solid var(--border-card, #e3ebde)', borderRadius: 'var(--radius-md, 9px)', maxHeight: 240, overflowY: 'auto' }}>
-          {filteredOps.length === 0 ? (
-            <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary)', padding: '14px 12px' }}>
-              No operators found.
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {slots.map((val, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted, #9bb4d4)', width: 18, textAlign: 'right' }}>{i + 1}</span>
+              <select
+                className="form-select"
+                style={{ flex: 1 }}
+                value={val}
+                onChange={(e) => setSlot(i, e.target.value)}
+              >
+                <option value="">— empty —</option>
+                {optionsFor(i).map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.full_name} {o.employee_code ? `(${o.employee_code})` : ''}
+                  </option>
+                ))}
+              </select>
+              {val ? (
+                <button type="button" onClick={() => removeSlot(i)} title="Clear slot" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', display: 'flex', cursor: 'pointer' }}>
+                  <Icon name="close" size={15} />
+                </button>
+              ) : (
+                <span style={{ width: 15 }} />
+              )}
             </div>
-          ) : (
-            filteredOps.map((o) => {
-              const checked = operatorIds.includes(String(o.id));
-              return (
-                <label
-                  key={o.id}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--bg-muted, #f4f7f2)', cursor: 'pointer' }}
-                >
-                  <input type="checkbox" checked={checked} onChange={() => toggleOp(o.id)} />
-                  <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{o.full_name}</span>
-                  {o.employee_code ? (
-                    <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted, #9bb4d4)' }}>{o.employee_code}</span>
-                  ) : null}
-                </label>
-              );
-            })
-          )}
+          ))}
         </div>
+        <button type="button" onClick={addSlot} style={{ marginTop: 8, background: 'none', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, color: 'var(--status-blue, #2563eb)', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Icon name="plus" size={13} /> Add another operator
+        </button>
 
         {err ? (
           <div style={{ marginTop: 12, fontFamily: SANS, fontSize: 12.5, fontWeight: 600, color: 'var(--status-danger, #e5484d)' }}>{err}</div>
@@ -831,7 +827,7 @@ function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors
         <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
           <button className="btn btn-primary" type="button" onClick={save} disabled={saving}>
             <Icon name="check" size={15} />
-            {saving ? 'Saving…' : 'Save assignment'}
+            {saving ? 'Saving…' : 'Save crew'}
           </button>
           <button className="btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
           {cell ? (
