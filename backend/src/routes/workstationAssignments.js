@@ -68,19 +68,23 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, re
       throw Object.assign(new Error('Furnace workstations require Supervisor role'), { status: 409, code: 'FURNACE_REQUIRES_SUPERVISOR' });
     }
 
-    // Badge check (warning, not a hard block — Supervisor can override with reason)
-    const { rows: badgeRows } = await client.query(
-      `SELECT eb.expiry_date FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
-       WHERE eb.employee_id = $1 AND bt.workstation_type_id = $2`,
-      [employeeId, workstationTypeId]
-    );
-    const hasBadgeRequirement = (await client.query(`SELECT 1 FROM badge_types WHERE workstation_type_id = $1`, [workstationTypeId])).rows.length > 0;
-    const hasValidBadge = badgeRows.some((b) => !b.expiry_date || new Date(b.expiry_date) >= new Date());
-
-    if (hasBadgeRequirement && !hasValidBadge && !overrideBadgeWarning) {
-      throw Object.assign(new Error('Operator lacks required badge for this workstation'), {
-        status: 409, code: 'BADGE_MISSING', meta: { workstationCode: wsRows[0].code },
-      });
+    // Skill-badge check (warning, not a hard block — Supervisor can override
+    // with reason). The workstation carries a required skill code; the operator
+    // must hold a matching active, non-expired certification.
+    const { rows: skillRows } = await client.query(`SELECT required_skill_code FROM workstation_types WHERE id = $1`, [workstationTypeId]);
+    const requiredSkill = skillRows[0] && skillRows[0].required_skill_code;
+    if (requiredSkill && !overrideBadgeWarning) {
+      const { rows: held } = await client.query(
+        `SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
+          WHERE eb.employee_id = $1 AND bt.code = $2 AND bt.status = 'active'
+            AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE) LIMIT 1`,
+        [employeeId, requiredSkill]
+      );
+      if (!held.length) {
+        throw Object.assign(new Error('Operator lacks required skill certification for this workstation'), {
+          status: 409, code: 'BADGE_MISSING', meta: { workstationCode: wsRows[0].code, skillCode: requiredSkill },
+        });
+      }
     }
 
     const { rows } = await client.query(
@@ -153,8 +157,9 @@ router.get('/eligible-operators', async (req, res) => {
   }
   if (!typeId) return res.status(400).json({ success: false, error: { code: 'MISSING_WORKSTATION', message: 'workstation_code or workstation_type_id is required.' } });
 
-  const { rows: btRows } = await query(`SELECT name FROM badge_types WHERE workstation_type_id = $1 LIMIT 1`, [typeId]);
-  const requiresBadge = btRows.length > 0;
+  const { rows: skRows } = await query(`SELECT required_skill_code FROM workstation_types WHERE id = $1`, [typeId]);
+  const requiredSkill = skRows[0] && skRows[0].required_skill_code;
+  const requiresBadge = !!requiredSkill;
 
   const params = [];
   let p = 1;
@@ -162,9 +167,9 @@ router.get('/eligible-operators', async (req, res) => {
   if (location && location !== 'both') { conds.push(`(l.code = $${p++} OR e.location_id IS NULL)`); params.push(location); }
   if (requiresBadge) {
     conds.push(`EXISTS (SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
-                        WHERE eb.employee_id = e.id AND bt.workstation_type_id = $${p++}
+                        WHERE eb.employee_id = e.id AND bt.code = $${p++} AND bt.status = 'active'
                           AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE))`);
-    params.push(typeId);
+    params.push(requiredSkill);
   }
   const { rows: ops } = await query(
     `SELECT e.id, e.employee_code, e.full_name FROM employees e
@@ -172,7 +177,7 @@ router.get('/eligible-operators', async (req, res) => {
      WHERE ${conds.join(' AND ')} ORDER BY e.full_name`,
     params
   );
-  return res.json({ success: true, data: { requiresBadge, badgeName: btRows[0]?.name || null, operators: ops } });
+  return res.json({ success: true, data: { requiresBadge, badgeName: requiredSkill || null, operators: ops } });
 });
 
 /**
@@ -200,9 +205,9 @@ router.get('/eligible-workstations', async (req, res) => {
 
   const { rows } = await query(
     `SELECT wt.code, wt.name, wt.category,
-            EXISTS (SELECT 1 FROM badge_types bt WHERE bt.workstation_type_id = wt.id) AS requires_badge,
+            (wt.required_skill_code IS NOT NULL) AS requires_badge,
             EXISTS (SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
-                    WHERE eb.employee_id = $1 AND bt.workstation_type_id = wt.id
+                    WHERE eb.employee_id = $1 AND bt.code = wt.required_skill_code AND bt.status = 'active'
                       AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)) AS has_badge
      FROM workstation_types wt
      LEFT JOIN locations l ON l.id = wt.location_id

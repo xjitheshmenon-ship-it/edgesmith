@@ -5,6 +5,7 @@ const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { calculateMsBalance } = require('../utils/msBalance');
 const { alloyCutBatch, DEFAULT_SIZES } = require('../utils/alloyCut');
+const { operatorMissingSkill } = require('../utils/skillGate');
 
 const router = express.Router();
 router.use(authenticate, auditContext);
@@ -356,6 +357,28 @@ router.post('/items', requireRole(['admin', 'manager', 'supervisor', 'operator']
 
 /** POST /faridabad/items/:id/start — begin the operation at the current step. */
 router.post('/items/:id/start', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  // Skill gate: operators may only start a step whose workstation they are
+  // certified for. Supervisors/managers/admins are exempt.
+  if (req.user.role === 'operator') {
+    const { rows: wsRows } = await query(
+      `SELECT wt.id AS wt_id
+         FROM faridabad_items fi
+         JOIN cycle_versions cv ON cv.cycle_type_id = fi.cycle_type_id AND cv.is_current
+         JOIN cycle_steps cs ON cs.cycle_version_id = cv.id AND cs.step_number = fi.current_step
+         JOIN workstation_types wt ON wt.id = cs.workstation_type_id
+        WHERE fi.id = $1`,
+      [req.params.id]
+    );
+    const wtId = wsRows[0] && wsRows[0].wt_id;
+    const missing = await operatorMissingSkill(query, { employeeId: req.user.sub, workstationTypeId: wtId });
+    if (missing) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'SKILL_NOT_CERTIFIED', message: `Not certified (${missing.skillCode}) for this workstation`, meta: missing },
+      });
+    }
+  }
+
   const { rows } = await query(
     `UPDATE faridabad_items SET status = 'in_progress', started_at = now(), current_operator_id = $1, updated_at = now()
      WHERE id = $2 AND status <> 'done' RETURNING *`,

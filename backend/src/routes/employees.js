@@ -156,19 +156,25 @@ router.get('/badge-checks/can-assign', async (req, res) => {
     return res.json({ success: true, data: { canAssign: false, reason: 'Furnace workstations require Supervisor role.' } });
   }
 
-  const { rows: badgeRows } = await query(
-    `SELECT eb.expiry_date FROM employee_badges eb
-     JOIN badge_types bt ON bt.id = eb.badge_type_id
-     WHERE eb.employee_id = $1 AND bt.workstation_type_id = $2`,
-    [employeeId, workstationTypeId]
-  );
-
-  if (!badgeRows.length) {
-    return res.json({ success: true, data: { canAssign: true, warning: 'No badge requirement configured for this workstation, or operator holds no badge — verify manually.' } });
+  const { rows: skRows } = await query(`SELECT required_skill_code FROM workstation_types WHERE id = $1`, [workstationTypeId]);
+  const requiredSkill = skRows[0] && skRows[0].required_skill_code;
+  if (!requiredSkill) {
+    return res.json({ success: true, data: { canAssign: true, warning: 'This workstation needs no skill certification.' } });
   }
 
-  const expired = badgeRows.some((b) => b.expiry_date && new Date(b.expiry_date) < new Date());
-  return res.json({ success: true, data: { canAssign: !expired, reason: expired ? 'Badge has expired.' : null } });
+  const { rows: held } = await query(
+    `SELECT eb.expiry_date FROM employee_badges eb
+     JOIN badge_types bt ON bt.id = eb.badge_type_id
+     WHERE eb.employee_id = $1 AND bt.code = $2 AND bt.status = 'active'`,
+    [employeeId, requiredSkill]
+  );
+
+  if (!held.length) {
+    return res.json({ success: true, data: { canAssign: false, reason: `Operator holds no ${requiredSkill} certification.` } });
+  }
+
+  const valid = held.some((b) => !b.expiry_date || new Date(b.expiry_date) >= new Date());
+  return res.json({ success: true, data: { canAssign: valid, reason: valid ? null : `${requiredSkill} certification has expired.` } });
 });
 
 /** GET /api/v1/employees/badge-dashboard — Admin alert view */
@@ -186,11 +192,12 @@ router.get('/badge-dashboard/summary', requireRole(['admin']), async (req, res) 
   const noQualifiedOperator = await query(
     `SELECT wt.code, wt.name FROM workstation_types wt
      WHERE wt.status = 'active'
+       AND wt.required_skill_code IS NOT NULL
        AND NOT EXISTS (
          SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
-         WHERE bt.workstation_type_id = wt.id AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)
-       )
-       AND EXISTS (SELECT 1 FROM badge_types bt2 WHERE bt2.workstation_type_id = wt.id)`
+         WHERE bt.code = wt.required_skill_code AND bt.status = 'active'
+           AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)
+       )`
   );
 
   return res.json({

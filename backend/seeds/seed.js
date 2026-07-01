@@ -88,6 +88,33 @@ const WORKSTATIONS = [
   ['WELD-01', 'Joining / Welding', 'joining', 'faridabad'],
 ];
 
+// Skill certification (badge code) required to operate each workstation type.
+// Stations not listed require no certification (Receiving, Packing, Welding,
+// V-Grooving, Intake, Dispatch). Mirrors migration 013 — this is authoritative
+// for a fresh seed (workstation rows are inserted after migrations run).
+const WS_REQUIRED_SKILL = {
+  'BSW-01': 'CUT', 'BSW-02': 'CUT',
+  'TAG-01': 'TAG',
+  'HT70': 'HT', 'HT80': 'HT', 'HT90': 'HT',
+  'STR-HYD': 'STR', 'STR-MAN': 'STR',
+  'MM22': 'MILL', 'MM11': 'MILL',
+  'SG-DLT': 'GRIND', 'AG-ALP': 'GRIND', 'AG-BTA': 'GRIND', 'AG-GMM': 'GRIND',
+  'PRO': 'COAT',
+  'HRC-01': 'INSP', 'VCL-200': 'INSP', 'ISP': 'INSP',
+  'FAR-AC': 'CUT', 'FAR-AG': 'GRIND', 'FAR-MSC': 'CUT', 'FAR-MSL': 'CUT',
+};
+
+// Set required_skill_code for a workstation if the column is unset (idempotent,
+// never overwrites an admin edit).
+async function applyRequiredSkill(code) {
+  const skill = WS_REQUIRED_SKILL[code];
+  if (!skill) return;
+  await query(
+    `UPDATE workstation_types SET required_skill_code = $1 WHERE code = $2 AND required_skill_code IS NULL`,
+    [skill, code]
+  );
+}
+
 async function seedWorkstations() {
   const { rows: locRows } = await query(`SELECT id, code FROM locations`);
   const locMap = Object.fromEntries(locRows.map((r) => [r.code, r.id]));
@@ -97,6 +124,7 @@ async function seedWorkstations() {
     const { rows: existing } = await query(`SELECT id FROM workstation_types WHERE code = $1`, [code]);
     if (existing.length) {
       ids[code] = existing[0].id;
+      await applyRequiredSkill(code);
       continue;
     }
     const { rows } = await query(
@@ -104,6 +132,7 @@ async function seedWorkstations() {
       [code, name, category, locationCode ? locMap[locationCode] : null]
     );
     ids[code] = rows[0].id;
+    await applyRequiredSkill(code);
   }
   console.log(`✓ Seeded ${Object.keys(ids).length} workstation types`);
   return ids;
@@ -312,6 +341,7 @@ async function seedFaridabadCycle() {
       `INSERT INTO workstation_types (code, name, category, location_id) VALUES ($1,$2,$3,$4) RETURNING id`,
       [code, name, category, farLoc]
     )).rows[0].id;
+    await applyRequiredSkill(code);
   }
   const { rows: weld } = await query(`SELECT id FROM workstation_types WHERE code = 'WELD-01'`);
   wsId['WELD-01'] = weld[0]?.id || wsId['FAR-DSP'];

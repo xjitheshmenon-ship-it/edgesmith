@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { currentShiftNumber } = require('../config/shifts');
+const { operatorMissingSkill } = require('../utils/skillGate');
 
 const router = express.Router();
 router.use(authenticate, auditContext);
@@ -97,8 +98,28 @@ router.post('/:id/start', requireRole(['admin', 'manager', 'supervisor', 'operat
     const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
     const job = jobRows[0];
     if (!job) throw Object.assign(new Error('Job not found'), { status: 404, code: 'JOB_NOT_FOUND' });
-    if (req.user.role === 'operator' && job.operator_id !== req.user.sub) {
-      throw Object.assign(new Error('Not your job'), { status: 403, code: 'NOT_YOUR_JOB' });
+    if (req.user.role === 'operator') {
+      if (job.operator_id !== req.user.sub) {
+        throw Object.assign(new Error('Not your job'), { status: 403, code: 'NOT_YOUR_JOB' });
+      }
+      // Skill gate: an operator may only run a station they are certified for.
+      // Supervisors/managers/admins are exempt (they can run any station).
+      if (job.workstation_unit_id) {
+        const { rows: wuRows } = await client.query(
+          `SELECT workstation_type_id FROM workstation_units WHERE id = $1`,
+          [job.workstation_unit_id]
+        );
+        const wtId = wuRows[0] && wuRows[0].workstation_type_id;
+        const missing = await operatorMissingSkill((t, p) => client.query(t, p), {
+          employeeId: req.user.sub,
+          workstationTypeId: wtId,
+        });
+        if (missing) {
+          throw Object.assign(new Error(`Not certified (${missing.skillCode}) for this workstation`), {
+            status: 403, code: 'SKILL_NOT_CERTIFIED', meta: missing,
+          });
+        }
+      }
     }
 
     await client.query(`UPDATE jobs SET status = 'in_progress' WHERE id = $1`, [job.id]);
