@@ -18,16 +18,14 @@ export const NAV = [
     ['jobs', 'Job Assignment', 'assign', 'unassignedJobs'],
     ['batch', 'Batch Management', 'stack', 'activeBatches'],
   ]],
+  // FARIDABAD section is now fully covered by the shared factory toggle:
+  //  - Raw Material Intake → the "Receiving / Intake" entry (toggle = Faridabad)
+  //  - Joining Operation → recorded inline by the operator when they close the
+  //    WELD-01 (Welding) step in their Faridabad workstation view; the alloy+MS
+  //    BOM is captured there. The /joining route stays registered for old links.
+  //  - Faridabad Batch Management → the "Batch Management" entry (toggle = Faridabad)
+  //  - Contractor Dispatch → dispatch creation lives in Faridabad Batch Management.
   ['FARIDABAD', [
-    // Raw Material Intake is now the Faridabad variant of the shared
-    // "Receiving / Intake" entry above (selected by the factory toggle). Its
-    // /intake route stays registered for old links.
-    ['joining', 'Joining Operation', 'link', null],
-    // Faridabad Batch Management is now the Faridabad variant of the shared
-    // "Batch Management" entry above (selected by the factory toggle). The
-    // /farbatch route stays registered for old links.
-    // Contractor Dispatch retired — dispatch creation now lives in Faridabad
-    // Batch Management. The /dispatch route stays registered for old links.
   ]],
   ['DHARMAPURI', [
     ['uid', 'UID Creation', 'tag', null],

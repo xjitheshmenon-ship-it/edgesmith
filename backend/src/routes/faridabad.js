@@ -367,6 +367,35 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
       [item.id, item.current_step, step ? step.operation_name : null, req.user.sub, item.started_at, netSeconds, runId]
     );
 
+    // Welding (Joining): the operator picks one alloy heat + one MS heat as they
+    // close the WELD-01 operation, and the block's weld + BOM are recorded inline
+    // (no separate Joining page needed).
+    let weldId = null;
+    const isWelding = step && /weld|join/i.test(step.operation_name || '');
+    if (isWelding) {
+      const { alloyIntakeId, msIntakeId, bom } = req.body || {};
+      const { rows: wl } = await client.query(
+        `INSERT INTO faridabad_weld_log (cycle_type_id, alloy_intake_id, ms_intake_id, operator_id, workstation_unit_id, size_mm, started_at, closed_at, net_work_seconds)
+         VALUES ($1,$2,$3,$4,$5,$6,$7, now(), $8) RETURNING id`,
+        [item.cycle_type_id, alloyIntakeId || null, msIntakeId || null, req.user.sub, null, item.size_mm || null, item.started_at, netSeconds]
+      );
+      weldId = wl[0].id;
+      const lines = [];
+      if (alloyIntakeId) lines.push({ component_type: 'alloy', intake_id: alloyIntakeId });
+      if (msIntakeId) lines.push({ component_type: 'ms', intake_id: msIntakeId });
+      if (Array.isArray(bom)) for (const c of bom) lines.push(c);
+      for (const c of lines) {
+        const intakeId = c.intakeId ?? c.intake_id ?? null;
+        const description = c.description ?? null;
+        if (!intakeId && !description) continue;
+        await client.query(
+          `INSERT INTO faridabad_weld_bom (weld_log_id, component_type, intake_id, description, dimensions_mm, quantity)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [weldId, (c.componentType || c.component_type || 'other').toString().slice(0, 20), intakeId, description, c.dimensionsMm ?? c.dimensions_mm ?? null, Number(c.quantity) > 0 ? Number(c.quantity) : 1]
+        );
+      }
+    }
+
     const next = steps[idx + 1];
     if (next) {
       await client.query(
@@ -376,8 +405,8 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
     } else {
       await client.query(`UPDATE faridabad_items SET status = 'done', started_at = NULL, updated_at = now() WHERE id = $1`, [item.id]);
     }
-    await req.audit({ tableName: 'faridabad_items', recordId: item.id, action: 'UPDATE', after: { closedStep: item.current_step, advancedTo: next ? next.step_number : 'done' } });
-    return { itemId: item.id, advancedTo: next ? next.step_number : 'done', balance };
+    await req.audit({ tableName: 'faridabad_items', recordId: item.id, action: 'UPDATE', after: { closedStep: item.current_step, advancedTo: next ? next.step_number : 'done', weldId } });
+    return { itemId: item.id, advancedTo: next ? next.step_number : 'done', balance, weldId };
   });
   return res.json({ success: true, data: result });
 });
