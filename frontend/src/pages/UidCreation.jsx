@@ -267,7 +267,7 @@ function BilletFlow() {
             <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--status-success-dark)' }}>
               Created {success.count} UID{success.count === 1 ? '' : 's'}
               {success.codes?.length ? <span style={{ fontFamily: MONO, marginLeft: 8 }}>{success.codes.join(', ')}</span> : null}
-              {' — '}status active, step 1 (BSW-01), storage RM-Q. Print the list at RCV-01 for tagging.
+              {' — '}status active, step 1 (BSW-01), storage RM-Q. Print the list at TAG-01 for tagging.
             </div>
           </div>
         )}

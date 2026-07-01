@@ -1363,7 +1363,7 @@ export default function MyWorkstation() {
   const [pauseFor, setPauseFor] = useState(null); // job
   const [closeFor, setCloseFor] = useState(null); // job
   const [actionError, setActionError] = useState(null);
-  const [showGen, setShowGen] = useState(false); // Generate-UID modal (RCV-01 operator)
+  const [showGen, setShowGen] = useState(false); // Generate-UID modal (TAG-01 operator)
 
   const runAction = useCallback(
     async (job, action, fn) => {
