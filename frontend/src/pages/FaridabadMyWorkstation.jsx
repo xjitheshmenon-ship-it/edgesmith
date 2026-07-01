@@ -200,9 +200,21 @@ function MsCuttingModal({ item, onCancel, onConfirm, busy, balance }) {
   const piecesValid = pieces.every(
     (p) => String(p.length_mm).trim() && String(p.width_mm).trim() && String(p.quantity).trim()
   );
-  const valid = sheetValid && piecesValid;
+  // Any data entered at all? (used to decide "complete or empty").
+  const anyData =
+    ['length_mm', 'width_mm', 'height_mm'].some((k) => String(sheet[k]).trim() !== '') ||
+    pieces.some((p) => String(p.length_mm).trim() || String(p.width_mm).trim() || String(p.quantity).trim());
+  const complete = sheetValid && piecesValid;
+  // The operation must always be closeable: either enter the full cut (to get a
+  // balance) or close with nothing. Only a half-filled form is blocked.
+  const valid = complete || !anyData;
 
   function submit() {
+    // Close with no cut data → just log the operation and advance.
+    if (!complete) {
+      onConfirm({});
+      return;
+    }
     const payload = {
       sheet: {
         length_mm: Number(sheet.length_mm),
@@ -231,8 +243,8 @@ function MsCuttingModal({ item, onCancel, onConfirm, busy, balance }) {
       width={620}
     >
       <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY, marginBottom: 16 }}>
-        Confirm the sheet you cut and every cut-piece spec. The leftover material is
-        calculated by the system — you do not enter it.
+        Enter the sheet you cut and every cut-piece spec to record the leftover balance —
+        or just close the operation to advance the block. Either way the operation closes.
       </div>
 
       {/* Sheet dimensions */}
@@ -292,6 +304,10 @@ function MsCuttingModal({ item, onCancel, onConfirm, busy, balance }) {
       {/* Calculated balance result */}
       {balance && (
         <div className="card" style={{ background: 'var(--bg-muted, #f4f7f2)', boxShadow: 'none', padding: '14px 16px', marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+            <Icon name="check" size={14} color="var(--status-success, #22a06b)" />
+            <span style={{ fontFamily: SANS, fontWeight: 700, fontSize: 12.5, color: 'var(--status-success-dark, #1c7a52)' }}>Operation closed — advanced to the next step</span>
+          </div>
           <Label style={{ marginBottom: 10 }}>Calculated balance — leftover material</Label>
           {sheetWt != null && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -325,7 +341,7 @@ function MsCuttingModal({ item, onCancel, onConfirm, busy, balance }) {
         {!balance && (
           <button className="btn btn-primary" style={{ height: 48, padding: '0 22px' }} disabled={!valid || busy} onClick={submit}>
             <Icon name="check" size={16} />
-            {busy ? 'Calculating…' : 'Confirm cut & calculate balance'}
+            {busy ? 'Closing…' : complete ? 'Confirm cut & close' : 'Close — log operation'}
           </button>
         )}
       </div>
@@ -697,8 +713,11 @@ export default function FaridabadMyWorkstation() {
       setPending(itemId(closeFor));
       try {
         const res = await faridabadApi.closeItem(itemId(closeFor), payload);
-        setBalance(pick(res?.data || {}, 'balance') ?? null);
+        const bal = pick(res?.data || {}, 'balance') ?? null;
+        setBalance(bal);
         await refetch();
+        // Closed with no cut data → nothing to show, dismiss so it's clearly done.
+        if (!bal) { setCloseFor(null); setBalance(null); }
       } catch (err) {
         setActionError(err?.message || 'Could not close the MS Cutting item — please try again.');
         setCloseFor(null);
