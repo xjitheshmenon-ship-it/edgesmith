@@ -8,16 +8,16 @@ export const NAV = [
   ['OVERVIEW', [
     ['dashboard', 'Dashboard', 'grid', 'dashboardAlerts'],
     ['shopfloor', 'Shopfloor Display', 'monitor', null],
-    // Receiving & Intake, Production Floor, My Workstation and Batch Tracker are
-    // shared across both factories — the topbar factory toggle selects which
-    // factory's data (and page) is shown.
+    // Receiving & Intake, Production Floor and My Workstation are shared across
+    // both factories — the topbar factory toggle selects which factory's data
+    // (and page) is shown. Batch Tracker is no longer a sidebar item: furnace
+    // batching is done on Work Assignment; the tracker is reached via Reports.
     ['receiving', 'Receiving & Intake', 'inbox', 'expectedArrivals'],
     ['floor', 'Production Floor', 'factory', 'onHoldUids'],
     ['jobexec', 'My Workstation', 'timer', null],
     ['uid', 'UID Lookup', 'tag', null],
     ['shift', 'Shift Planner', 'calendar', null],
     ['jobs', 'Work Assignment', 'assign', 'unassignedJobs'],
-    ['batch', 'Batch Tracker', 'stack', 'activeBatches'],
   ]],
   ['OPERATIONS', [
     ['qc', 'Quality Control', 'check', 'pendingQc'],
@@ -50,6 +50,11 @@ export const SECTIONS_BY_ROLE = {
 
 /** Operators only see a narrow slice — My Workstation and Quality Control */
 export const OPERATOR_ALLOWED_ROUTES = ['jobexec', 'qc'];
+
+/** Routes reachable (e.g. deep-linked from Reports) but NOT shown in the sidebar.
+ *  Batch Tracker lives here — furnace batching is on Work Assignment; the tracker
+ *  is opened from Reports. Not available to operators. */
+export const HIDDEN_ROUTES = ['batch'];
 
 export function routeTitle(routeKey) {
   for (const [, items] of NAV) {
