@@ -32,7 +32,6 @@ export const NAV = [
   ]],
   ['OPERATIONS', [
     ['mo', 'MO Linking', 'doc', 'openMos'],
-    ['dataimport', 'Data Import', 'download', null],
     ['reports', 'Reports', 'chart', null],
     ['service', 'Service Lookup', 'search', null],
   ]],
@@ -42,6 +41,7 @@ export const NAV = [
     ['temper', 'Tempering Parameters', 'thermo', null],
     ['employees', 'Employee Profiles', 'people', 'expiringBadges'],
     ['users', 'Users & Roles', 'lock', null],
+    ['dataimport', 'Data Import', 'download', null],
     ['backup', 'Backup & Restore', 'db', null],
   ]],
 ];
