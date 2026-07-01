@@ -46,13 +46,19 @@ function FactoryWorkstation() {
   const { location } = useApp();
   return location === 'faridabad' ? <FaridabadMyWorkstation /> : <MyWorkstation />;
 }
+/* Batch Management is likewise one view per factory — a single nav entry that
+   follows the shared factory toggle, same as Production Floor / My Workstation. */
+function FactoryBatch() {
+  const { location } = useApp();
+  return location === 'faridabad' ? <FaridabadBatchManagement /> : <BatchManagement />;
+}
 
 const PAGES = {
   dashboard: Dashboard,
   uid: UidCreation,
   floor: FactoryFloor,
   jobexec: FactoryWorkstation,
-  batch: BatchManagement,
+  batch: FactoryBatch,
   qc: QC,
   intake: RawMaterialIntake,
   joining: JoiningOperation,

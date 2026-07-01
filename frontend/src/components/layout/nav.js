@@ -8,22 +8,24 @@ export const NAV = [
   ['OVERVIEW', [
     ['dashboard', 'Dashboard', 'grid', 'dashboardAlerts'],
     ['shopfloor', 'Shopfloor Display', 'monitor', null],
-    // Production Floor + My Workstation are shared across both factories — the
-    // topbar factory toggle selects which factory's data is shown.
+    // Production Floor, My Workstation and Batch Management are shared across both
+    // factories — the topbar factory toggle selects which factory's data is shown.
     ['floor', 'Production Floor', 'factory', 'onHoldUids'],
     ['jobexec', 'My Workstation', 'timer', null],
+    ['batch', 'Batch Management', 'stack', 'activeBatches'],
   ]],
   ['FARIDABAD', [
     ['intake', 'Raw Material Intake', 'inbox', null],
     ['joining', 'Joining Operation', 'link', null],
-    ['farbatch', 'Faridabad Batch Management', 'stack', null],
+    // Faridabad Batch Management is now the Faridabad variant of the shared
+    // "Batch Management" entry above (selected by the factory toggle). The
+    // /farbatch route stays registered for old links.
     // Contractor Dispatch retired — dispatch creation now lives in Faridabad
     // Batch Management. The /dispatch route stays registered for old links.
   ]],
   ['DHARMAPURI', [
     ['receiving', 'Receiving', 'download', 'expectedArrivals'],
     ['uid', 'UID Creation', 'tag', null],
-    ['batch', 'Batch Management', 'stack', 'activeBatches'],
     ['qc', 'QC', 'check', 'pendingQc'],
   ]],
   ['OPERATIONS', [
