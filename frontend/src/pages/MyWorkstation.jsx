@@ -886,6 +886,113 @@ function QueueRow({ job, idx, nowMs, canAct, onStart, pending }) {
   );
 }
 
+/* ── Admin oversight: all working workstations ───────────────────────────────
+   Admins aren't assigned to a station, so instead of a personal queue they get
+   an overview of every workstation that has work: the count of UIDs pending at
+   that station, plus any live operator jobs (with timers) assigned there. */
+function StationOversightCard({ row, nowMs }) {
+  return (
+    <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <div>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, color: T_PRIMARY }}>{row.name}</div>
+          {row.name !== row.code && <div style={{ fontFamily: MONO, fontSize: 10.5, color: T_MUTED }}>{row.code}</div>}
+        </div>
+        <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: row.pending ? T_PRIMARY : T_MUTED, background: 'var(--bg-muted, #eef2f7)', borderRadius: 20, padding: '3px 10px', whiteSpace: 'nowrap' }}>
+          {row.pending} waiting
+        </span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {row.jobs.length === 0 ? (
+          <div style={{ fontFamily: SANS, fontSize: 12, color: T_MUTED }}>No operator assigned</div>
+        ) : row.jobs.map((j) => {
+          const running = jobStatus(j) === 'in_progress';
+          const secs = serverNetSeconds(j) + (running ? elapsedFrom(pick(j, 'started_at'), nowMs) : 0);
+          return (
+            <div key={jobId(j)} style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: SANS, fontSize: 12.5 }}>
+              <StatusPill status={jobStatus(j)} />
+              <span style={{ color: T_PRIMARY, fontWeight: 600 }}>{pick(j, 'operator_name', 'operator') || 'Unassigned'}</span>
+              {pick(j, 'uid_code', 'uid') && <span style={{ color: T_SECONDARY, fontFamily: MONO, fontSize: 11 }}>{pick(j, 'uid_code', 'uid')}</span>}
+              {jobStep(j) != null && <span style={{ color: T_MUTED, fontFamily: MONO, fontSize: 11 }}>· Step {jobStep(j)}</span>}
+              {running && <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: T_PRIMARY }}>{fmtHMS(secs)}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function StatChip({ label, value }) {
+  return (
+    <div className="card" style={{ padding: '10px 16px', minWidth: 120 }}>
+      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 22, color: T_PRIMARY, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.06em', color: T_SECONDARY, marginTop: 5 }}>{label.toUpperCase()}</div>
+    </div>
+  );
+}
+
+function AllWorkstationsBoard() {
+  const nowMs = useNow(true);
+  const { data, loading, error, refetch } = usePolling(
+    () => Promise.all([
+      uidsApi.stationSummary().then((r) => r.data).catch(() => []),
+      jobsApi.list({}).then((r) => r.data).catch(() => []),
+    ]).then(([stations, jobs]) => ({ stations, jobs })),
+    []
+  );
+
+  const stations = Array.isArray(data?.stations) ? data.stations : [];
+  const jobsRaw = data?.jobs;
+  const jobs = Array.isArray(jobsRaw) ? jobsRaw : (jobsRaw?.jobs || jobsRaw?.items || []);
+
+  const jobsByCode = useMemo(() => {
+    const m = new Map();
+    for (const j of jobs) {
+      const code = pick(j, 'workstation_type_code', 'workstation_code', 'unit_code') || '—';
+      if (!m.has(code)) m.set(code, []);
+      m.get(code).push(j);
+    }
+    return m;
+  }, [jobs]);
+
+  const board = useMemo(() => {
+    const rows = stations.map((s) => ({ code: s.code, name: s.name || s.code, pending: Number(s.active_count) || 0, jobs: jobsByCode.get(s.code) || [] }));
+    for (const [code, js] of jobsByCode) if (!rows.some((r) => r.code === code)) rows.push({ code, name: code, pending: 0, jobs: js });
+    return rows.filter((r) => r.pending > 0 || r.jobs.length > 0).sort((a, b) => b.pending - a.pending || String(a.code).localeCompare(String(b.code)));
+  }, [stations, jobsByCode]);
+
+  const totalPending = board.reduce((n, r) => n + r.pending, 0);
+  const totalActiveJobs = jobs.filter((j) => jobStatus(j) === 'in_progress').length;
+
+  if (error && !data) {
+    return (
+      <div className="card" style={{ marginTop: 20, padding: 28, textAlign: 'center' }}>
+        <div style={{ fontFamily: SANS, fontSize: 14, color: 'var(--status-danger-dark, #c0392b)' }}>{error.message || 'Could not load workstations.'}</div>
+        <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={refetch}><Icon name="refresh" size={16} />Retry</button>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 20 }}>
+        <StatChip label="Working stations" value={board.length} />
+        <StatChip label="UIDs waiting" value={totalPending} />
+        <StatChip label="Jobs in progress" value={totalActiveJobs} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14, marginTop: 16 }}>
+        {board.map((r) => <StationOversightCard key={r.code} row={r} nowMs={nowMs} />)}
+      </div>
+      {board.length === 0 && (
+        <div className="card" style={{ marginTop: 16, padding: 40, textAlign: 'center', fontFamily: SANS, fontSize: 13, color: T_SECONDARY }}>
+          {loading ? 'Loading workstations…' : 'No workstations have work right now.'}
+        </div>
+      )}
+    </>
+  );
+}
+
 /* ── Page ────────────────────────────────────────────────────────────────── */
 
 const ACTIVE_STATUSES = ['in_progress', 'running', 'active', 'paused'];
@@ -1000,13 +1107,16 @@ export default function MyWorkstation() {
     <>
       <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: T_PRIMARY }}>My Workstation</div>
       <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>
-        {pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your assigned workstations this shift{loading ? ' · loading…' : ''}
+        {isAdmin
+          ? 'All working workstations · UIDs waiting and live operator jobs'
+          : `${pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your assigned workstations this shift`}
+        {loading && !isAdmin ? ' · loading…' : ''}
         {(isManager && !isAdmin) ? ' · read-only' : ''}
       </div>
     </>
   );
 
-  if (error) {
+  if (!isAdmin && error) {
     return (
       <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
         {header}
@@ -1022,7 +1132,7 @@ export default function MyWorkstation() {
     );
   }
 
-  if (loading && !data) {
+  if (!isAdmin && loading && !data) {
     return (
       <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
         {header}
@@ -1045,7 +1155,9 @@ export default function MyWorkstation() {
         </div>
       )}
 
-      {stations.length === 0 ? (
+      {isAdmin ? (
+        <AllWorkstationsBoard />
+      ) : stations.length === 0 ? (
         <div className="card" style={{ marginTop: 20, padding: 40, textAlign: 'center' }}>
           <Icon name="monitor" size={28} color={T_MUTED} />
           <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 16, color: T_PRIMARY, marginTop: 10 }}>No workstations assigned</div>
