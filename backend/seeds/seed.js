@@ -187,7 +187,7 @@ async function seedStorageLocations() {
  */
 const EAT_STEPS = [
   ['1', 'Band Saw Cutting', 'BSW-01', 'RM', 'RM-Q', 'normal', null, 'fixed', 1],
-  ['2', 'UID Tagging', 'RCV-01', 'RM-Q', 'RM-D', 'normal', null, 'fixed', 1],
+  ['2', 'UID Tagging', 'TAG-01', 'RM-Q', 'RM-D', 'normal', null, 'fixed', 1],
   ['3', 'Straightening', 'STR-MAN', 'RM-D', 'MC-Q', 'normal', null, 'fixed', 1],
   ['4', 'Bunch Grinding', 'SG-DLT', 'MC-Q', 'MC-Q', 'normal', null, 'length_based', 1],
   ['5', 'OP10 Rough Mill', 'MM22', 'MC-Q', 'MC-D', 'normal', null, 'fixed', 1],
