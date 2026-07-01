@@ -8,8 +8,10 @@ export const NAV = [
   ['OVERVIEW', [
     ['dashboard', 'Dashboard', 'grid', 'dashboardAlerts'],
     ['shopfloor', 'Shopfloor Display', 'monitor', null],
-    // Production Floor, My Workstation and Batch Management are shared across both
-    // factories — the topbar factory toggle selects which factory's data is shown.
+    // Receiving / Intake, Production Floor, My Workstation and Batch Management are
+    // shared across both factories — the topbar factory toggle selects which
+    // factory's data (and page) is shown.
+    ['receiving', 'Receiving / Intake', 'inbox', 'expectedArrivals'],
     ['floor', 'Production Floor', 'factory', 'onHoldUids'],
     ['jobexec', 'My Workstation', 'timer', null],
     ['shift', 'Shift Management', 'calendar', null],
@@ -17,7 +19,9 @@ export const NAV = [
     ['batch', 'Batch Management', 'stack', 'activeBatches'],
   ]],
   ['FARIDABAD', [
-    ['intake', 'Raw Material Intake', 'inbox', null],
+    // Raw Material Intake is now the Faridabad variant of the shared
+    // "Receiving / Intake" entry above (selected by the factory toggle). Its
+    // /intake route stays registered for old links.
     ['joining', 'Joining Operation', 'link', null],
     // Faridabad Batch Management is now the Faridabad variant of the shared
     // "Batch Management" entry above (selected by the factory toggle). The
@@ -26,7 +30,6 @@ export const NAV = [
     // Batch Management. The /dispatch route stays registered for old links.
   ]],
   ['DHARMAPURI', [
-    ['receiving', 'Receiving', 'download', 'expectedArrivals'],
     ['uid', 'UID Creation', 'tag', null],
     ['qc', 'QC', 'check', 'pendingQc'],
   ]],
