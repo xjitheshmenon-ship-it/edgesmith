@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { calculateMsBalance } = require('../utils/msBalance');
+const { alloyCutBatch, DEFAULT_SIZES } = require('../utils/alloyCut');
 
 const router = express.Router();
 router.use(authenticate, auditContext);
@@ -33,13 +34,47 @@ router.get('/intakes', async (req, res) => {
 /**
  * POST /api/v1/faridabad/intakes
  * For alloy_steel: grade determines cycle_type_id via alloy_grade_cycle_map (auto-derived, read-only on frontend).
- * body: { materialType, supplierId, heatNumber, grade?, weightKg, barCount, dimensionsMm, dateReceived, poReference?, notes? }
+ * Accepts both the structured ids and the friendlier names the intake form sends:
+ *   supplierId | supplier (name, resolved/created) · grade | steelGrade
+ *   lengthMm + widthMm (MS stock geometry) · dimensionsMm | dimensions (legacy free text)
+ * body: { materialType, supplier|supplierId, heatNumber, grade|steelGrade?, weightKg, barCount,
+ *         lengthMm?, widthMm?, dimensionsMm|dimensions?, dateReceived, poReference?, notes? }
  */
-router.post('/intakes', requireRole(['admin', 'manager']), async (req, res) => {
-  const { materialType, supplierId, heatNumber, grade, weightKg, barCount, dimensionsMm, dateReceived, poReference, notes } = req.body;
+router.post('/intakes', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const b = req.body || {};
+  const materialType = b.materialType;
+  const heatNumber = b.heatNumber;
+  const grade = b.grade ?? b.steelGrade ?? null;
+  const weightKg = b.weightKg;
+  const barCount = b.barCount;
+  const lengthMm = b.lengthMm != null && b.lengthMm !== '' ? Number(b.lengthMm) : null;
+  const widthMm = b.widthMm != null && b.widthMm !== '' ? Number(b.widthMm) : null;
+  const dimensionsMm = b.dimensionsMm ?? b.dimensions ?? null;
+  const dateReceived = b.dateReceived;
+  const poReference = b.poReference ?? null;
+  const notes = b.notes ?? null;
 
-  if (!materialType || !supplierId || !heatNumber || !weightKg || !barCount || !dateReceived) {
-    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'materialType, supplierId, heatNumber, weightKg, barCount, dateReceived are required.' } });
+  if (!materialType || !heatNumber || !weightKg || !barCount || !dateReceived) {
+    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'materialType, supplier, heatNumber, weightKg, barCount, dateReceived are required.' } });
+  }
+
+  // Resolve the supplier: an explicit id, or a name (created if it doesn't exist yet).
+  let supplierId = b.supplierId ? Number(b.supplierId) : null;
+  const supplierName = (b.newSupplier || (typeof b.supplier === 'string' ? b.supplier : '') || '').trim();
+  if (!supplierId && supplierName) {
+    const { rows: existing } = await query(`SELECT id FROM suppliers WHERE lower(name) = lower($1) LIMIT 1`, [supplierName]);
+    if (existing[0]) {
+      supplierId = existing[0].id;
+    } else {
+      const { rows: made } = await query(
+        `INSERT INTO suppliers (name, material_type, status) VALUES ($1,$2,'active') RETURNING id`,
+        [supplierName, materialType]
+      );
+      supplierId = made[0].id;
+    }
+  }
+  if (!supplierId) {
+    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'A supplier is required.' } });
   }
 
   let cycleTypeId = null;
@@ -54,9 +89,9 @@ router.post('/intakes', requireRole(['admin', 'manager']), async (req, res) => {
 
   const { rows } = await query(
     `INSERT INTO raw_material_intakes
-       (material_type, supplier_id, heat_number, grade, cycle_type_id, weight_kg, bar_count, dimensions_mm, date_received, po_reference, notes, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-    [materialType, supplierId, heatNumber, grade || null, cycleTypeId, weightKg, barCount, dimensionsMm || null, dateReceived, poReference || null, notes || null, req.user.sub]
+       (material_type, supplier_id, heat_number, grade, cycle_type_id, weight_kg, bar_count, length_mm, width_mm, dimensions_mm, date_received, po_reference, notes, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+    [materialType, supplierId, heatNumber, grade || null, cycleTypeId, weightKg, barCount, lengthMm, widthMm, dimensionsMm || null, dateReceived, poReference || null, notes || null, req.user.sub]
   );
 
   await req.audit({ tableName: 'raw_material_intakes', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
@@ -347,6 +382,27 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
     const idx = steps.findIndex((s) => s.step_number === item.current_step);
     const step = steps[idx];
     const isMsCutting = step && /MS Cutting/i.test(step.operation_name);
+    const isAlloyCutting = step && /alloy.*cut/i.test(step.operation_name || '');
+
+    // Alloy Steel Cutting: the operator enters each bar length; the system plans
+    // the minimum-wastage cut into standard 1250/850 pieces and records the run.
+    let alloyPlan = null;
+    if (isAlloyCutting) {
+      const { bars, sizes, kerf, alloyIntakeId } = req.body || {};
+      const lengths = (Array.isArray(bars) ? bars : []).filter((x) => Number(x) > 0);
+      if (lengths.length) {
+        const usedSizes = sizes && sizes.length ? sizes : DEFAULT_SIZES;
+        alloyPlan = alloyCutBatch(lengths, { sizes: usedSizes, kerf });
+        await client.query(
+          `INSERT INTO alloy_cutting_runs
+             (alloy_intake_id, faridabad_item_id, sizes, kerf_mm, bars, total_pieces, total_wastage_mm, totals, operator_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [alloyIntakeId || null, item.id, JSON.stringify(usedSizes), Math.max(0, Number(kerf) || 0),
+            JSON.stringify(alloyPlan.plans), alloyPlan.totals.totalPieces, alloyPlan.totals.totalWastageMm,
+            JSON.stringify(alloyPlan.totals), req.user.sub]
+        );
+      }
+    }
 
     let balance = null;
     let runId = null;
@@ -406,7 +462,7 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
       await client.query(`UPDATE faridabad_items SET status = 'done', started_at = NULL, updated_at = now() WHERE id = $1`, [item.id]);
     }
     await req.audit({ tableName: 'faridabad_items', recordId: item.id, action: 'UPDATE', after: { closedStep: item.current_step, advancedTo: next ? next.step_number : 'done', weldId } });
-    return { itemId: item.id, advancedTo: next ? next.step_number : 'done', balance, weldId };
+    return { itemId: item.id, advancedTo: next ? next.step_number : 'done', balance, weldId, alloyPlan };
   });
   return res.json({ success: true, data: result });
 });
@@ -523,6 +579,59 @@ router.post('/ms-cutting/runs', requireRole(['admin', 'manager', 'supervisor', '
 router.get('/ms-cutting/runs', async (req, res) => {
   const { rows } = await query(
     `SELECT r.*, e.full_name AS operator_name FROM ms_sheet_cutting_runs r
+     LEFT JOIN employees e ON e.id = r.operator_id ORDER BY r.id DESC LIMIT 200`
+  );
+  return res.json({ success: true, data: rows });
+});
+
+// ── Alloy-steel bar cutting (minimum-wastage plan into 1250/850 pieces) ───────
+
+/** POST /faridabad/alloy-cutting/calculate — preview the optimal cut for bars.
+ *  body: { bars: [lengthMm,...], sizes?: [1250,850], kerf?: 0 } */
+router.post('/alloy-cutting/calculate', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { bars, sizes, kerf } = req.body || {};
+  const lengths = (Array.isArray(bars) ? bars : []).filter((b) => Number(b) > 0);
+  if (!lengths.length) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'At least one positive bar length is required.' } });
+  }
+  try {
+    const result = alloyCutBatch(lengths, { sizes: sizes && sizes.length ? sizes : DEFAULT_SIZES, kerf });
+    return res.json({ success: true, data: result });
+  } catch (e) {
+    return res.status(400).json({ success: false, error: { code: 'CALC_ERROR', message: e.message } });
+  }
+});
+
+/** POST /faridabad/alloy-cutting/runs — record a cut run with its computed plan.
+ *  body: { bars: [lengthMm,...], sizes?, kerf?, alloyIntakeId?, faridabadItemId? } */
+router.post('/alloy-cutting/runs', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { bars, sizes, kerf, alloyIntakeId, faridabadItemId } = req.body || {};
+  const lengths = (Array.isArray(bars) ? bars : []).filter((b) => Number(b) > 0);
+  if (!lengths.length) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'At least one positive bar length is required.' } });
+  }
+  const usedSizes = sizes && sizes.length ? sizes : DEFAULT_SIZES;
+  let plan;
+  try {
+    plan = alloyCutBatch(lengths, { sizes: usedSizes, kerf });
+  } catch (e) {
+    return res.status(400).json({ success: false, error: { code: 'CALC_ERROR', message: e.message } });
+  }
+  const { rows } = await query(
+    `INSERT INTO alloy_cutting_runs
+       (alloy_intake_id, faridabad_item_id, sizes, kerf_mm, bars, total_pieces, total_wastage_mm, totals, operator_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [alloyIntakeId || null, faridabadItemId || null, JSON.stringify(usedSizes), Math.max(0, Number(kerf) || 0),
+      JSON.stringify(plan.plans), plan.totals.totalPieces, plan.totals.totalWastageMm, JSON.stringify(plan.totals), req.user.sub]
+  );
+  await req.audit({ tableName: 'alloy_cutting_runs', recordId: rows[0].id, action: 'INSERT', after: { totals: plan.totals } });
+  return res.status(201).json({ success: true, data: { ...rows[0], plan } });
+});
+
+/** GET /faridabad/alloy-cutting/runs — recent alloy cut runs. */
+router.get('/alloy-cutting/runs', async (req, res) => {
+  const { rows } = await query(
+    `SELECT r.*, e.full_name AS operator_name FROM alloy_cutting_runs r
      LEFT JOIN employees e ON e.id = r.operator_id ORDER BY r.id DESC LIMIT 200`
   );
   return res.json({ success: true, data: rows });

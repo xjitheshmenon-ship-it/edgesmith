@@ -33,6 +33,16 @@ function materialLabel(v) {
   return v || '—';
 }
 
+/* Length × width label, falling back to the legacy free-text dimensions field. */
+function geomLabel(row) {
+  const l = row.lengthMm ?? row.length_mm;
+  const w = row.widthMm ?? row.width_mm;
+  if (l != null && w != null) return `${l} × ${w}`;
+  if (l != null) return `${l} × —`;
+  if (w != null) return `— × ${w}`;
+  return row.dimensions || row.dimension || row.dimensions_mm || '—';
+}
+
 function fmtDate(v) {
   if (!v) return '—';
   const d = new Date(v);
@@ -87,7 +97,8 @@ const emptyForm = () => ({
   steelGrade: '',
   weightKg: '',
   barCount: '',
-  dimensions: '',
+  lengthMm: '',
+  widthMm: '',
   dateReceived: todayISO(),
   poReference: '',
   notes: '',
@@ -121,8 +132,12 @@ function IntakeForm({ suppliers, suppliersError, canCreate, onCreated }) {
     if (!form.heatNumber.trim()) return setError('Heat number is required (from the material test certificate).');
     if (!form.steelGrade.trim()) return setError('Steel grade is required.');
     if (form.weightKg === '' || Number(form.weightKg) <= 0) return setError('Weight received (kg) is required and must be greater than 0.');
-    if (form.barCount === '' || Number(form.barCount) <= 0) return setError('Number of bars received is required.');
-    if (!form.dimensions.trim()) return setError('Bar dimensions (diameter or cross-section) are required.');
+    if (form.barCount === '' || Number(form.barCount) <= 0) return setError(`Number of ${form.materialType === 'ms' ? 'sheets/plates' : 'bars'} received is required.`);
+    // MS arrives as plates — length + width are needed to estimate block yield later.
+    if (form.materialType === 'ms') {
+      if (form.lengthMm === '' || Number(form.lengthMm) <= 0) return setError('Sheet length (mm) is required for MS so block yield can be estimated.');
+      if (form.widthMm === '' || Number(form.widthMm) <= 0) return setError('Sheet width (mm) is required for MS so block yield can be estimated.');
+    }
     if (!form.dateReceived) return setError('Date received is required.');
 
     setBusy(true);
@@ -135,7 +150,8 @@ function IntakeForm({ suppliers, suppliersError, canCreate, onCreated }) {
         steelGrade: form.steelGrade.trim(),
         weightKg: Number(form.weightKg),
         barCount: Number(form.barCount),
-        dimensions: form.dimensions.trim(),
+        lengthMm: form.lengthMm !== '' ? Number(form.lengthMm) : undefined,
+        widthMm: form.widthMm !== '' ? Number(form.widthMm) : undefined,
         dateReceived: form.dateReceived,
         poReference: form.poReference.trim() || undefined,
         notes: form.notes.trim() || undefined,
@@ -206,20 +222,29 @@ function IntakeForm({ suppliers, suppliersError, canCreate, onCreated }) {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 11 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 11 }}>
         <div>
           <label className="form-label">Weight received (kg) *</label>
           <input className="form-input" type="number" step="any" min="0" placeholder="kg" value={form.weightKg} onChange={set('weightKg')} />
         </div>
         <div>
-          <label className="form-label">No. of bars *</label>
+          <label className="form-label">{form.materialType === 'ms' ? 'No. of sheets *' : 'No. of bars *'}</label>
           <input className="form-input" type="number" step="1" min="0" placeholder="count" value={form.barCount} onChange={set('barCount')} />
         </div>
         <div>
-          <label className="form-label">Dimensions (mm) *</label>
-          <input className="form-input" placeholder="dia / cross-section" value={form.dimensions} onChange={set('dimensions')} autoComplete="off" />
+          <label className="form-label">Length (mm){form.materialType === 'ms' ? ' *' : ''}</label>
+          <input className="form-input" type="number" step="any" min="0" placeholder="length" value={form.lengthMm} onChange={set('lengthMm')} />
+        </div>
+        <div>
+          <label className="form-label">Width (mm){form.materialType === 'ms' ? ' *' : ''}</label>
+          <input className="form-input" type="number" step="any" min="0" placeholder="width" value={form.widthMm} onChange={set('widthMm')} />
         </div>
       </div>
+      {form.materialType === 'ms' && (
+        <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-secondary, #5d7188)', marginTop: -4 }}>
+          MS plates: record length × width so the floor can estimate block yield. The block length itself is chosen when MS Cutting starts.
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
         <div>
@@ -293,8 +318,8 @@ function IntakeDetail({ row, onClose }) {
       <DetailRow label="Heat number" value={row.heatNumber || row.heat_number} mono />
       <DetailRow label="Steel grade" value={row.steelGrade || row.steel_grade} mono />
       <DetailRow label="Weight (kg)" value={row.weightKg ?? row.weight_kg ?? row.weight} mono />
-      <DetailRow label="Bar count" value={row.barCount ?? row.bar_count ?? row.bars} mono />
-      <DetailRow label="Dimensions (mm)" value={row.dimensions || row.dimension} mono />
+      <DetailRow label="Count" value={row.barCount ?? row.bar_count ?? row.bars} mono />
+      <DetailRow label="Size L × W (mm)" value={geomLabel(row)} mono />
       <DetailRow label="Date received" value={fmtDate(row.dateReceived || row.date_received || row.date)} mono />
       <DetailRow label="PO reference" value={row.poReference || row.po_reference} mono />
       <DetailRow label="Recorded by" value={row.recordedBy || row.recorded_by} />
@@ -467,8 +492,8 @@ export default function RawMaterialIntake() {
                   <th style={TH}>Heat no.</th>
                   <th style={TH}>Grade</th>
                   <th style={{ ...TH, textAlign: 'right' }}>Weight (kg)</th>
-                  <th style={{ ...TH, textAlign: 'right' }}>Bars</th>
-                  <th style={TH}>Dims (mm)</th>
+                  <th style={{ ...TH, textAlign: 'right' }}>Count</th>
+                  <th style={TH}>L × W (mm)</th>
                   <th style={TH}>Status</th>
                 </tr>
               </thead>
@@ -490,7 +515,7 @@ export default function RawMaterialIntake() {
                       <td style={{ ...TD, fontFamily: MONO }}>{r.steelGrade || r.steel_grade || '—'}</td>
                       <td style={{ ...TD, fontFamily: MONO, textAlign: 'right' }}>{r.weightKg ?? r.weight_kg ?? r.weight ?? '—'}</td>
                       <td style={{ ...TD, fontFamily: MONO, textAlign: 'right' }}>{r.barCount ?? r.bar_count ?? r.bars ?? '—'}</td>
-                      <td style={{ ...TD, fontFamily: MONO }}>{r.dimensions || r.dimension || '—'}</td>
+                      <td style={{ ...TD, fontFamily: MONO }}>{geomLabel(r)}</td>
                       <td style={TD}><StatusPill status={status} label={String(status).replace(/_/g, ' ')} /></td>
                     </tr>
                   );

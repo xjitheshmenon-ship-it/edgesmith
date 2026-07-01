@@ -30,6 +30,9 @@ export const faridabadApi = {
   msCuttingCalculate: (sheet, pieces) => api.post('/faridabad/ms-cutting/calculate', { sheet, pieces }),
   msCuttingRun: (sheet, pieces, msIntakeId) => api.post('/faridabad/ms-cutting/runs', { sheet, pieces, msIntakeId }),
   msCuttingRuns: () => api.get('/faridabad/ms-cutting/runs'),
+  // Alloy-steel bar cutting — minimum-wastage plan into standard 1250/850 pieces
+  alloyCuttingCalculate: (bars, sizes, kerf) => api.post('/faridabad/alloy-cutting/calculate', { bars, sizes, kerf }),
+  alloyCuttingRuns: () => api.get('/faridabad/alloy-cutting/runs'),
 };
 
 export const receivingApi = {

@@ -8,7 +8,7 @@ const router = express.Router();
 router.use(authenticate, auditContext);
 
 router.get('/', listAsync(ctrl.listUids));
-router.post('/', requireRole(['admin', 'manager', 'supervisor']), listAsync(ctrl.bulkCreateUids));
+router.post('/', requireRole(['admin', 'manager', 'supervisor', 'operator']), listAsync(ctrl.bulkCreateUids));
 router.get('/preview', listAsync(ctrl.previewGeneration));
 router.get('/summary/wip', listAsync(ctrl.wipSummary));
 router.get('/summary/stations', listAsync(ctrl.stationSummary));

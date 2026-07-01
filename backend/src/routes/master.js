@@ -198,31 +198,31 @@ router.patch('/grinding-rules/:id', requireRole(['admin']), async (req, res) => 
 // add certifications for any workstation and edit them.
 router.get('/badge-types', async (req, res) => {
   const { rows } = await query(
-    `SELECT bt.id, bt.name, bt.workstation_type_id, bt.validity_months, bt.expires, bt.description, bt.status,
+    `SELECT bt.id, bt.code, bt.name, bt.workstation_type_id, bt.validity_months, bt.expires, bt.description, bt.status,
             wt.code AS workstation_code, wt.name AS workstation_name
      FROM badge_types bt
      LEFT JOIN workstation_types wt ON wt.id = bt.workstation_type_id
      WHERE bt.status <> 'archived'
-     ORDER BY wt.code NULLS LAST, bt.name`
+     ORDER BY bt.name`
   );
   return res.json({ success: true, data: rows });
 });
 
 router.post('/badge-types', requireRole(['admin']), async (req, res) => {
-  const { name, workstationTypeId, validityMonths, description } = req.body;
+  const { code, name, workstationTypeId, validityMonths, description } = req.body;
   if (!name) return res.status(400).json({ success: false, error: { code: 'NO_NAME', message: 'Certification name is required.' } });
   const months = validityMonths != null && validityMonths !== '' ? Number(validityMonths) : null;
   const { rows } = await query(
-    `INSERT INTO badge_types (name, workstation_type_id, validity_months, expires, description)
-     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-    [name, workstationTypeId || null, months, months > 0, description || null]
+    `INSERT INTO badge_types (name, code, workstation_type_id, validity_months, expires, description)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [name, code || null, workstationTypeId || null, months, months > 0, description || null]
   );
   await req.audit({ tableName: 'badge_types', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
   return res.status(201).json({ success: true, data: rows[0] });
 });
 
 router.patch('/badge-types/:id', requireRole(['admin']), async (req, res) => {
-  const map = { name: 'name', workstationTypeId: 'workstation_type_id', validityMonths: 'validity_months', description: 'description', status: 'status' };
+  const map = { code: 'code', name: 'name', workstationTypeId: 'workstation_type_id', validityMonths: 'validity_months', description: 'description', status: 'status' };
   const sets = []; const params = []; let p = 1;
   for (const [key, col] of Object.entries(map)) {
     if (req.body[key] !== undefined) { sets.push(`${col} = $${p++}`); params.push(req.body[key] === '' ? null : req.body[key]); }

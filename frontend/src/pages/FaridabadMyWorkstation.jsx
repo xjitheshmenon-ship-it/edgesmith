@@ -69,6 +69,12 @@ function isMsCutting(item) {
   return /ms\s*cutting/i.test(String(pick(item, 'operation_name') || ''));
 }
 
+function isAlloyCutting(item) {
+  return /alloy.*cut/i.test(String(pick(item, 'operation_name') || ''));
+}
+
+const ALLOY_SIZES = [1250, 850];
+
 function isWelding(item) {
   return /weld|join/i.test(String(pick(item, 'operation_name') || ''));
 }
@@ -320,6 +326,134 @@ function MsCuttingModal({ item, onCancel, onConfirm, busy, balance }) {
   );
 }
 
+/* ── Alloy Steel Cutting close modal ─────────────────────────────────────────
+   Alloy bars arrive in assorted lengths. The operator enters each bar length
+   one by one; the system plans the minimum-wastage cut into standard 1250/850
+   pieces and shows the per-bar plan + rolled-up yield before the operation is
+   closed. The block length itself is fixed to these standards. */
+function AlloyCuttingModal({ item, onCancel, onConfirm, busy }) {
+  const [bars, setBars] = useState(['']);
+  const [plan, setPlan] = useState(null);      // { plans, totals } from calculate
+  const [calcBusy, setCalcBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const validLengths = bars.map((b) => Number(b)).filter((n) => n > 0);
+  const canCalc = validLengths.length > 0;
+
+  function setBar(idx, value) {
+    setBars((prev) => prev.map((b, i) => (i === idx ? value.replace(/[^0-9.]/g, '') : b)));
+    setPlan(null);
+  }
+  function addBar() { setBars((prev) => [...prev, '']); setPlan(null); }
+  function removeBar(idx) { setBars((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev)); setPlan(null); }
+
+  async function calculate() {
+    if (!canCalc) return;
+    setCalcBusy(true);
+    setError(null);
+    try {
+      const res = await faridabadApi.alloyCuttingCalculate(validLengths, ALLOY_SIZES);
+      setPlan(res?.data || null);
+    } catch (err) {
+      setError(err?.message || 'Could not calculate the cut plan.');
+    } finally {
+      setCalcBusy(false);
+    }
+  }
+
+  function submit() {
+    onConfirm({ bars: validLengths, sizes: ALLOY_SIZES });
+  }
+
+  const totals = plan?.totals;
+
+  return (
+    <Modal title={`Close — Alloy Steel Cutting · ${sizeLabel(item)}`} onClose={busy ? () => {} : onCancel} width={620}>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY, marginBottom: 16 }}>
+        Enter each raw bar length (mm), one by one. The system cuts every bar into standard{' '}
+        <strong>1250</strong> and <strong>850&nbsp;mm</strong> pieces with the least possible wastage.
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+        <span style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY }}>Bar lengths (mm)</span>
+        <Mono style={{ fontSize: 10.5, color: T_MUTED }}>({validLengths.length})</Mono>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
+        {bars.map((b, i) => {
+          const p = plan?.plans?.[i];
+          return (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '150px 1fr auto', gap: 10, alignItems: 'center' }}>
+              <input
+                className="form-input"
+                value={b}
+                onChange={(e) => setBar(i, e.target.value)}
+                inputMode="decimal"
+                placeholder={`bar ${i + 1} length`}
+                disabled={busy}
+              />
+              <div style={{ fontFamily: MONO, fontSize: 12, color: p ? T_PRIMARY : T_MUTED }}>
+                {p
+                  ? `${p.cuts.map((c) => `${c.qty}×${c.size}`).join(' + ') || 'no full piece'} · waste ${p.wastageMm}mm (${p.wastagePct}%)`
+                  : '— press Calculate to plan —'}
+              </div>
+              <button
+                className="btn btn-sm"
+                style={{ width: 40, height: 44, padding: 0, justifyContent: 'center' }}
+                onClick={() => removeBar(i)}
+                disabled={busy || bars.length === 1}
+                aria-label="Remove bar"
+                title="Remove bar"
+              >
+                <Icon name="close" size={15} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 18 }}>
+        <button className="btn btn-sm" onClick={addBar} disabled={busy}>
+          <Icon name="plus" size={15} />Add bar
+        </button>
+        <button className="btn btn-sm" onClick={calculate} disabled={!canCalc || calcBusy || busy}>
+          <Icon name="refresh" size={15} />{calcBusy ? 'Calculating…' : 'Calculate plan'}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ marginBottom: 14, padding: '10px 13px', borderRadius: 9, background: 'var(--bg-soft-amber, #fdf6ef)', color: 'var(--status-danger-dark, #c0392b)', fontFamily: SANS, fontSize: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {totals && (
+        <div className="card" style={{ background: 'var(--bg-muted, #f4f7f2)', boxShadow: 'none', padding: '14px 16px', marginBottom: 18 }}>
+          <Label style={{ marginBottom: 10 }}>Planned yield — {totals.bars} bar{totals.bars === 1 ? '' : 's'}</Label>
+          {totals.bySize.map((s) => (
+            <div key={s.size} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Mono style={{ fontSize: 12, color: T_SECONDARY }}>{s.size}mm pieces</Mono>
+              <Mono style={{ fontSize: 12, fontWeight: 700, color: T_PRIMARY }}>{s.qty}</Mono>
+            </div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-card, #e3ebde)' }}>
+            <Label>Total wastage</Label>
+            <Mono style={{ fontSize: 14, fontWeight: 700, color: totals.totalWastageMm > 0 ? 'var(--status-warning, #d97a2b)' : 'var(--status-success, #22a06b)' }}>
+              {totals.totalWastageMm}mm ({totals.wastagePct}%)
+            </Mono>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
+        <button className="btn" style={{ height: 48, padding: '0 22px' }} onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="btn btn-primary" style={{ height: 48, padding: '0 22px' }} disabled={!canCalc || busy} onClick={submit}>
+          <Icon name="check" size={16} />
+          {busy ? 'Closing…' : 'Confirm cut & close'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 /* ── Active item card ────────────────────────────────────────────────────── */
 
 /* ── Welding (Joining) close modal ───────────────────────────────────────────
@@ -344,33 +478,38 @@ function WeldingModal({ item, onCancel, onConfirm, busy }) {
     const supplier = pick(i, 'supplier_name', 'supplier', 'supplier_id');
     return [heat, grade, supplier ? `· ${supplier}` : ''].filter(Boolean).join(' ');
   };
-  const canConfirm = alloyId && msId && !busy;
+  const noHeats = alloy.length === 0 && ms.length === 0;
 
   return (
-    <Modal title="Welding (Joining) — record BOM" onClose={busy ? () => {} : onCancel} width={520}>
+    <Modal title="Welding (Joining) — note MS + alloy" onClose={busy ? () => {} : onCancel} width={520}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY }}>
-          Select the alloy steel + MS heats welded into this block. Recorded as the block’s bill of materials as you close the operation.
+          Note the alloy steel + MS heats welded into this block. Both are optional — you can close the operation without them.
         </div>
         <div>
           <Label>Alloy steel heat</Label>
           <select className="form-select" value={alloyId} onChange={(e) => setAlloyId(e.target.value)}>
-            <option value="">Select alloy heat…</option>
+            <option value="">{alloy.length ? 'Select alloy heat…' : 'No alloy heats recorded'}</option>
             {alloy.map((i) => <option key={pick(i, 'id')} value={pick(i, 'id')}>{heatLabel(i)}</option>)}
           </select>
         </div>
         <div>
           <Label>MS heat</Label>
           <select className="form-select" value={msId} onChange={(e) => setMsId(e.target.value)}>
-            <option value="">Select MS heat…</option>
+            <option value="">{ms.length ? 'Select MS heat…' : 'No MS heats recorded'}</option>
             {ms.map((i) => <option key={pick(i, 'id')} value={pick(i, 'id')}>{heatLabel(i)}</option>)}
           </select>
         </div>
+        {noHeats && (
+          <div style={{ fontFamily: SANS, fontSize: 12, color: T_MUTED }}>
+            No material heats are on record yet (add them under Raw Material Intake). You can still close this operation.
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
           <button className="btn btn-sm" onClick={onCancel} disabled={busy} type="button">Cancel</button>
-          <button className="btn btn-primary" disabled={!canConfirm} type="button"
-            onClick={() => onConfirm({ alloyIntakeId: Number(alloyId), msIntakeId: Number(msId) })}>
-            {busy ? 'Recording…' : 'Record weld & advance'}
+          <button className="btn btn-primary" disabled={busy} type="button"
+            onClick={() => onConfirm({ alloyIntakeId: alloyId ? Number(alloyId) : null, msIntakeId: msId ? Number(msId) : null })}>
+            {busy ? 'Recording…' : 'Close — log operation'}
           </button>
         </div>
       </div>
@@ -503,6 +642,7 @@ export default function FaridabadMyWorkstation() {
 
   const [pending, setPending] = useState(null); // item id currently acting on
   const [closeFor, setCloseFor] = useState(null); // item (MS Cutting modal)
+  const [alloyFor, setAlloyFor] = useState(null); // item (Alloy Cutting modal)
   const [weldFor, setWeldFor] = useState(null);   // item (Welding/Joining modal)
   const [balance, setBalance] = useState(null); // returned MS Cutting balance
   const [actionError, setActionError] = useState(null);
@@ -562,6 +702,26 @@ export default function FaridabadMyWorkstation() {
     [closeFor, refetch]
   );
 
+  // Alloy Steel Cutting close: operator enters bar lengths; server records the
+  // minimum-wastage cut plan and advances the item.
+  const handleAlloyClose = useCallback(
+    async (payload) => {
+      if (!alloyFor) return;
+      setActionError(null);
+      setPending(itemId(alloyFor));
+      try {
+        await faridabadApi.closeItem(itemId(alloyFor), payload);
+        await refetch();
+        setAlloyFor(null);
+      } catch (err) {
+        setActionError(err?.message || 'Could not record the alloy cut — please try again.');
+      } finally {
+        setPending(null);
+      }
+    },
+    [alloyFor, refetch]
+  );
+
   // Welding (Joining) close: operator records the alloy + MS BOM, then advance.
   const handleWeldClose = useCallback(
     async (payload) => {
@@ -584,6 +744,8 @@ export default function FaridabadMyWorkstation() {
   function onCloseActive(item) {
     if (isWelding(item)) {
       setWeldFor(item);
+    } else if (isAlloyCutting(item)) {
+      setAlloyFor(item);
     } else if (isMsCutting(item)) {
       setBalance(null);
       setCloseFor(item);
@@ -760,6 +922,15 @@ export default function FaridabadMyWorkstation() {
           balance={balance}
           onCancel={dismissMsModal}
           onConfirm={handleMsClose}
+        />
+      )}
+
+      {alloyFor && (
+        <AlloyCuttingModal
+          item={alloyFor}
+          busy={pendingFor(alloyFor) === true}
+          onCancel={() => setAlloyFor(null)}
+          onConfirm={handleAlloyClose}
         />
       )}
 

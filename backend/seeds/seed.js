@@ -40,7 +40,8 @@ async function main() {
   await seedColorCodes();
   await seedTruckCapacityDefault();
   await seedSampleSuppliersAndContractors();
-  await seedWorkstationCertifications();
+  await seedRawMaterialIntakes();
+  await seedSkillCertifications();
 
   console.log('\nSeed complete.');
   console.log('Admin login: username "admin", password "ChangeMe123!" — CHANGE THIS IMMEDIATELY.');
@@ -420,18 +421,65 @@ async function seedSampleSuppliersAndContractors() {
   }
 }
 
-// One "<Workstation> Certified" badge type per workstation type that lacks one,
-// so every workstation has a certification available. Idempotent.
-async function seedWorkstationCertifications() {
-  const { rowCount } = await query(
-    `INSERT INTO badge_types (name, workstation_type_id, expires, validity_months)
-     SELECT wt.name || ' Certified', wt.id, true, 12
-     FROM workstation_types wt
-     WHERE NOT EXISTS (
-       SELECT 1 FROM badge_types bt WHERE bt.workstation_type_id = wt.id AND bt.status <> 'archived'
-     )`
+// A few alloy + MS heats so the Joining/Welding step can note real material.
+// Idempotent — skips if any intake already exists (e.g. from the demo seed).
+async function seedRawMaterialIntakes() {
+  const { rows } = await query(`SELECT COUNT(*)::int AS c FROM raw_material_intakes`);
+  if (rows[0].c > 0) return;
+  const alloySup = (await query(`SELECT id FROM suppliers WHERE material_type IN ('alloy_steel','both') ORDER BY id LIMIT 1`)).rows[0];
+  const msSup = (await query(`SELECT id FROM suppliers WHERE material_type IN ('ms','both') ORDER BY id LIMIT 1`)).rows[0];
+  if (!alloySup || !msSup) return;
+  const heats = [
+    ['alloy_steel', alloySup.id, 'AL-2401', 'EN19', 1200, 12],
+    ['alloy_steel', alloySup.id, 'AL-2402', 'EN24', 1500, 15],
+    ['ms', msSup.id, 'MS-2401', null, 900, 9],
+    ['ms', msSup.id, 'MS-2402', null, 1100, 11],
+  ];
+  for (const [mt, sup, heat, grade, wt, bars] of heats) {
+    await query(
+      `INSERT INTO raw_material_intakes (material_type, supplier_id, heat_number, grade, weight_kg, bar_count, date_received)
+       VALUES ($1,$2,$3,$4,$5,$6, now())`,
+      [mt, sup, heat, grade, wt, bars]
+    );
+  }
+  console.log('✓ Seeded 4 raw material intakes (alloy + MS heats)');
+}
+
+// Skill-based certifications (code + name). One per skill, not per workstation.
+const SKILL_CERTS = [
+  ['GRIND', 'Grinding'],
+  ['HT', 'Heat Treatment'],
+  ['MILL', 'Milling'],
+  ['CUT', 'Cutting'],
+  ['TAG', 'Tagging'],
+  ['COAT', 'Coating'],
+  ['INSP', 'Inspection'],
+  ['STR', 'Straightening'],
+];
+
+async function seedSkillCertifications() {
+  const codes = SKILL_CERTS.map((c) => c[0]);
+  const { rows: existing } = await query(`SELECT COUNT(*)::int AS c FROM badge_types WHERE code = ANY($1)`, [codes]);
+  if (existing[0].c >= SKILL_CERTS.length) return; // already migrated
+
+  // Retire the earlier per-workstation auto/demo certifications so the list is
+  // the clean skill set. One-time — guarded by the check above.
+  await query(
+    `UPDATE badge_types SET status = 'archived'
+     WHERE status <> 'archived' AND workstation_type_id IS NOT NULL AND name LIKE '% Certified'`
   );
-  if (rowCount) console.log(`✓ Seeded ${rowCount} workstation certification badge types`);
+
+  let added = 0;
+  for (const [code, name] of SKILL_CERTS) {
+    const { rowCount } = await query(
+      `INSERT INTO badge_types (name, code, workstation_type_id, expires, validity_months)
+       SELECT $1::text, $2::text, NULL, true, 12
+       WHERE NOT EXISTS (SELECT 1 FROM badge_types WHERE code = $2::text)`,
+      [name, code]
+    );
+    added += rowCount;
+  }
+  if (added) console.log(`✓ Seeded ${added} skill certifications`);
 }
 
 main().catch((err) => {
