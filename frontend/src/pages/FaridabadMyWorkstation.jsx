@@ -603,6 +603,95 @@ function ActiveItemCard({ item, nowMs, canAct, onClose, pending }) {
 
 /* ── Queue ───────────────────────────────────────────────────────────────── */
 
+/* ── Welding open — pick 1 alloy + 1 MS piece from FAR-MC (§6, 2 RM → 1 FG) ── */
+function WeldStartModal({ item, busy, onCancel, onConfirm }) {
+  const [inv, setInv] = useState(null);
+  const [alloySize, setAlloySize] = useState('');
+  const [msSize, setMsSize] = useState('');
+  useEffect(() => {
+    let alive = true;
+    faridabadApi.farMcInventory().then((r) => { if (alive) setInv(r.data || []); }).catch(() => { if (alive) setInv([]); });
+    return () => { alive = false; };
+  }, []);
+  const cycle = pick(item, 'cycle_code', 'cycle');
+  const pools = (inv || []).filter((r) => !cycle || r.cycle_code === cycle);
+  const alloyOpts = pools.filter((r) => r.material_type === 'alloy' && r.quantity > 0);
+  const msOpts = pools.filter((r) => r.material_type === 'ms' && r.quantity > 0);
+  const tracked = alloyOpts.length > 0 || msOpts.length > 0;
+  const canStart = !tracked || (alloySize && msSize);
+  return (
+    <Modal title={`Start Welding · ${sizeLabel(item)}`} onClose={busy ? () => {} : onCancel} width={520}>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY, marginBottom: 16 }}>
+        Take one alloy piece and one MS piece from FAR-MC to weld — two raw materials become one block. Both are drawn from stock when you start.
+      </div>
+      {inv === null ? (
+        <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY }}>Loading FAR-MC stock…</div>
+      ) : !tracked ? (
+        <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_MUTED, marginBottom: 8 }}>No FAR-MC pool is tracked for this cycle — you can start welding directly.</div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label className="form-label">Alloy piece (mm)</label>
+            <select className="form-select" value={alloySize} onChange={(e) => setAlloySize(e.target.value)} disabled={busy}>
+              <option value="">— select alloy —</option>
+              {alloyOpts.map((r) => <option key={r.id} value={r.size_mm}>{r.size_mm}mm · {r.quantity} in stock</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="form-label">MS piece (mm)</label>
+            <select className="form-select" value={msSize} onChange={(e) => setMsSize(e.target.value)} disabled={busy}>
+              <option value="">— select MS —</option>
+              {msOpts.map((r) => <option key={r.id} value={r.size_mm}>{r.size_mm}mm · {r.quantity} in stock</option>)}
+            </select>
+          </div>
+        </div>
+      )}
+      <button className="btn btn-primary" style={{ width: '100%', marginTop: 18, justifyContent: 'center' }}
+        disabled={busy || !canStart}
+        onClick={() => onConfirm({ alloySizeMm: alloySize ? Number(alloySize) : undefined, msSizeMm: msSize ? Number(msSize) : undefined })}>
+        {busy ? 'Starting…' : 'Confirm materials & start'}
+      </button>
+    </Modal>
+  );
+}
+
+/* ── Piece-count confirmation on a normal-step close (§10A) ── */
+function PieceCountModal({ item, busy, onCancel, onConfirm }) {
+  const [expected, setExpected] = useState('');
+  const [actual, setActual] = useState('');
+  const [reason, setReason] = useState('');
+  const mismatch = expected !== '' && actual !== '' && Number(expected) !== Number(actual);
+  const canClose = !mismatch || reason.trim();
+  return (
+    <Modal title={`Close · ${sizeLabel(item)}`} onClose={busy ? () => {} : onCancel} width={480}>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY, marginBottom: 16 }}>
+        Confirm the piece count for this step before it advances. Leave blank to skip; a mismatch needs a reason.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label className="form-label">Expected</label>
+          <input className="form-input" type="number" inputMode="numeric" value={expected} onChange={(e) => setExpected(e.target.value)} disabled={busy} />
+        </div>
+        <div>
+          <label className="form-label">Actual</label>
+          <input className="form-input" type="number" inputMode="numeric" value={actual} onChange={(e) => setActual(e.target.value)} disabled={busy} />
+        </div>
+      </div>
+      {mismatch && (
+        <div style={{ marginTop: 12 }}>
+          <label className="form-label">Reason for discrepancy *</label>
+          <input className="form-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. 2 pieces scrapped" disabled={busy} />
+        </div>
+      )}
+      <button className="btn btn-primary" style={{ width: '100%', marginTop: 18, justifyContent: 'center' }}
+        disabled={busy || !canClose}
+        onClick={() => onConfirm((expected !== '' || actual !== '') ? { expected: Number(expected), actual: Number(actual), reason: reason.trim() } : null)}>
+        {busy ? 'Closing…' : 'Close — log operation'}
+      </button>
+    </Modal>
+  );
+}
+
 function QueueRow({ item, idx, canAct, onStart, pending }) {
   const cycle = pick(item, 'cycle_code');
   const step = pick(item, 'current_step');
@@ -835,7 +924,9 @@ export default function FaridabadMyWorkstation() {
   const [pending, setPending] = useState(null); // item id currently acting on
   const [closeFor, setCloseFor] = useState(null); // item (MS Cutting modal)
   const [alloyFor, setAlloyFor] = useState(null); // item (Alloy Cutting modal)
-  const [weldFor, setWeldFor] = useState(null);   // item (Welding/Joining modal)
+  const [weldFor, setWeldFor] = useState(null);   // item (Welding/Joining close modal)
+  const [weldStartFor, setWeldStartFor] = useState(null); // item (Welding open — pick alloy+MS)
+  const [pieceCountFor, setPieceCountFor] = useState(null); // item (piece-count on normal close)
   const [balance, setBalance] = useState(null); // returned MS Cutting balance
   const [actionError, setActionError] = useState(null);
 
@@ -843,6 +934,8 @@ export default function FaridabadMyWorkstation() {
 
   const handleStart = useCallback(
     async (item) => {
+      // §6 — Welding opens with a material pick (1 alloy + 1 MS from FAR-MC).
+      if (isWelding(item)) { setActionError(null); setWeldStartFor(item); return; }
       setActionError(null);
       setPending(itemId(item));
       try {
@@ -855,6 +948,25 @@ export default function FaridabadMyWorkstation() {
       }
     },
     [refetch]
+  );
+
+  // §6 — start a welding job with the operator's selected alloy + MS sizes.
+  const handleWeldStart = useCallback(
+    async ({ alloySizeMm, msSizeMm }) => {
+      if (!weldStartFor) return;
+      setActionError(null);
+      setPending(itemId(weldStartFor));
+      try {
+        await faridabadApi.startItem(itemId(weldStartFor), { alloySizeMm, msSizeMm });
+        setWeldStartFor(null);
+        await refetch();
+      } catch (err) {
+        setActionError(err?.message || 'Could not start welding — please try again.');
+      } finally {
+        setPending(null);
+      }
+    },
+    [weldStartFor, refetch]
   );
 
   // Normal-step close: no extra payload, just advance.
@@ -936,6 +1048,25 @@ export default function FaridabadMyWorkstation() {
     [weldFor, refetch]
   );
 
+  // §10A — normal-step close confirms the piece count before advancing.
+  const handlePieceCountClose = useCallback(
+    async (pieceCount) => {
+      if (!pieceCountFor) return;
+      setActionError(null);
+      setPending(itemId(pieceCountFor));
+      try {
+        await faridabadApi.closeItem(itemId(pieceCountFor), pieceCount ? { pieceCount } : {});
+        setPieceCountFor(null);
+        await refetch();
+      } catch (err) {
+        setActionError(err?.message || 'Could not close the item — please try again.');
+      } finally {
+        setPending(null);
+      }
+    },
+    [pieceCountFor, refetch]
+  );
+
   function onCloseActive(item) {
     if (isWelding(item)) {
       setWeldFor(item);
@@ -945,7 +1076,7 @@ export default function FaridabadMyWorkstation() {
       setBalance(null);
       setCloseFor(item);
     } else {
-      handleNormalClose(item);
+      setPieceCountFor(item);
     }
   }
 
@@ -1181,6 +1312,24 @@ export default function FaridabadMyWorkstation() {
           busy={pendingFor(weldFor) === true}
           onCancel={() => setWeldFor(null)}
           onConfirm={handleWeldClose}
+        />
+      )}
+
+      {weldStartFor && (
+        <WeldStartModal
+          item={weldStartFor}
+          busy={pendingFor(weldStartFor) === true}
+          onCancel={() => setWeldStartFor(null)}
+          onConfirm={handleWeldStart}
+        />
+      )}
+
+      {pieceCountFor && (
+        <PieceCountModal
+          item={pieceCountFor}
+          busy={pendingFor(pieceCountFor) === true}
+          onCancel={() => setPieceCountFor(null)}
+          onConfirm={handlePieceCountClose}
         />
       )}
     </div>

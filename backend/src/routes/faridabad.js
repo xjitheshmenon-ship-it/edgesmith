@@ -391,22 +391,25 @@ router.post('/items/:id/start', requireRole(['admin', 'manager', 'supervisor', '
     // are decremented on START; if either is empty, START is blocked. When the
     // pools are untracked (no rows yet) the check is skipped — backward safe.
     if (isWelding) {
-      const { rows: inv } = await client.query(
-        `SELECT material_type, quantity FROM far_mc_inventory
-          WHERE cycle_type_id = $1 AND size_mm = $2 AND material_type IN ('alloy','ms') FOR UPDATE`,
-        [stepInfo.cycle_type_id, stepInfo.size_mm]
+      // The operator picks the alloy and MS piece sizes when opening the job
+      // (they may differ); default to the item's own size. 2 RM → 1 FG.
+      const alloySize = Number(req.body && req.body.alloySizeMm) || stepInfo.size_mm;
+      const msSize = Number(req.body && req.body.msSizeMm) || stepInfo.size_mm;
+      const { rows: invA } = await client.query(
+        `SELECT quantity FROM far_mc_inventory WHERE cycle_type_id = $1 AND size_mm = $2 AND material_type = 'alloy' FOR UPDATE`,
+        [stepInfo.cycle_type_id, alloySize]
       );
-      if (inv.length) {
-        const alloy = inv.find((r) => r.material_type === 'alloy');
-        const ms = inv.find((r) => r.material_type === 'ms');
-        if (!alloy || alloy.quantity < 1 || !ms || ms.quantity < 1) {
-          throw Object.assign(new Error('FAR-MC does not have both an alloy and an MS piece for this cycle/size — cannot start welding.'), { status: 409, code: 'FAR_MC_EMPTY' });
+      const { rows: invM } = await client.query(
+        `SELECT quantity FROM far_mc_inventory WHERE cycle_type_id = $1 AND size_mm = $2 AND material_type = 'ms' FOR UPDATE`,
+        [stepInfo.cycle_type_id, msSize]
+      );
+      // Enforce only when the pools are tracked; otherwise skip (backward safe).
+      if (invA.length || invM.length) {
+        if (!invA.length || invA[0].quantity < 1 || !invM.length || invM[0].quantity < 1) {
+          throw Object.assign(new Error('FAR-MC lacks an available alloy or MS piece for the selected sizes — cannot start welding.'), { status: 409, code: 'FAR_MC_EMPTY' });
         }
-        await client.query(
-          `UPDATE far_mc_inventory SET quantity = quantity - 1, updated_at = now()
-            WHERE cycle_type_id = $1 AND size_mm = $2 AND material_type IN ('alloy','ms')`,
-          [stepInfo.cycle_type_id, stepInfo.size_mm]
-        );
+        await client.query(`UPDATE far_mc_inventory SET quantity = quantity - 1, updated_at = now() WHERE cycle_type_id = $1 AND size_mm = $2 AND material_type = 'alloy'`, [stepInfo.cycle_type_id, alloySize]);
+        await client.query(`UPDATE far_mc_inventory SET quantity = quantity - 1, updated_at = now() WHERE cycle_type_id = $1 AND size_mm = $2 AND material_type = 'ms'`, [stepInfo.cycle_type_id, msSize]);
       }
     }
 
