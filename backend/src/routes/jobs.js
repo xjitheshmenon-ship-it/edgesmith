@@ -287,6 +287,19 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
         return { type: 'qc_failed', uidCode: uid.uid_code };
       }
 
+      // Random HRC inspection sampling: if this step is flagged in the cycle
+      // (hrc_sample_pct), roll to select ~pct% of pieces into the HRC inspection
+      // queue (surface grind + HRC table). The piece keeps its normal cycle.
+      let hrcSampled = false;
+      const samplePct = Number(currentStepDef && currentStepDef.hrc_sample_pct) || 0;
+      if (samplePct > 0 && Math.random() * 100 < samplePct) {
+        await client.query(
+          `INSERT INTO hrc_inspection_samples (uid_id, source_step_number, source_operation) VALUES ($1,$2,$3)`,
+          [uid.id, uid.current_step, currentStepDef.operation_name || null]
+        );
+        hrcSampled = true;
+      }
+
       if (!nextStepDef) {
         await client.query(`UPDATE uids SET status = 'done' WHERE id = $1`, [uid.id]);
       } else {
@@ -296,7 +309,7 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
       }
 
       await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
-      return { type: 'advanced', uidCode: uid.uid_code, netSeconds, nextStep: nextStepDef ? nextStepDef.step_number : null };
+      return { type: 'advanced', uidCode: uid.uid_code, netSeconds, nextStep: nextStepDef ? nextStepDef.step_number : null, hrcSampled };
     }
 
     throw Object.assign(new Error('Job has neither uid_id nor weld_log_id'), { status: 500, code: 'INVALID_JOB' });

@@ -71,12 +71,14 @@ async function createNewVersion(cycleTypeId, steps, changedBy, changeSummary) {
       const { rows: stepRows } = await client.query(
         `INSERT INTO cycle_steps
            (cycle_version_id, step_number, sequence_order, operation_name, workstation_type_id,
-            source_storage_id, dest_storage_id, step_type, capacity_1500, capacity_basis, min_queue_threshold)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+            source_storage_id, dest_storage_id, step_type, capacity_1500, capacity_basis, min_queue_threshold,
+            hrc_sample_pct)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
         [
           newVersion.id, s.stepNumber, s.sequenceOrder, s.operationName, s.workstationTypeId,
           s.sourceStorageId || null, s.destStorageId || null, s.stepType || 'normal',
           s.capacity1500 || null, s.capacityBasis || 'fixed', s.minQueueThreshold || 1,
+          s.hrcSamplePct != null && s.hrcSamplePct !== '' ? Number(s.hrcSamplePct) : null,
         ]
       );
       if (s.batchRules) {

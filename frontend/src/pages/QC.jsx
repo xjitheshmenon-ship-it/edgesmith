@@ -134,6 +134,89 @@ function getStep(item) {
   return item.currentStep ?? item.current_step ?? item.step;
 }
 
+// ── Random HRC inspection samples queue ──────────────────────────────────────
+// Pieces the system randomly pulled for HRC after a flagged cycle step. The
+// floor takes them to surface grind + the HRC table and records the reading here.
+function HrcSamplesPanel() {
+  const { data, loading, refetch } = usePolling(() => qcApi.hrcSamples('pending').then((r) => r.data), []);
+  const samples = Array.isArray(data) ? data : [];
+  const [active, setActive] = useState(null);
+  const [val, setVal] = useState('');
+  const [res, setRes] = useState('Pass');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function record(id) {
+    setBusy(true);
+    setErr(null);
+    try {
+      await qcApi.recordHrc(id, val.trim(), res, null);
+      setActive(null); setVal(''); setRes('Pass');
+      refetch();
+    } catch (e) {
+      setErr(e.message || 'Could not record HRC result.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if ((!data && loading) || samples.length === 0) return null; // hidden until there are samples
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', marginTop: 16, borderLeft: '4px solid #c0762b' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Icon name="thermo" size={15} color="#c0762b" />
+        <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, color: 'var(--text-primary, #15366a)' }}>HRC Inspection Samples</span>
+        <span className="badge" style={{ background: 'rgba(192,118,43,0.14)', color: '#c0762b' }}>{samples.length} pending</span>
+      </div>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)', marginBottom: 12 }}>
+        Randomly sampled pieces — take to surface grind + HRC table, then record the reading. A Fail holds the piece.
+      </div>
+      {err ? <ErrorBanner message={err} /> : null}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {samples.map((s) => (
+          <div key={s.id} style={{ border: '1px solid var(--border-card, #e3ebde)', borderRadius: 9, padding: '10px 12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: 'var(--text-primary, #15366a)' }}>{s.uid_code}</span>
+              <span style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>
+                from step {s.source_step_number}{s.source_operation ? ` · ${s.source_operation}` : ''}
+              </span>
+              <div style={{ flex: 1 }} />
+              {active === s.id ? null : (
+                <button className="btn btn-sm" onClick={() => { setActive(s.id); setVal(''); setRes('Pass'); setErr(null); }}>Record HRC</button>
+              )}
+            </div>
+            {active === s.id && (
+              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 10, flexWrap: 'wrap' }}>
+                <div>
+                  <label className="form-label" style={{ marginBottom: 4 }}>HRC value</label>
+                  <input className="form-input" style={{ height: 38, width: 110 }} type="number" step="any" value={val} onChange={(e) => setVal(e.target.value)} autoFocus />
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {RESULTS.map((r) => {
+                    const sel = res === r;
+                    const c = r === 'Pass' ? '#22a06b' : r === 'Fail' ? '#e5484d' : '#f0a020';
+                    return (
+                      <button key={r} type="button" onClick={() => setRes(r)} className="btn btn-sm"
+                        style={{ height: 38, border: '1.5px solid ' + (sel ? c : 'var(--border-input, #d6e0d2)'), background: sel ? c + '22' : '#fff', color: sel ? c : 'var(--text-secondary)', fontWeight: 700 }}>
+                        {r}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button className="btn btn-primary btn-sm" style={{ height: 38 }} disabled={busy || val.trim() === ''} onClick={() => record(s.id)}>
+                  {busy ? 'Saving…' : 'Save'}
+                </button>
+                <button className="btn btn-sm" style={{ height: 38 }} disabled={busy} onClick={() => setActive(null)}>Cancel</button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function QC() {
   const { user } = useAuth();
 
@@ -247,6 +330,8 @@ export default function QC() {
       <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--text-secondary, #5d7188)', marginTop: 4 }}>
         Inspect the QC queue — drag a job to “Inspected”, enter the value, and record the result{loading ? ' · loading…' : ''}
       </div>
+
+      <HrcSamplesPanel />
 
       <div
         style={{

@@ -119,4 +119,54 @@ router.post('/rework', requireRole(['admin', 'manager', 'supervisor']), async (r
   return res.json({ success: true, data: rows[0] });
 });
 
+// ── Random HRC inspection samples ────────────────────────────────────────────
+
+/** GET /api/v1/qc/hrc-samples — pending (or all) HRC inspection samples. */
+router.get('/hrc-samples', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const status = req.query.status || 'pending';
+  const params = [];
+  let where = '';
+  if (status !== 'all') { params.push(status); where = `WHERE s.status = $1`; }
+  const { rows } = await query(
+    `SELECT s.*, u.uid_code, u.current_step, e.full_name AS inspected_by_name
+     FROM hrc_inspection_samples s
+     JOIN uids u ON u.id = s.uid_id
+     LEFT JOIN employees e ON e.id = s.inspected_by
+     ${where}
+     ORDER BY s.selected_at ASC`,
+    params
+  );
+  return res.json({ success: true, data: rows });
+});
+
+/** POST /api/v1/qc/hrc-samples/:id/result — record the HRC reading.
+ *  body: { hrcValue, result: 'Pass'|'Fail', notes? }. A Fail holds the UID. */
+router.post('/hrc-samples/:id/result', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { hrcValue, result, notes } = req.body || {};
+  const status = String(result || '').toLowerCase() === 'fail' ? 'fail' : 'pass';
+
+  const out = await withTransaction(async (client) => {
+    const { rows: sRows } = await client.query(`SELECT * FROM hrc_inspection_samples WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const sample = sRows[0];
+    if (!sample) throw Object.assign(new Error('HRC sample not found'), { status: 404, code: 'SAMPLE_NOT_FOUND' });
+
+    const { rows } = await client.query(
+      `UPDATE hrc_inspection_samples
+         SET status = $1, hrc_value = $2, notes = $3, inspected_by = $4, inspected_at = now()
+       WHERE id = $5 RETURNING *`,
+      [status, hrcValue == null || hrcValue === '' ? null : Number(hrcValue), notes || null, req.user.sub, sample.id]
+    );
+
+    // A failed HRC sample holds the piece for the supervisor.
+    if (status === 'fail') {
+      await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`,
+        [`HRC sample failed (${hrcValue ?? '—'} HRC)`, sample.uid_id]);
+    }
+    return rows[0];
+  });
+
+  await req.audit({ tableName: 'hrc_inspection_samples', recordId: out.id, action: 'UPDATE', after: out });
+  return res.json({ success: true, data: out });
+});
+
 module.exports = router;

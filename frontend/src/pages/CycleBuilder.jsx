@@ -146,6 +146,7 @@ function toEditorRow(s) {
     capacity1500: pick(s, 'capacity_1500', 'capacity') ?? '',
     capacityBasis: pick(s, 'capacity_basis', 'capacityBasis') ?? 'fixed',
     minQueueThreshold: pick(s, 'min_queue_threshold', 'minQueueThreshold') ?? 1,
+    hrcSamplePct: pick(s, 'hrc_sample_pct', 'hrcSamplePct') ?? '',
   };
 }
 
@@ -160,6 +161,7 @@ function blankEditorRow() {
     capacity1500: '',
     capacityBasis: 'fixed',
     minQueueThreshold: 1,
+    hrcSamplePct: '',
   };
 }
 
@@ -181,6 +183,8 @@ function rowsToPayload(rows) {
       r.minQueueThreshold === '' || r.minQueueThreshold == null
         ? 1
         : Number(r.minQueueThreshold),
+    hrcSamplePct:
+      r.hrcSamplePct === '' || r.hrcSamplePct == null ? null : Number(r.hrcSamplePct),
   }));
 }
 
@@ -724,6 +728,7 @@ function StepsEditorInner({
                 <th style={TH}>Cap@1500</th>
                 <th style={TH}>Basis</th>
                 <th style={TH}>Min Q</th>
+                <th style={TH} title="Random HRC inspection sample — % of pieces pulled for HRC after this step">HRC %</th>
                 <th style={TH} />
               </tr>
             </thead>
@@ -776,6 +781,11 @@ function StepsEditorInner({
                     <input className="form-input" type="number" min="1" style={{ ...cellInput, width: 70 }}
                       value={r.minQueueThreshold} onChange={(e) => patchRow(r._rid, { minQueueThreshold: e.target.value })} />
                   </td>
+                  <td style={TD}>
+                    <input className="form-input" type="number" min="0" max="100" style={{ ...cellInput, width: 64 }} placeholder="—"
+                      title="Random HRC inspection sample — % of pieces pulled for HRC after this step (e.g. 10)"
+                      value={r.hrcSamplePct} onChange={(e) => patchRow(r._rid, { hrcSamplePct: e.target.value })} />
+                  </td>
                   <td style={{ ...TD, textAlign: 'right', whiteSpace: 'nowrap' }}>
                     <button className="btn btn-sm" style={{ height: 28, padding: '0 8px' }} disabled={i === 0} title="Move up" onClick={() => moveRow(i, -1)}>↑</button>{' '}
                     <button className="btn btn-sm" style={{ height: 28, padding: '0 8px' }} disabled={i === rows.length - 1} title="Move down" onClick={() => moveRow(i, 1)}>↓</button>{' '}
@@ -786,7 +796,7 @@ function StepsEditorInner({
                 </tr>
               ))}
               {rows.length === 0 ? (
-                <tr><td colSpan={10} style={{ ...TD, textAlign: 'center', color: 'var(--text-secondary)' }}>No steps in the draft yet.</td></tr>
+                <tr><td colSpan={11} style={{ ...TD, textAlign: 'center', color: 'var(--text-secondary)' }}>No steps in the draft yet.</td></tr>
               ) : null}
             </tbody>
           </table>
