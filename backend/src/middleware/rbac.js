@@ -43,15 +43,20 @@ function requireRole(allowedRoles) {
  * `?location=` query param or a `location_id` in the body should call
  * `resolveLocation(req)` (below) to get the *effective* location to filter by.
  */
+const LOCATION_CODE_TO_ID = { dharmapuri: 1, faridabad: 2 };
+
 function enforceLocationScope(req, res, next) {
   const role = req.user.role;
   if (role === 'admin' || role === 'manager') return next(); // unrestricted
 
-  // supervisor/operator/service/shopfloor are locked to their own location_id
-  const requestedLocation =
-    req.query.location || (req.body && req.body.location_id) || null;
-
-  if (requestedLocation && String(requestedLocation) !== String(req.user.location_id)) {
+  // supervisor/operator/service/shopfloor are locked to their own location_id.
+  // The request may name a location as a code ('dharmapuri') or an id (1); a
+  // missing param falls through (resolveLocation scopes it). Anything that
+  // isn't the caller's own location — including 'both' — is rejected.
+  const requested = req.query.location || (req.body && req.body.location_id) || null;
+  if (!requested) return next();
+  const requestedId = LOCATION_CODE_TO_ID[String(requested).toLowerCase()] || Number(requested) || null;
+  if (String(requestedId) !== String(req.user.location_id)) {
     return res.status(403).json({
       success: false,
       error: {
@@ -61,6 +66,27 @@ function enforceLocationScope(req, res, next) {
     });
   }
   return next();
+}
+
+/**
+ * requireLocationAccess(locationId) — a router-level guard for single-location
+ * domains (e.g. /faridabad, or the Dharmapuri-only /jobs and /uids). Admin and
+ * Manager are cross-location and always pass; everyone else must belong to that
+ * location. Must run after authenticate().
+ */
+function requireLocationAccess(locationId) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: { code: 'NO_TOKEN', message: 'Authentication required.' } });
+    }
+    const role = req.user.role;
+    if (role === 'admin' || role === 'manager') return next();
+    if (String(req.user.location_id) === String(locationId)) return next();
+    return res.status(403).json({
+      success: false,
+      error: { code: 'LOCATION_FORBIDDEN', message: "This location's data is not available to your account." },
+    });
+  };
 }
 
 /**
@@ -84,4 +110,4 @@ function resolveLocation(req, locationCodeToId) {
   return { mode: 'one', locationId };
 }
 
-module.exports = { ALL_ROLES, requireRole, enforceLocationScope, resolveLocation };
+module.exports = { ALL_ROLES, requireRole, enforceLocationScope, requireLocationAccess, resolveLocation };

@@ -1,14 +1,15 @@
 const express = require('express');
 const { query, withTransaction } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/rbac');
+const { requireRole, requireLocationAccess } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { calculateMsBalance } = require('../utils/msBalance');
 const { alloyCutBatch, DEFAULT_SIZES } = require('../utils/alloyCut');
 const { operatorMissingSkill } = require('../utils/skillGate');
 
 const router = express.Router();
-router.use(authenticate, auditContext);
+// §10.7 — Faridabad data is off-limits to Dharmapuri-scoped users (admin/manager exempt).
+router.use(authenticate, auditContext, requireLocationAccess(2));
 
 /**
  * GET /api/v1/faridabad/intakes

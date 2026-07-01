@@ -1,11 +1,12 @@
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
-const { requireRole, enforceLocationScope } = require('../middleware/rbac');
+const { requireRole, requireLocationAccess } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const ctrl = require('../controllers/uidsController');
 
 const router = express.Router();
-router.use(authenticate, auditContext);
+// §10.7 — UIDs are a Dharmapuri-only domain (admin/manager cross-location exempt).
+router.use(authenticate, auditContext, requireLocationAccess(1));
 
 router.get('/', listAsync(ctrl.listUids));
 router.post('/', requireRole(['admin', 'manager', 'supervisor', 'operator']), listAsync(ctrl.bulkCreateUids));
