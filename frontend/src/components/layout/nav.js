@@ -39,7 +39,7 @@ export const NAV = [
   ['CONFIGURATION', [
     ['cycle', 'Cycle Builder', 'flow', null],
     ['masters', 'Master Lists', 'list', null],
-    ['temper', 'Tempering Parameters', 'thermo', null],
+    ['temper', 'Heat Treatment Parameters', 'thermo', null],
     ['employees', 'Employee Profiles', 'people', 'expiringBadges'],
     ['users', 'Users & Roles', 'lock', null],
     ['dataimport', 'Data Import', 'download', null],
