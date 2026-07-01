@@ -6,6 +6,7 @@ const { auditContext } = require('../middleware/audit');
 const { calculateMsBalance } = require('../utils/msBalance');
 const { alloyCutBatch, DEFAULT_SIZES } = require('../utils/alloyCut');
 const { operatorMissingSkill } = require('../utils/skillGate');
+const { createAlert } = require('../utils/alerts');
 
 const router = express.Router();
 // §10.7 — Faridabad data is off-limits to Dharmapuri-scoped users (admin/manager exempt).
@@ -358,20 +359,22 @@ router.post('/items', requireRole(['admin', 'manager', 'supervisor', 'operator']
 
 /** POST /faridabad/items/:id/start — begin the operation at the current step. */
 router.post('/items/:id/start', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  // Resolve the item's current step (workstation + operation) once.
+  const { rows: wsRows } = await query(
+    `SELECT wt.id AS wt_id, cs.operation_name, fi.cycle_type_id, fi.size_mm
+       FROM faridabad_items fi
+       JOIN cycle_versions cv ON cv.cycle_type_id = fi.cycle_type_id AND cv.is_current
+       JOIN cycle_steps cs ON cs.cycle_version_id = cv.id AND cs.step_number = fi.current_step
+       JOIN workstation_types wt ON wt.id = cs.workstation_type_id
+      WHERE fi.id = $1`,
+    [req.params.id]
+  );
+  const stepInfo = wsRows[0];
+
   // Skill gate: operators may only start a step whose workstation they are
   // certified for. Supervisors/managers/admins are exempt.
   if (req.user.role === 'operator') {
-    const { rows: wsRows } = await query(
-      `SELECT wt.id AS wt_id
-         FROM faridabad_items fi
-         JOIN cycle_versions cv ON cv.cycle_type_id = fi.cycle_type_id AND cv.is_current
-         JOIN cycle_steps cs ON cs.cycle_version_id = cv.id AND cs.step_number = fi.current_step
-         JOIN workstation_types wt ON wt.id = cs.workstation_type_id
-        WHERE fi.id = $1`,
-      [req.params.id]
-    );
-    const wtId = wsRows[0] && wsRows[0].wt_id;
-    const missing = await operatorMissingSkill(query, { employeeId: req.user.sub, workstationTypeId: wtId });
+    const missing = await operatorMissingSkill(query, { employeeId: req.user.sub, workstationTypeId: stepInfo && stepInfo.wt_id });
     if (missing) {
       return res.status(403).json({
         success: false,
@@ -380,12 +383,75 @@ router.post('/items/:id/start', requireRole(['admin', 'manager', 'supervisor', '
     }
   }
 
+  const isWelding = stepInfo && /weld|join/i.test(stepInfo.operation_name || '');
+
+  const result = await withTransaction(async (client) => {
+    // §6 — the Welding step consumes 1 alloy + 1 MS piece from the FAR-MC pool.
+    // If those pools are tracked for this cycle+size, both must have stock and
+    // are decremented on START; if either is empty, START is blocked. When the
+    // pools are untracked (no rows yet) the check is skipped — backward safe.
+    if (isWelding) {
+      const { rows: inv } = await client.query(
+        `SELECT material_type, quantity FROM far_mc_inventory
+          WHERE cycle_type_id = $1 AND size_mm = $2 AND material_type IN ('alloy','ms') FOR UPDATE`,
+        [stepInfo.cycle_type_id, stepInfo.size_mm]
+      );
+      if (inv.length) {
+        const alloy = inv.find((r) => r.material_type === 'alloy');
+        const ms = inv.find((r) => r.material_type === 'ms');
+        if (!alloy || alloy.quantity < 1 || !ms || ms.quantity < 1) {
+          throw Object.assign(new Error('FAR-MC does not have both an alloy and an MS piece for this cycle/size — cannot start welding.'), { status: 409, code: 'FAR_MC_EMPTY' });
+        }
+        await client.query(
+          `UPDATE far_mc_inventory SET quantity = quantity - 1, updated_at = now()
+            WHERE cycle_type_id = $1 AND size_mm = $2 AND material_type IN ('alloy','ms')`,
+          [stepInfo.cycle_type_id, stepInfo.size_mm]
+        );
+      }
+    }
+
+    const { rows } = await client.query(
+      `UPDATE faridabad_items SET status = 'in_progress', started_at = now(), current_operator_id = $1, updated_at = now()
+       WHERE id = $2 AND status <> 'done' RETURNING *`,
+      [req.user.sub, req.params.id]
+    );
+    if (!rows[0]) throw Object.assign(new Error('Item not found or already done.'), { status: 404, code: 'ITEM_NOT_FOUND' });
+    return rows[0];
+  });
+  return res.json({ success: true, data: result });
+});
+
+/** GET /faridabad/far-mc-inventory — the FAR-MC quantity pools (alloy/MS per cycle+size). */
+router.get('/far-mc-inventory', async (req, res) => {
   const { rows } = await query(
-    `UPDATE faridabad_items SET status = 'in_progress', started_at = now(), current_operator_id = $1, updated_at = now()
-     WHERE id = $2 AND status <> 'done' RETURNING *`,
-    [req.user.sub, req.params.id]
+    `SELECT i.id, ct.code AS cycle_code, i.cycle_type_id, i.size_mm, i.material_type, i.quantity, i.updated_at
+       FROM far_mc_inventory i JOIN cycle_types ct ON ct.id = i.cycle_type_id
+      ORDER BY ct.code, i.size_mm, i.material_type`
   );
-  if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'ITEM_NOT_FOUND', message: 'Item not found or already done.' } });
+  return res.json({ success: true, data: rows });
+});
+
+/**
+ * POST /faridabad/far-mc-inventory — stock or adjust a pool.
+ * body: { cycleCode, sizeMm, materialType: 'alloy'|'ms', delta } (relative) or { ..., quantity } (absolute).
+ */
+router.post('/far-mc-inventory', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const { cycleCode, sizeMm, materialType, delta, quantity } = req.body || {};
+  if (!cycleCode || !sizeMm || !['alloy', 'ms'].includes(materialType)) {
+    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'cycleCode, sizeMm and materialType (alloy|ms) are required.' } });
+  }
+  const { rows: ct } = await query(`SELECT id FROM cycle_types WHERE code = $1`, [cycleCode]);
+  if (!ct[0]) return res.status(400).json({ success: false, error: { code: 'UNKNOWN_CYCLE', message: 'Unknown cycle.' } });
+  const useAbsolute = quantity != null;
+  const { rows } = await query(
+    `INSERT INTO far_mc_inventory (cycle_type_id, size_mm, material_type, quantity)
+       VALUES ($1,$2,$3, GREATEST(0, $4))
+     ON CONFLICT (cycle_type_id, size_mm, material_type)
+       DO UPDATE SET quantity = GREATEST(0, ${useAbsolute ? '$4' : 'far_mc_inventory.quantity + $4'}), updated_at = now()
+     RETURNING *`,
+    [ct[0].id, sizeMm, materialType, Number(useAbsolute ? quantity : delta) || 0]
+  );
+  await req.audit({ tableName: 'far_mc_inventory', recordId: rows[0].id, action: 'UPDATE', after: rows[0] });
   return res.json({ success: true, data: rows[0] });
 });
 
@@ -501,6 +567,33 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
         }
         return id;
       });
+    }
+
+    // §10A — piece-count verification. When the operator confirms an actual
+    // count that differs from the expected count, a reason is mandatory and a
+    // supervisor is alerted; the record is kept per cycle type + size.
+    const pc = req.body && req.body.pieceCount;
+    if (pc && (pc.actual != null || pc.expected != null)) {
+      const expected = Number(pc.expected);
+      const actual = Number(pc.actual);
+      const mismatch = Number.isFinite(expected) && Number.isFinite(actual) && expected !== actual;
+      const reason = (pc.reason || '').trim();
+      if (mismatch && !reason) {
+        throw Object.assign(new Error('A piece-count mismatch requires a reason before the step can close.'), { status: 400, code: 'PIECE_COUNT_REASON_REQUIRED' });
+      }
+      await client.query(
+        `INSERT INTO faridabad_piece_counts (faridabad_item_id, step_number, cycle_type_id, size_mm, expected_pieces, actual_pieces, discrepancy_reason, operator_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [item.id, item.current_step, item.cycle_type_id, item.size_mm || null,
+          Number.isFinite(expected) ? expected : null, Number.isFinite(actual) ? actual : null, mismatch ? reason : null, req.user.sub]
+      );
+      if (mismatch) {
+        await createAlert(client.query.bind(client), {
+          type: 'piece_count_mismatch', severity: 'warning', locationId: 2,
+          message: `Piece-count mismatch at ${step ? step.operation_name : 'step ' + item.current_step}: expected ${expected}, actual ${actual} — ${reason}`,
+          targetRole: 'supervisor', linkPage: 'faridabad', linkRecordId: String(item.id),
+        });
+      }
     }
 
     const next = steps[idx + 1];
