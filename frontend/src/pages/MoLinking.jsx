@@ -375,51 +375,71 @@ function MoDetail({ mo, onClose, onLinked }) {
 }
 
 // ── Create MO form ──
+const sizeMmOf = (s) => s?.sizeMm ?? s?.size_mm ?? s?.value ?? s?.size;
+const designValidSizes = (d) => d?.validSizes ?? d?.valid_sizes ?? null;
+const emptyLine = () => ({ sizeId: '', designId: '', quantity: '' });
+
 function CreateMoForm({ sizes, designs, onCreated }) {
   const { isSupervisor, isManager, isAdmin } = useAuth();
   const canCreate = isSupervisor || isManager || isAdmin;
 
   const [form, setForm] = useState({
-    moNumber: '', customer: '', quantityRequired: '', size: '', design: '',
-    priority: 'Normal', deliveryDate: '', notes: '',
+    moNumber: '', customer: '', priority: 'Normal', deliveryDate: '', notes: '',
   });
+  // One order can carry several size/design/qty lines.
+  const [lines, setLines] = useState([emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  function set(k, v) {
-    setForm((f) => ({ ...f, [k]: v, ...(k === 'size' ? { design: '' } : {}) }));
+  function set(k, v) { setForm((f) => ({ ...f, [k]: v })); }
+  function setLine(i, k, v) {
+    setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, [k]: v, ...(k === 'sizeId' ? { designId: '' } : {}) } : l)));
+  }
+  function addLine() { setLines((ls) => [...ls, emptyLine()]); }
+  function removeLine(i) { setLines((ls) => (ls.length > 1 ? ls.filter((_, idx) => idx !== i) : ls)); }
+
+  // Designs valid for a given size id (falls back to all when no validity data).
+  function designsForSize(sizeId) {
+    if (!sizeId) return designs || [];
+    const size = (sizes || []).find((s) => String(s.id) === String(sizeId));
+    const mm = size ? sizeMmOf(size) : null;
+    return (designs || []).filter((d) => {
+      const vs = designValidSizes(d);
+      if (!Array.isArray(vs) || vs.length === 0) return true;
+      return vs.map(String).includes(String(mm));
+    });
   }
 
-  // designs filtered by selected size
-  const filteredDesigns = (designs || []).filter((d) => {
-    if (!form.size) return true;
-    const ds = d.size || d.sizeMm || d.size_mm;
-    return ds == null || String(ds) === String(form.size);
-  });
+  const totalQty = lines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
 
   async function submit(e) {
     e.preventDefault();
     setError(null);
     setSuccess(null);
-    if (!form.moNumber.trim()) {
-      setError('MO number is required.');
-      return;
-    }
+    if (!form.moNumber.trim()) { setError('MO number is required.'); return; }
+
+    const lineItems = lines
+      .filter((l) => l.sizeId || l.designId || l.quantity)
+      .map((l) => ({
+        sizeId: l.sizeId ? Number(l.sizeId) : undefined,
+        designId: l.designId ? Number(l.designId) : undefined,
+        quantity: l.quantity !== '' ? Number(l.quantity) : undefined,
+      }));
+
     setBusy(true);
     try {
       await mosApi.create({
         moNumber: form.moNumber.trim(),
         customer: form.customer.trim() || undefined,
-        quantityRequired: form.quantityRequired !== '' ? Number(form.quantityRequired) : undefined,
-        size: form.size || undefined,
-        design: form.design || undefined,
         priority: form.priority,
-        deliveryDate: form.deliveryDate || undefined,
+        requiredDeliveryDate: form.deliveryDate || undefined,
         notes: form.notes.trim() || undefined,
+        lineItems,
       });
-      setSuccess(`MO ${form.moNumber.trim()} created.`);
-      setForm({ moNumber: '', customer: '', quantityRequired: '', size: '', design: '', priority: 'Normal', deliveryDate: '', notes: '' });
+      setSuccess(`MO ${form.moNumber.trim()} created${lineItems.length > 1 ? ` with ${lineItems.length} lines` : ''}.`);
+      setForm({ moNumber: '', customer: '', priority: 'Normal', deliveryDate: '', notes: '' });
+      setLines([emptyLine()]);
       if (onCreated) onCreated();
     } catch (err) {
       setError(err.message || 'Could not create MO.');
@@ -449,42 +469,41 @@ function CreateMoForm({ sizes, designs, onCreated }) {
           <label className="form-label">Customer name</label>
           <input className="form-input" placeholder="customer" value={form.customer} onChange={(e) => set('customer', e.target.value)} />
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
-          <div>
-            <label className="form-label">Quantity required</label>
-            <input className="form-input" type="number" min="0" placeholder="qty" value={form.quantityRequired} onChange={(e) => set('quantityRequired', e.target.value)} />
-          </div>
-          <div>
-            <label className="form-label">Priority</label>
-            <select className="form-select" value={form.priority} onChange={(e) => set('priority', e.target.value)}>
-              <option value="High">High</option>
-              <option value="Normal">Normal</option>
-              <option value="Low">Low</option>
-            </select>
-          </div>
+        <div>
+          <label className="form-label">Priority</label>
+          <select className="form-select" value={form.priority} onChange={(e) => set('priority', e.target.value)}>
+            <option value="High">High</option>
+            <option value="Normal">Normal</option>
+            <option value="Low">Low</option>
+          </select>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
-          <div>
-            <label className="form-label">Size (mm)</label>
-            <select className="form-select" value={form.size} onChange={(e) => set('size', e.target.value)}>
-              <option value="">Select size</option>
-              {(sizes || []).map((s, i) => {
-                const v = s.value ?? s.size ?? s.sizeMm ?? s.size_mm ?? s.code ?? s.name ?? s;
-                return <option key={s.id ?? v ?? i} value={v}>{v}</option>;
-              })}
-            </select>
+
+        {/* Line items — one per size/design in the order */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+            <label className="form-label" style={{ margin: 0 }}>Order lines (size · design · qty)</label>
+            <span style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>Total: {totalQty} pc</span>
           </div>
-          <div>
-            <label className="form-label">Design</label>
-            <select className="form-select" value={form.design} onChange={(e) => set('design', e.target.value)} disabled={!form.size && (designs || []).length === 0}>
-              <option value="">{form.size ? 'Select design' : 'Select size first'}</option>
-              {filteredDesigns.map((d, i) => {
-                const v = d.value ?? d.design ?? d.code ?? d.designCode ?? d.design_code ?? d.name ?? d;
-                return <option key={d.id ?? v ?? i} value={v}>{v}</option>;
-              })}
-            </select>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {lines.map((l, i) => (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 84px 30px', gap: 8, alignItems: 'center' }}>
+                <select className="form-select" value={l.sizeId} onChange={(e) => setLine(i, 'sizeId', e.target.value)}>
+                  <option value="">Size</option>
+                  {(sizes || []).map((s) => <option key={s.id} value={s.id}>{sizeMmOf(s)}mm</option>)}
+                </select>
+                <select className="form-select" value={l.designId} onChange={(e) => setLine(i, 'designId', e.target.value)}>
+                  <option value="">Design</option>
+                  {designsForSize(l.sizeId).map((d) => <option key={d.id} value={d.id}>{d.code ?? d.designCode ?? d.design_code}</option>)}
+                </select>
+                <input className="form-input" type="number" min="0" placeholder="qty" value={l.quantity} onChange={(e) => setLine(i, 'quantity', e.target.value)} />
+                <button type="button" onClick={() => removeLine(i)} disabled={lines.length === 1} title="Remove line"
+                  style={{ height: 34, border: '1px solid var(--border, #d8e0ea)', borderRadius: 6, background: 'transparent', cursor: lines.length === 1 ? 'not-allowed' : 'pointer', color: 'var(--text-secondary, #5d7188)', opacity: lines.length === 1 ? 0.4 : 1 }}>×</button>
+              </div>
+            ))}
           </div>
+          <button type="button" onClick={addLine} style={{ marginTop: 8, fontSize: 13, background: 'transparent', border: '1px dashed var(--border, #d8e0ea)', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', color: 'var(--text-primary, #15366a)' }}>+ Add line</button>
         </div>
+
         <div>
           <label className="form-label">Required delivery date (optional)</label>
           <input className="form-input" type="date" value={form.deliveryDate} onChange={(e) => set('deliveryDate', e.target.value)} />
