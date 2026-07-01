@@ -125,4 +125,6 @@ MO numbers originate in Odoo and are entered manually for now. The data layer ke
 step completion is logged with workstation + timestamp, so an Odoo sync module can be
 added later without restructuring the core tables. No API calls today.
 
-See `docs/api.md` for the full endpoint reference.
+See `docs/api.md` for the full endpoint reference, and
+`docs/CPCMS_Rules_Calculations.md` for the business rule book (UID, cycle,
+furnace, grinding, badge, shift, and calculation rules).
