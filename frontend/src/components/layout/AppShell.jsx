@@ -6,6 +6,36 @@ import StatusBar from './StatusBar';
 import { usePolling } from '../../hooks/usePolling';
 import { alertsApi } from '../../api/resources';
 import { uidsApi } from '../../api/uids';
+import { useApp } from '../../store/AppContext';
+
+const MONO = "'IBM Plex Mono', monospace";
+const FACTORY_STYLE = {
+  faridabad: { color: '#d97a2b', label: 'Faridabad' },
+  dharmapuri: { color: '#3b82f6', label: 'Dharmapuri' },
+};
+
+/* Always-visible indicator of which factory the (global) toggle is showing.
+   The factory toggle re-scopes every Overview page at once, so this makes the
+   active factory unmistakable regardless of which page you're on. */
+function FactoryBanner() {
+  const { location } = useApp();
+  const f = FACTORY_STYLE[location] || FACTORY_STYLE.dharmapuri;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 9, flexShrink: 0,
+      padding: '6px 20px', borderBottom: `1px solid ${f.color}33`,
+      borderLeft: `4px solid ${f.color}`, background: `${f.color}14`,
+    }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: f.color, boxShadow: `0 0 0 3px ${f.color}22` }} />
+      <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: f.color, fontWeight: 700 }}>
+        VIEWING · {f.label.toUpperCase()}
+      </span>
+      <span style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: '0.04em', color: 'var(--text-secondary, #5d7188)' }}>
+        — the factory toggle scopes all Overview pages to this factory
+      </span>
+    </div>
+  );
+}
 
 /* Maps alert codes/types → the nav badge-count keys used in nav.js. Best-effort:
    unknown alert types simply don't increment a badge. */
@@ -60,9 +90,12 @@ export default function AppShell() {
       <Topbar alertCount={alertCount} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
         <Sidebar counts={counts} />
-        <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minWidth: 0 }}>
-          <Outlet />
-        </main>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+          <FactoryBanner />
+          <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minWidth: 0 }}>
+            <Outlet />
+          </main>
+        </div>
       </div>
       <StatusBar active={bar.active} hold={bar.hold} furnace={bar.furnace} />
     </div>

@@ -31,9 +31,9 @@ export const NAV = [
   ]],
   ['DHARMAPURI', [
     ['uid', 'UID Creation', 'tag', null],
-    ['qc', 'QC', 'check', 'pendingQc'],
   ]],
   ['OPERATIONS', [
+    ['qc', 'QC', 'check', 'pendingQc'],
     ['mo', 'MO Linking', 'doc', 'openMos'],
     ['reports', 'Reports', 'chart', null],
     ['service', 'Service Lookup', 'search', null],
@@ -56,7 +56,7 @@ export const SECTIONS_BY_ROLE = {
   admin: ['OVERVIEW', 'FARIDABAD', 'DHARMAPURI', 'OPERATIONS', 'CONFIGURATION'],
   manager: ['OVERVIEW', 'FARIDABAD', 'DHARMAPURI', 'OPERATIONS', 'CONFIGURATION'],
   supervisor: ['OVERVIEW', 'DHARMAPURI', 'OPERATIONS'],
-  operator: ['OVERVIEW', 'DHARMAPURI'], // filtered to My Workstation/QC below
+  operator: ['OVERVIEW', 'OPERATIONS'], // filtered to My Workstation/QC below (QC now lives in OPERATIONS)
   service: [],
   shopfloor: [],
 };
