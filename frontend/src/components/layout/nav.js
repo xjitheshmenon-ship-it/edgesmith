@@ -30,6 +30,7 @@ export const NAV = [
     ['mo', 'MO Linking', 'doc', 'openMos'],
     ['shift', 'Shift Management', 'calendar', null],
     ['jobs', 'Job Assignment', 'assign', 'unassignedJobs'],
+    ['dataimport', 'Data Import', 'download', null],
     ['reports', 'Reports', 'chart', null],
     ['service', 'Service Lookup', 'search', null],
   ]],

@@ -31,6 +31,7 @@ import EmployeeProfiles from './pages/EmployeeProfiles';
 import JobAssignment from './pages/JobAssignment';
 import Reports from './pages/Reports';
 import CycleBuilder from './pages/CycleBuilder';
+import DataImport from './pages/DataImport';
 
 /* Route keys built on the new foundation map to their component; everything
    else renders the Placeholder until rebuilt. */
@@ -71,6 +72,7 @@ const PAGES = {
   temper: TemperingParameters,
   employees: EmployeeProfiles,
   backup: BackupRestore,
+  dataimport: DataImport,
 };
 
 const ALL_KEYS = NAV.flatMap(([, items]) => items.map(([key]) => key));
