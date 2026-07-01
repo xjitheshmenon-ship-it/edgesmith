@@ -1,12 +1,13 @@
 const express = require('express');
 const { query, withTransaction } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/rbac');
+const { requireRole, enforceLocationScope } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { currentShiftNumber } = require('../config/shifts');
 
 const router = express.Router();
-router.use(authenticate, auditContext);
+// §10.7 — a restricted role cannot request another location via ?location=.
+router.use(authenticate, auditContext, enforceLocationScope);
 
 /**
  * GET /api/v1/shifts/current?location=dharmapuri

@@ -1,13 +1,14 @@
 const express = require('express');
 const { query, withTransaction } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/rbac');
+const { requireRole, requireLocationAccess } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { currentShiftNumber } = require('../config/shifts');
 const { operatorMissingSkill } = require('../utils/skillGate');
 
 const router = express.Router();
-router.use(authenticate, auditContext);
+// §10.7 — UID (Dharmapuri) jobs are off-limits to Faridabad-scoped users.
+router.use(authenticate, auditContext, requireLocationAccess(1));
 
 const PAUSE_REASONS = ['Break', 'Machine issue', 'Material not ready', 'Waiting for supervisor', 'Other'];
 
