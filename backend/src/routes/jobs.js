@@ -263,10 +263,12 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
       const idx = allSteps.findIndex((s) => s.step_number === uid.current_step);
       const nextStepDef = allSteps[idx + 1];
 
-      // Design lock check before Step 16
-      if (nextStepDef && nextStepDef.step_number === '16' && !uid.design_id) {
+      // Design lock: a UID cannot proceed past Step 15 (Straighten Manual) without
+      // a confirmed design. The hold is placed the moment it reaches Step 15, which
+      // also blocks Converting (Step 16) downstream.
+      if (nextStepDef && nextStepDef.step_number === '15' && !uid.design_id) {
         await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [
-          'Design not confirmed — required before Converting (Step 16)', uid.id,
+          'Design not confirmed — required before Step 15 (Straighten Manual)', uid.id,
         ]);
         if (log) await client.query(`UPDATE uid_step_logs SET closed_at = now(), net_work_seconds = $1 WHERE id = $2`, [netSeconds, log.id]);
         await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);

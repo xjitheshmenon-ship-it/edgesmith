@@ -68,6 +68,7 @@ const WORKSTATIONS = [
   ['BSW-01', 'Band Saw 1', 'cutting', null],
   ['BSW-02', 'Band Saw 2 / Converting', 'cutting', null],
   ['RCV-01', 'Receiving / Work Table', 'other', null],
+  ['TAG-01', 'Tagging Table', 'other', 'dharmapuri'],
   ['HT70', 'Hardening Furnace', 'heat_treatment', null],
   ['HT80', 'Quench Tank', 'heat_treatment', null],
   ['HT90', 'Tempering Furnace', 'heat_treatment', null],
@@ -121,6 +122,7 @@ const WORKSTATION_UNITS = {
   'AG-GMM': ['AG-GMM-1'],
   'BSW-01': ['BSW-01-1'],
   'BSW-02': ['BSW-02-1'],
+  'TAG-01': ['TAG-01-1'],
   'WELD-01': ['WB-1', 'WB-2', 'WB-3'], // Faridabad weld bays
 };
 
@@ -171,7 +173,7 @@ const EAT_STEPS = [
   ['14', 'Tempering 3', 'HT90', 'MC-D', 'HT-Q', 'temper', 80, 'furnace_scaled', 80],
   ['15', 'Straighten Manual', 'STR-MAN', 'HT-Q', 'QC-Q', 'normal', null, 'fixed', 1],
   ['16', 'Converting', 'BSW-02', 'QC-Q', 'QC-Q', 'split', null, 'fixed', 1],
-  ['16B', 'Child UID Marking', 'RCV-01', 'QC-Q', 'QC-Q', 'split', null, 'fixed', 1],
+  ['16B', 'Child Tagging', 'TAG-01', 'QC-Q', 'QC-Q', 'split', null, 'fixed', 1],
   ['17', 'OP20 Semi-finish Mill', 'MM11', 'QC-Q', 'MC-Q', 'normal', null, 'fixed', 1],
   ['18', 'OP30 Finish Mill', 'MM11', 'MC-Q', 'MC-D', 'normal', null, 'fixed', 1],
   ['19', 'Straighten Post-OP30', 'STR-MAN', 'MC-D', 'QC-Q', 'normal', null, 'fixed', 1],
