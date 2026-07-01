@@ -133,7 +133,7 @@ furnaceRouter.get('/queue', async (req, res) => {
  *
  * Enforces: single cycle type per batch (hard rule), capacity not exceeded.
  */
-furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
   const { cycleStepId, cycleCode, uidIds, workstationUnitId, overrideThreshold, overrideReason } = req.body;
 
   if (!cycleStepId || !cycleCode || !Array.isArray(uidIds) || !uidIds.length) {
@@ -141,6 +141,18 @@ furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor']), async (
   }
 
   const result = await withTransaction(async (client) => {
+    // §8.3 — an operator setting up a furnace batch must hold a valid HT badge.
+    if (req.user.role === 'operator') {
+      const { rows: ht } = await client.query(
+        `SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
+          WHERE eb.employee_id = $1 AND bt.code = 'HT' AND bt.status = 'active' AND eb.revoked_at IS NULL
+            AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE) LIMIT 1`,
+        [req.user.sub]
+      );
+      if (!ht.length) {
+        throw Object.assign(new Error('An HT (Heat Treatment) certification is required to set up a furnace batch.'), { status: 403, code: 'FURNACE_REQUIRES_HT_BADGE' });
+      }
+    }
     // cycleStepId is a step NUMBER — resolve against the cycle's current version.
     const step = await resolveFurnaceStep((sql, p) => client.query(sql, p), cycleCode, cycleStepId);
     if (!step) throw Object.assign(new Error('Step not found for this cycle'), { status: 404, code: 'STEP_NOT_FOUND' });
@@ -193,10 +205,12 @@ furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor']), async (
     const { rows: startShift } = await client.query(`SELECT id FROM shifts WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1`);
     const startShiftId = startShift[0] ? startShift[0].id : null;
 
+    // §8.3 — created pending a Supervisor's verification; started_at is set at
+    // verify time, when the run is actually allowed to begin.
     const { rows: batchRows } = await client.query(
       `INSERT INTO furnace_batches (batch_number, cycle_step_id, cycle_type_id, workstation_unit_id,
                                      target_temp_c, target_soak_min, status, started_at, operator_id, shift_id)
-       VALUES ($1,$2,$3,$4,$5,$6,'running', now(), $7, $8) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,'pending_verification', NULL, $7, $8) RETURNING *`,
       [batchNumber, step.id, cycleTypeId, workstationUnitId || null,
         params ? params.target_temp_c : null, params ? params.target_soak_min : null, req.user.sub, startShiftId]
     );
@@ -225,6 +239,29 @@ furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor']), async (
 });
 
 /**
+ * PATCH /api/v1/furnace-batches/:id/verify
+ * §8.3 — a Supervisor (no HT badge required) verifies the operator's setup;
+ * only then does the run start. START is blocked until this happens.
+ */
+furnaceRouter.patch('/:id/verify', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const result = await withTransaction(async (client) => {
+    const { rows } = await client.query(`SELECT * FROM furnace_batches WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const batch = rows[0];
+    if (!batch) throw Object.assign(new Error('Batch not found'), { status: 404, code: 'BATCH_NOT_FOUND' });
+    if (batch.status !== 'pending_verification') {
+      throw Object.assign(new Error('This batch is not awaiting verification.'), { status: 409, code: 'NOT_PENDING_VERIFICATION' });
+    }
+    const { rows: upd } = await client.query(
+      `UPDATE furnace_batches SET status = 'running', started_at = now(), verified_by = $1, verified_at = now() WHERE id = $2 RETURNING *`,
+      [req.user.sub, batch.id]
+    );
+    return upd[0];
+  });
+  await req.audit({ tableName: 'furnace_batches', recordId: req.params.id, action: 'UPDATE', after: { status: 'running', verified: true } });
+  return res.json({ success: true, data: result });
+});
+
+/**
  * PATCH /api/v1/furnace-batches/:id/complete
  * Logs actuals, runs deviation check, closes the batch and all its UID step logs.
  * body: { actualTempC, actualSoakMin }
@@ -236,6 +273,10 @@ furnaceRouter.patch('/:id/complete', requireRole(['admin', 'manager', 'superviso
     const { rows: batchRows } = await client.query(`SELECT * FROM furnace_batches WHERE id = $1 FOR UPDATE`, [req.params.id]);
     const batch = batchRows[0];
     if (!batch) throw Object.assign(new Error('Batch not found'), { status: 404, code: 'BATCH_NOT_FOUND' });
+    // §8.3 — a batch cannot be completed until a Supervisor has verified it.
+    if (batch.status === 'pending_verification') {
+      throw Object.assign(new Error('This batch must be verified by a Supervisor before it can run/complete.'), { status: 409, code: 'FURNACE_NOT_VERIFIED' });
+    }
 
     const { rows: stepRows } = await client.query(`SELECT * FROM cycle_steps WHERE id = $1`, [batch.cycle_step_id]);
     const step = stepRows[0];
