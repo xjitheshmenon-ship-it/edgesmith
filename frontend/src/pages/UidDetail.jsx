@@ -1,6 +1,9 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { usePolling } from '../hooks/usePolling';
 import { uidsApi } from '../api/uids';
+import { masterApi, mosApi } from '../api/resources';
+import { useAuth } from '../store/AuthContext';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
 
@@ -288,14 +291,126 @@ function LineageChip({ code, status }) {
   );
 }
 
+// ── Minimal centred modal ───────────────────────────────────────────────────
+function Overlay({ title, onClose, children }) {
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(9,24,48,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} className="card" style={{ width: '100%', maxWidth: 460, padding: '20px 22px' }}>
+        <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 16, color: 'var(--text-primary, #15366a)', marginBottom: 14 }}>{title}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── Role-gated action bar (Tier-3: Admin / Manager / Supervisor only) ─────────
+function ActionBar({ uid, canManage, onChanged }) {
+  const [modal, setModal] = useState(null); // hold | release | design | mo | priority
+  const [reason, setReason] = useState('');
+  const [designs, setDesigns] = useState([]);
+  const [mos, setMos] = useState([]);
+  const [sel, setSel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  if (!canManage) return null; // Operators & Service get no action buttons
+
+  const code = uid.uid_code;
+  const onHold = uid.status === 'hold';
+  const designPending = !uid.design_code;
+
+  function open(which) {
+    setErr(null); setReason(''); setSel(which === 'priority' ? (uid.priority || 'Normal') : '');
+    if (which === 'design') masterApi.designs().then((r) => setDesigns(r.data || [])).catch(() => {});
+    if (which === 'mo') mosApi.list().then((r) => setMos(r.data || [])).catch(() => {});
+    setModal(which);
+  }
+  async function run(fn) {
+    setBusy(true); setErr(null);
+    try { await fn(); setModal(null); onChanged && onChanged(); }
+    catch (e) { setErr(e); } finally { setBusy(false); }
+  }
+
+  const btn = { className: 'btn btn-sm' };
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
+        {designPending && <button className="btn btn-primary btn-sm" onClick={() => open('design')}><Icon name="check" size={14} color="var(--accent-green, #d4eecb)" /> Confirm design</button>}
+        <button {...btn} onClick={() => open('mo')}><Icon name="link" size={14} /> Link MO</button>
+        <button {...btn} onClick={() => open('priority')}><Icon name="tag" size={14} /> Change priority</button>
+        {onHold
+          ? <button {...btn} onClick={() => open('release')}><Icon name="play" size={14} /> Release hold</button>
+          : <button className="btn btn-danger btn-sm" onClick={() => open('hold')}><Icon name="pause" size={14} color="#fff" /> Place hold</button>}
+      </div>
+
+      {modal && (
+        <Overlay title={{ hold: 'Place hold', release: 'Release hold', design: 'Confirm design', mo: 'Link to MO', priority: 'Change priority' }[modal]} onClose={() => !busy && setModal(null)}>
+          {(modal === 'hold' || modal === 'release') && (
+            <>
+              <label className="form-label">Reason {modal === 'hold' ? '(min 10 characters)' : ''}</label>
+              <textarea className="form-input" style={{ height: 72, resize: 'vertical' }} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (logged to audit trail)…" />
+            </>
+          )}
+          {modal === 'design' && (
+            <>
+              <label className="form-label">Design (valid for {uid.size_mm}mm)</label>
+              <select className="form-select" value={sel} onChange={(e) => setSel(e.target.value)}>
+                <option value="">— select design —</option>
+                {designs.map((d) => <option key={d.id} value={d.id}>{d.code || d.name}</option>)}
+              </select>
+            </>
+          )}
+          {modal === 'mo' && (
+            <>
+              <label className="form-label">Manufacturing Order</label>
+              <select className="form-select" value={sel} onChange={(e) => setSel(e.target.value)}>
+                <option value="">— select MO —</option>
+                {mos.map((m) => <option key={m.id} value={m.id}>{m.mo_number} — {m.customer}</option>)}
+              </select>
+            </>
+          )}
+          {modal === 'priority' && (
+            <>
+              <label className="form-label">Priority</label>
+              <select className="form-select" value={sel} onChange={(e) => setSel(e.target.value)}>
+                {['High', 'Normal', 'Low'].map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </>
+          )}
+          {err && <div style={{ marginTop: 10, fontFamily: SANS, fontSize: 12, color: 'var(--status-danger, #e5484d)' }}>{err.message || 'Action failed.'}</div>}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+            <button className="btn btn-sm" disabled={busy} onClick={() => setModal(null)}>Cancel</button>
+            <button className="btn btn-primary btn-sm" disabled={busy
+              || (modal === 'hold' && reason.trim().length < 10)
+              || (modal === 'release' && !reason.trim())
+              || ((modal === 'design' || modal === 'mo') && !sel)}
+              onClick={() => run(async () => {
+                if (modal === 'hold') return uidsApi.hold(code, reason.trim());
+                if (modal === 'release') return uidsApi.release(code, reason.trim());
+                if (modal === 'design') return uidsApi.update(code, { design_id: Number(sel) });
+                if (modal === 'mo') return uidsApi.update(code, { mo_id: Number(sel) });
+                if (modal === 'priority') return uidsApi.update(code, { priority: sel });
+              })}>
+              {busy ? 'Working…' : 'Confirm'}
+            </button>
+          </div>
+        </Overlay>
+      )}
+    </>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Page
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function UidDetail() {
-  const { code } = useParams();
+export default function UidDetail({ code: codeProp }) {
+  const params = useParams();
+  const code = codeProp || params.code;
+  const { isSupervisor, isManager, isAdmin } = useAuth();
+  const canManage = isSupervisor || isManager || isAdmin; // §UID Lookup Tier-3 actions
 
-  const { data, error, loading } = usePolling(
+  const { data, error, loading, refetch } = usePolling(
     async () => {
       const [detail, lineage] = await Promise.all([
         uidsApi.detail(code).then((r) => r.data),
@@ -365,19 +480,8 @@ export default function UidDetail() {
         </div>
       </div>
 
-      {/* ── Quick actions (role-gated server-side; shown as affordances) ── */}
-      <div style={{ display: 'flex', gap: 8, marginTop: 16, flexWrap: 'wrap' }}>
-        {designPending ? (
-          <button className="btn btn-primary btn-sm"><Icon name="check" size={14} color="var(--accent-green, #d4eecb)" /> Confirm design</button>
-        ) : null}
-        <button className="btn btn-sm"><Icon name="link" size={14} /> Link MO</button>
-        <button className="btn btn-sm"><Icon name="tag" size={14} /> Change priority</button>
-        {onHold ? (
-          <button className="btn btn-sm"><Icon name="play" size={14} /> Release hold</button>
-        ) : (
-          <button className="btn btn-danger btn-sm"><Icon name="pause" size={14} color="#fff" /> Place hold</button>
-        )}
-      </div>
+      {/* ── Quick actions — functional, role-gated (Admin/Manager/Supervisor) ── */}
+      <ActionBar uid={uid} canManage={canManage} onChanged={refetch} />
 
       {/* ── On-hold banner ── */}
       {onHold ? (
@@ -403,9 +507,8 @@ export default function UidDetail() {
         >
           <Icon name="alert" size={18} color="var(--status-warning, #d97a2b)" />
           <div style={{ flex: 1, fontFamily: SANS, fontSize: 13, color: 'var(--status-warning, #d97a2b)', fontWeight: 600 }}>
-            Design / drawing not yet confirmed for this UID.
+            Design / drawing not yet confirmed for this UID.{canManage ? ' Use “Confirm design” above.' : ''}
           </div>
-          <button className="btn btn-primary btn-sm"><Icon name="check" size={14} color="var(--accent-green, #d4eecb)" /> Confirm design (Manager)</button>
         </div>
       ) : null}
 

@@ -44,12 +44,15 @@ export const SECTIONS_BY_ROLE = {
   manager: ['OVERVIEW', 'OPERATIONS', 'CONFIGURATION'],
   supervisor: ['OVERVIEW', 'OPERATIONS'],
   operator: ['OVERVIEW', 'OPERATIONS'], // filtered to My Workstation/QC below (QC now lives in OPERATIONS)
-  service: [],
+  service: ['OVERVIEW'], // filtered to UID Lookup only (Final Inspection Report)
   shopfloor: [],
 };
 
 /** Operators only see a narrow slice — My Workstation and Quality Control */
 export const OPERATOR_ALLOWED_ROUTES = ['jobexec', 'qc'];
+
+/** Service sees only UID Lookup (the Final Inspection Report is rendered there). */
+export const SERVICE_ALLOWED_ROUTES = ['uid'];
 
 /** Routes reachable (e.g. deep-linked from Reports) but NOT shown in the sidebar.
  *  Batch Tracker lives here — furnace batching is on Work Assignment; the tracker
