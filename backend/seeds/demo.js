@@ -88,12 +88,21 @@ async function backfillWeldBomIfEmpty() {
   console.log(`✓ Backfilled block BOM for ${n} demo welds (top-up).`);
 }
 
+// Spread operator jobs across every Dharmapuri workstation (shared helper), so
+// each station shows an operator. Idempotent per-unit top-up.
+async function seedOperatorJobsAcrossWorkstations() {
+  const { spreadOperatorJobs } = require('./spreadOperatorJobs');
+  const r = await spreadOperatorJobs({ query, withTransaction });
+  if (r.created) console.log(`\u2713 Spread ${r.created} operator jobs so every Dharmapuri workstation shows an operator (${r.stationsCovered} units).`);
+}
+
 async function main() {
   console.log('Seeding comprehensive DEMO data (SEED_DEMO=true)...\n');
 
   // Runs regardless of the main guard below.
   await seedFaridabadItemsIfEmpty();
   await backfillWeldBomIfEmpty();
+  await seedOperatorJobsAcrossWorkstations();
 
   const exists = await query(`SELECT id FROM contractor_dispatches WHERE batch_reference = $1`, [DEMO_DISPATCH_REF]);
   if (exists.rows[0]) {
@@ -420,6 +429,9 @@ async function main() {
 
     console.log(`✓ Demo data created: ${operators.length + 4} extra employees, 3 MOs, Faridabad chain (3 dispatches), ${allUidIds.length} UIDs, step+QC logs, 1 furnace + 1 production batch, today's shift with jobs, and 4 alerts.`);
   });
+
+  // Fresh DB: operators exist now — spread jobs across every workstation.
+  await seedOperatorJobsAcrossWorkstations();
 
   console.log('  Log in and explore — every page should now have data. Default new-user password: Demo123!');
   await pool.end();

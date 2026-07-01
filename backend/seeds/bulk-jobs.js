@@ -104,6 +104,17 @@ async function main() {
   });
 
   console.log(`bulk-jobs: seeded ${rows.length} jobs across ${steps.length} EAT operations (codes ${eat.letter}${String(series ? series.next_number : 1).padStart(5, '0')}…${eat.letter}${String(seq - 1).padStart(5, '0')}).`);
+
+  // With the full UID population in place, ensure every Dharmapuri workstation
+  // shows an operator (idempotent per-unit top-up).
+  try {
+    const { spreadOperatorJobs } = require('./spreadOperatorJobs');
+    const r = await spreadOperatorJobs({ query, withTransaction });
+    if (r.created) console.log(`bulk-jobs: spread ${r.created} operator jobs across ${r.stationsCovered} Dharmapuri workstations.`);
+  } catch (e) {
+    console.error('bulk-jobs: operator-job spread skipped —', e.message);
+  }
+
   await pool.end();
 }
 
