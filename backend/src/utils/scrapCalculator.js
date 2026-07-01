@@ -60,10 +60,40 @@ function bunchGrindingRunCapacity(barLengthMm, bedLengthMm, barsPerSet) {
   return { setsPerRun, barsPerRun: setsPerRun * barsPerSet };
 }
 
+/**
+ * Plan a bunch-grinding run (§4.12). Bars of the SAME length are bunched
+ * side-by-side into sets of up to barsPerSet; a set occupies its bar length
+ * along the bed regardless of how many bars it holds. Sets are laid end-to-end,
+ * so the run fits only if the sum of set lengths is within the bed.
+ *
+ * @param bars  [{ size_mm, ... }]
+ * @returns { sets: [{ lengthMm, bars: [...] }], bedUsedMm, valid, tooLong }
+ */
+function planBunchSets(bars, barsPerSet, bedLengthMm) {
+  const perSet = Math.max(1, barsPerSet || 5);
+  const byLength = new Map();
+  let tooLong = null;
+  for (const b of bars) {
+    const len = Number(b.size_mm) || 0;
+    if (len > bedLengthMm) tooLong = b;
+    if (!byLength.has(len)) byLength.set(len, []);
+    byLength.get(len).push(b);
+  }
+  const sets = [];
+  for (const [len, group] of byLength) {
+    for (let i = 0; i < group.length; i += perSet) {
+      sets.push({ lengthMm: len, bars: group.slice(i, i + perSet) });
+    }
+  }
+  const bedUsedMm = sets.reduce((sum, s) => sum + s.lengthMm, 0);
+  return { sets, bedUsedMm, valid: !tooLong && bedUsedMm <= bedLengthMm, tooLong };
+}
+
 module.exports = {
   calculateScrap,
   furnaceCapacityForSize,
   furnaceSlotsForBar,
   validateGrindingCombination,
   bunchGrindingRunCapacity,
+  planBunchSets,
 };
