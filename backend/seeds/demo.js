@@ -88,6 +88,33 @@ async function backfillWeldBomIfEmpty() {
   console.log(`✓ Backfilled block BOM for ${n} demo welds (top-up).`);
 }
 
+// Put an operator on one live item per Faridabad workstation, so the Faridabad
+// My Workstation board + Individual view (and Production Floor) show who is
+// working where. Idempotent: skips once several items already have an operator.
+async function seedFaridabadOperatorItems() {
+  const { rows: ops } = await query(`SELECT id FROM employees WHERE role='operator' ORDER BY id`);
+  if (!ops.length) return;
+  const { rows: c } = await query(
+    `SELECT count(*)::int AS c FROM faridabad_items WHERE status='in_progress' AND current_operator_id IS NOT NULL`
+  );
+  if (c[0].c >= 5) return;
+  const { rows: items } = await query(
+    `SELECT DISTINCT ON (current_step) id FROM faridabad_items
+     WHERE status IN ('queued','in_progress') ORDER BY current_step, id`
+  );
+  let i = 0;
+  for (const it of items) {
+    const op = ops[i % ops.length].id;
+    await query(
+      `UPDATE faridabad_items SET status='in_progress', current_operator_id=$1,
+         started_at = now() - make_interval(mins => $2), updated_at = now() WHERE id=$3`,
+      [op, 5 + (i * 7) % 45, it.id]
+    );
+    i++;
+  }
+  if (items.length) console.log(`✓ Put operators on ${items.length} live Faridabad items (one per workstation).`);
+}
+
 // Spread operator jobs across every Dharmapuri workstation (shared helper), so
 // each station shows an operator. Idempotent per-unit top-up.
 async function seedOperatorJobsAcrossWorkstations() {
@@ -103,6 +130,7 @@ async function main() {
   await seedFaridabadItemsIfEmpty();
   await backfillWeldBomIfEmpty();
   await seedOperatorJobsAcrossWorkstations();
+  await seedFaridabadOperatorItems();
 
   const exists = await query(`SELECT id FROM contractor_dispatches WHERE batch_reference = $1`, [DEMO_DISPATCH_REF]);
   if (exists.rows[0]) {
@@ -432,6 +460,7 @@ async function main() {
 
   // Fresh DB: operators exist now — spread jobs across every workstation.
   await seedOperatorJobsAcrossWorkstations();
+  await seedFaridabadOperatorItems();
 
   console.log('  Log in and explore — every page should now have data. Default new-user password: Demo123!');
   await pool.end();

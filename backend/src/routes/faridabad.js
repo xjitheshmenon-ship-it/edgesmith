@@ -321,7 +321,7 @@ router.get('/floor', async (req, res) => {
   const byStep = Object.fromEntries(steps.map((s) => [s.step_number, s]));
   const { rows: items } = await query(
     `SELECT fi.id, fi.size_mm, fi.current_step, fi.status, fi.priority, fi.started_at,
-            ct.code AS cycle_code, e.full_name AS operator_name
+            ct.code AS cycle_code, fi.current_operator_id AS operator_id, e.full_name AS operator_name
      FROM faridabad_items fi
      JOIN cycle_types ct ON ct.id = fi.cycle_type_id
      LEFT JOIN employees e ON e.id = fi.current_operator_id
