@@ -193,4 +193,54 @@ router.patch('/grinding-rules/:id', requireRole(['admin']), async (req, res) => 
   return res.json({ success: true, data: rows[0] });
 });
 
+// ── Badge types (workstation certifications) ────────────────────────────────
+// Each certification is tied to a workstation type. Managed here so admins can
+// add certifications for any workstation and edit them.
+router.get('/badge-types', async (req, res) => {
+  const { rows } = await query(
+    `SELECT bt.id, bt.name, bt.workstation_type_id, bt.validity_months, bt.expires, bt.description, bt.status,
+            wt.code AS workstation_code, wt.name AS workstation_name
+     FROM badge_types bt
+     LEFT JOIN workstation_types wt ON wt.id = bt.workstation_type_id
+     WHERE bt.status <> 'archived'
+     ORDER BY wt.code NULLS LAST, bt.name`
+  );
+  return res.json({ success: true, data: rows });
+});
+
+router.post('/badge-types', requireRole(['admin']), async (req, res) => {
+  const { name, workstationTypeId, validityMonths, description } = req.body;
+  if (!name) return res.status(400).json({ success: false, error: { code: 'NO_NAME', message: 'Certification name is required.' } });
+  const months = validityMonths != null && validityMonths !== '' ? Number(validityMonths) : null;
+  const { rows } = await query(
+    `INSERT INTO badge_types (name, workstation_type_id, validity_months, expires, description)
+     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [name, workstationTypeId || null, months, months > 0, description || null]
+  );
+  await req.audit({ tableName: 'badge_types', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
+  return res.status(201).json({ success: true, data: rows[0] });
+});
+
+router.patch('/badge-types/:id', requireRole(['admin']), async (req, res) => {
+  const map = { name: 'name', workstationTypeId: 'workstation_type_id', validityMonths: 'validity_months', description: 'description', status: 'status' };
+  const sets = []; const params = []; let p = 1;
+  for (const [key, col] of Object.entries(map)) {
+    if (req.body[key] !== undefined) { sets.push(`${col} = $${p++}`); params.push(req.body[key] === '' ? null : req.body[key]); }
+  }
+  if (req.body.validityMonths !== undefined) { sets.push(`expires = $${p++}`); params.push(Number(req.body.validityMonths) > 0); }
+  if (!sets.length) return res.status(400).json({ success: false, error: { code: 'NO_FIELDS', message: 'No fields provided.' } });
+  params.push(req.params.id);
+  const { rows } = await query(`UPDATE badge_types SET ${sets.join(', ')} WHERE id = $${p} RETURNING *`, params);
+  if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Badge type not found.' } });
+  await req.audit({ tableName: 'badge_types', recordId: req.params.id, action: 'UPDATE', after: rows[0] });
+  return res.json({ success: true, data: rows[0] });
+});
+
+router.delete('/badge-types/:id', requireRole(['admin']), async (req, res) => {
+  const { rows } = await query(`UPDATE badge_types SET status = 'archived' WHERE id = $1 RETURNING *`, [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Badge type not found.' } });
+  await req.audit({ tableName: 'badge_types', recordId: req.params.id, action: 'UPDATE', after: { status: 'archived' } });
+  return res.json({ success: true, data: rows[0] });
+});
+
 module.exports = router;
