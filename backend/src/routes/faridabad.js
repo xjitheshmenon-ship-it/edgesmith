@@ -374,6 +374,23 @@ router.post('/items/:id/start', requireRole(['admin', 'manager', 'supervisor', '
 router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
   const { sheet, pieces } = req.body || {};
   const result = await withTransaction(async (client) => {
+    // Run an optional side-effect inside a savepoint so that, if it fails, only
+    // that part rolls back — the core "close the operation and advance" must
+    // ALWAYS succeed. Noting material/plans is secondary and must never block it.
+    const skipped = [];
+    async function guarded(name, label, fn) {
+      await client.query(`SAVEPOINT ${name}`);
+      try {
+        const value = await fn();
+        await client.query(`RELEASE SAVEPOINT ${name}`);
+        return value;
+      } catch (e) {
+        await client.query(`ROLLBACK TO SAVEPOINT ${name}`);
+        skipped.push({ step: label, reason: e.message });
+        return null;
+      }
+    }
+
     const { rows: itRows } = await client.query(`SELECT * FROM faridabad_items WHERE id = $1 FOR UPDATE`, [req.params.id]);
     const item = itRows[0];
     if (!item) throw Object.assign(new Error('Item not found'), { status: 404, code: 'ITEM_NOT_FOUND' });
@@ -383,6 +400,7 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
     const step = steps[idx];
     const isMsCutting = step && /MS Cutting/i.test(step.operation_name);
     const isAlloyCutting = step && /alloy.*cut/i.test(step.operation_name || '');
+    const netSeconds = item.started_at ? Math.floor((Date.now() - new Date(item.started_at).getTime()) / 1000) : null;
 
     // Alloy Steel Cutting: the operator enters each bar length; the system plans
     // the minimum-wastage cut into standard 1250/850 pieces and records the run.
@@ -391,32 +409,37 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
       const { bars, sizes, kerf, alloyIntakeId } = req.body || {};
       const lengths = (Array.isArray(bars) ? bars : []).filter((x) => Number(x) > 0);
       if (lengths.length) {
-        const usedSizes = sizes && sizes.length ? sizes : DEFAULT_SIZES;
-        alloyPlan = alloyCutBatch(lengths, { sizes: usedSizes, kerf });
-        await client.query(
-          `INSERT INTO alloy_cutting_runs
-             (alloy_intake_id, faridabad_item_id, sizes, kerf_mm, bars, total_pieces, total_wastage_mm, totals, operator_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [alloyIntakeId || null, item.id, JSON.stringify(usedSizes), Math.max(0, Number(kerf) || 0),
-            JSON.stringify(alloyPlan.plans), alloyPlan.totals.totalPieces, alloyPlan.totals.totalWastageMm,
-            JSON.stringify(alloyPlan.totals), req.user.sub]
-        );
+        alloyPlan = await guarded('sp_alloy', 'alloy cut plan', async () => {
+          const usedSizes = sizes && sizes.length ? sizes : DEFAULT_SIZES;
+          const plan = alloyCutBatch(lengths, { sizes: usedSizes, kerf });
+          await client.query(
+            `INSERT INTO alloy_cutting_runs
+               (alloy_intake_id, faridabad_item_id, sizes, kerf_mm, bars, total_pieces, total_wastage_mm, totals, operator_id)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [alloyIntakeId || null, item.id, JSON.stringify(usedSizes), Math.max(0, Number(kerf) || 0),
+              JSON.stringify(plan.plans), plan.totals.totalPieces, plan.totals.totalWastageMm,
+              JSON.stringify(plan.totals), req.user.sub]
+          );
+          return plan;
+        });
       }
     }
 
     let balance = null;
     let runId = null;
     if (isMsCutting && sheet && Array.isArray(pieces) && pieces.length) {
-      balance = calculateMsBalance(sheet, pieces);
-      const { rows: runRows } = await client.query(
-        `INSERT INTO ms_sheet_cutting_runs (sheet_length_mm, sheet_width_mm, sheet_height_mm, pieces, strips, total_balance_weight_kg, operator_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-        [sheet.length_mm, sheet.width_mm, sheet.height_mm, JSON.stringify(pieces), JSON.stringify(balance.strips), balance.totalBalanceWeightKg, req.user.sub]
-      );
-      runId = runRows[0].id;
+      const msResult = await guarded('sp_ms', 'MS cutting balance', async () => {
+        const bal = calculateMsBalance(sheet, pieces);
+        const { rows: runRows } = await client.query(
+          `INSERT INTO ms_sheet_cutting_runs (sheet_length_mm, sheet_width_mm, sheet_height_mm, pieces, strips, total_balance_weight_kg, operator_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+          [sheet.length_mm, sheet.width_mm, sheet.height_mm, JSON.stringify(pieces), JSON.stringify(bal.strips), bal.totalBalanceWeightKg, req.user.sub]
+        );
+        return { balance: bal, runId: runRows[0].id };
+      });
+      if (msResult) { balance = msResult.balance; runId = msResult.runId; }
     }
 
-    const netSeconds = item.started_at ? Math.floor((Date.now() - new Date(item.started_at).getTime()) / 1000) : null;
     await client.query(
       `INSERT INTO faridabad_item_logs (item_id, step_number, operation_name, operator_id, started_at, closed_at, net_work_seconds, ms_cutting_run_id)
        VALUES ($1,$2,$3,$4,$5, now(), $6, $7)`,
@@ -425,31 +448,35 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
 
     // Welding (Joining): the operator picks one alloy heat + one MS heat as they
     // close the WELD-01 operation, and the block's weld + BOM are recorded inline
-    // (no separate Joining page needed).
+    // (no separate Joining page needed). Recording the weld is best-effort — a
+    // failure here still closes the operation and advances the block.
     let weldId = null;
     const isWelding = step && /weld|join/i.test(step.operation_name || '');
     if (isWelding) {
       const { alloyIntakeId, msIntakeId, bom } = req.body || {};
-      const { rows: wl } = await client.query(
-        `INSERT INTO faridabad_weld_log (cycle_type_id, alloy_intake_id, ms_intake_id, operator_id, workstation_unit_id, size_mm, started_at, closed_at, net_work_seconds)
-         VALUES ($1,$2,$3,$4,$5,$6,$7, now(), $8) RETURNING id`,
-        [item.cycle_type_id, alloyIntakeId || null, msIntakeId || null, req.user.sub, null, item.size_mm || null, item.started_at, netSeconds]
-      );
-      weldId = wl[0].id;
-      const lines = [];
-      if (alloyIntakeId) lines.push({ component_type: 'alloy', intake_id: alloyIntakeId });
-      if (msIntakeId) lines.push({ component_type: 'ms', intake_id: msIntakeId });
-      if (Array.isArray(bom)) for (const c of bom) lines.push(c);
-      for (const c of lines) {
-        const intakeId = c.intakeId ?? c.intake_id ?? null;
-        const description = c.description ?? null;
-        if (!intakeId && !description) continue;
-        await client.query(
-          `INSERT INTO faridabad_weld_bom (weld_log_id, component_type, intake_id, description, dimensions_mm, quantity)
-           VALUES ($1,$2,$3,$4,$5,$6)`,
-          [weldId, (c.componentType || c.component_type || 'other').toString().slice(0, 20), intakeId, description, c.dimensionsMm ?? c.dimensions_mm ?? null, Number(c.quantity) > 0 ? Number(c.quantity) : 1]
+      weldId = await guarded('sp_weld', 'weld log', async () => {
+        const { rows: wl } = await client.query(
+          `INSERT INTO faridabad_weld_log (cycle_type_id, alloy_intake_id, ms_intake_id, operator_id, workstation_unit_id, size_mm, started_at, closed_at, net_work_seconds)
+           VALUES ($1,$2,$3,$4,$5,$6,$7, now(), $8) RETURNING id`,
+          [item.cycle_type_id, alloyIntakeId || null, msIntakeId || null, req.user.sub, null, item.size_mm || null, item.started_at, netSeconds]
         );
-      }
+        const id = wl[0].id;
+        const lines = [];
+        if (alloyIntakeId) lines.push({ component_type: 'alloy', intake_id: alloyIntakeId });
+        if (msIntakeId) lines.push({ component_type: 'ms', intake_id: msIntakeId });
+        if (Array.isArray(bom)) for (const c of bom) lines.push(c);
+        for (const c of lines) {
+          const intakeId = c.intakeId ?? c.intake_id ?? null;
+          const description = c.description ?? null;
+          if (!intakeId && !description) continue;
+          await client.query(
+            `INSERT INTO faridabad_weld_bom (weld_log_id, component_type, intake_id, description, dimensions_mm, quantity)
+             VALUES ($1,$2,$3,$4,$5,$6)`,
+            [id, (c.componentType || c.component_type || 'other').toString().slice(0, 20), intakeId, description, c.dimensionsMm ?? c.dimensions_mm ?? null, Number(c.quantity) > 0 ? Number(c.quantity) : 1]
+          );
+        }
+        return id;
+      });
     }
 
     const next = steps[idx + 1];
@@ -461,8 +488,8 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
     } else {
       await client.query(`UPDATE faridabad_items SET status = 'done', started_at = NULL, updated_at = now() WHERE id = $1`, [item.id]);
     }
-    await req.audit({ tableName: 'faridabad_items', recordId: item.id, action: 'UPDATE', after: { closedStep: item.current_step, advancedTo: next ? next.step_number : 'done', weldId } });
-    return { itemId: item.id, advancedTo: next ? next.step_number : 'done', balance, weldId, alloyPlan };
+    await req.audit({ tableName: 'faridabad_items', recordId: item.id, action: 'UPDATE', after: { closedStep: item.current_step, advancedTo: next ? next.step_number : 'done', weldId, skipped } });
+    return { itemId: item.id, advancedTo: next ? next.step_number : 'done', balance, weldId, alloyPlan, skipped };
   });
   return res.json({ success: true, data: result });
 });

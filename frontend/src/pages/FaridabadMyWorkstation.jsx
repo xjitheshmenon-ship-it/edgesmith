@@ -803,7 +803,16 @@ export default function FaridabadMyWorkstation() {
       {header}
 
       {actionError && (
-        <div className="card" style={{ marginTop: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, borderLeft: '4px solid var(--status-danger, #e5484d)' }}>
+        // Fixed toast with a z-index above the modal overlay (z 80) so a failed
+        // close is always visible — even while a close modal is still open.
+        <div
+          className="card"
+          style={{
+            position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 120,
+            width: 'min(680px, calc(100vw - 32px))', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10,
+            borderLeft: '4px solid var(--status-danger, #e5484d)', boxShadow: 'var(--shadow-modal, 0 10px 40px rgba(10,29,58,0.25))',
+          }}
+        >
           <Icon name="alert" size={18} color="#e5484d" />
           <span style={{ fontFamily: SANS, fontSize: 13, color: 'var(--status-danger-dark, #c0392b)', flex: 1 }}>{actionError}</span>
           <button className="btn btn-sm" onClick={() => setActionError(null)}>Dismiss</button>
