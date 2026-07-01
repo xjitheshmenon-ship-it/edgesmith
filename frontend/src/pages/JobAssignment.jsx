@@ -6,6 +6,7 @@ import { uidsApi } from '../api/uids';
 import { shiftsApi, employeesApi, workstationAssignmentsApi } from '../api/resources';
 import Icon from '../components/common/Icon';
 import { StatusPill, PriorityBadge } from '../components/common/Badges';
+import { FurnaceBatchPanel } from './BatchManagement';
 
 /* ──────────────────────────────────────────────────────────────────────────
    PAGE 20 — JOB ASSIGNMENT (rebuilt model, authoritative)
@@ -828,6 +829,21 @@ export default function JobAssignment() {
           )}
         </div>
       </div>
+
+      {/* Furnace batching — supervisor multi-selects queued furnace UIDs and
+          assigns them to a furnace unit (which becomes the batch, then awaits
+          verification). Furnace steps are Dharmapuri-only. */}
+      {location !== 'faridabad' && canAssign && (
+        <div style={{ marginTop: 26 }}>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 18, letterSpacing: '-0.03em', color: T_PRIMARY }}>
+            Furnace batching
+          </div>
+          <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY, marginTop: 3 }}>
+            Furnace steps run as supervisor batches — multi-select the queued UIDs and assign them to a furnace. The batch then awaits a supervisor&apos;s verification before it starts. (History &amp; verification also on Reports → Batch Tracker.)
+          </div>
+          <FurnaceBatchPanel showActive={false} />
+        </div>
+      )}
 
       {pickerOp && (() => {
         // Any factory machine the operator isn't already on — a machine can be
