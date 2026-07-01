@@ -10,13 +10,19 @@ export default function Login() {
   const [error, setError] = useState('');
 
   // Demo accounts seeded by SEED_DEMO. Click one to fill the form.
+  // All demo passwords are Demo123! (admin is ChangeMe123!).
   const DEMO_ACCOUNTS = [
-    { role: 'Admin', username: 'admin', password: 'ChangeMe123!' },
-    { role: 'Manager', username: 'manager', password: 'Demo123!' },
-    { role: 'Supervisor', username: 'supervisor', password: 'Demo123!' },
-    { role: 'Operator', username: 'operator', password: 'Demo123!' },
-    { role: 'Service', username: 'service', password: 'Demo123!' },
-    { role: 'Shopfloor', username: 'shopfloor', password: 'Demo123!' },
+    { role: 'Admin', name: 'System Admin', username: 'admin', password: 'ChangeMe123!' },
+    { role: 'Manager', name: 'Priya Menon', username: 'manager', password: 'Demo123!' },
+    { role: 'Supervisor · Dharmapuri', name: 'Ravi Kumar', username: 'supervisor', password: 'Demo123!' },
+    { role: 'Supervisor · Faridabad', name: 'Anil Sharma', username: 'supervisor_far', password: 'Demo123!' },
+    { role: 'Operator', name: 'Suresh B', username: 'operator', password: 'Demo123!' },
+    { role: 'Operator', name: 'Mani K', username: 'operator2', password: 'Demo123!' },
+    { role: 'Operator', name: 'Deepa S', username: 'operator3', password: 'Demo123!' },
+    { role: 'Operator', name: 'Vijay R', username: 'operator4', password: 'Demo123!' },
+    { role: 'Operator', name: 'Karthik M', username: 'operator5', password: 'Demo123!' },
+    { role: 'Service', name: 'Latha R', username: 'service', password: 'Demo123!' },
+    { role: 'Shopfloor', name: 'Floor Display', username: 'shopfloor', password: 'Demo123!' },
   ];
 
   function fill(acc) {
@@ -79,9 +85,10 @@ export default function Login() {
                   type="button"
                   onClick={() => fill(acc)}
                   title={`${acc.username} / ${acc.password}`}
-                  style={{ flex: '1 1 auto', minWidth: 96, cursor: 'pointer', textAlign: 'left', background: '#f6f9f4', border: '1px solid #e3ebde', borderRadius: 9, padding: '7px 10px' }}
+                  style={{ flex: '1 1 auto', minWidth: 108, cursor: 'pointer', textAlign: 'left', background: '#f6f9f4', border: '1px solid #e3ebde', borderRadius: 9, padding: '7px 10px' }}
                 >
                   <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontWeight: 600, fontSize: 12, color: '#15366a' }}>{acc.role}</div>
+                  {acc.name && <div style={{ fontFamily: "'IBM Plex Sans', sans-serif", fontSize: 10, color: '#7d8fa6' }}>{acc.name}</div>}
                   <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, color: '#5d7188' }}>{acc.username}</div>
                 </button>
               ))}
