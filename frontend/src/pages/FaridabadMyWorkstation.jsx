@@ -69,6 +69,10 @@ function isMsCutting(item) {
   return /ms\s*cutting/i.test(String(pick(item, 'operation_name') || ''));
 }
 
+function isWelding(item) {
+  return /weld|join/i.test(String(pick(item, 'operation_name') || ''));
+}
+
 /* ── live timer hook: one ticking clock for the whole page ────────────────── */
 
 function useNow(active) {
@@ -318,6 +322,62 @@ function MsCuttingModal({ item, onCancel, onConfirm, busy, balance }) {
 
 /* ── Active item card ────────────────────────────────────────────────────── */
 
+/* ── Welding (Joining) close modal ───────────────────────────────────────────
+   The operator records the block's BOM — one alloy heat + one MS heat — as they
+   close the WELD-01 operation. Replaces the standalone Joining Operation page. */
+function WeldingModal({ item, onCancel, onConfirm, busy }) {
+  const [alloy, setAlloy] = useState([]);
+  const [ms, setMs] = useState([]);
+  const [alloyId, setAlloyId] = useState('');
+  const [msId, setMsId] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    faridabadApi.intakes({ material_type: 'alloy_steel' }).then((r) => { if (alive) setAlloy(r.data || []); }).catch(() => {});
+    faridabadApi.intakes({ material_type: 'ms' }).then((r) => { if (alive) setMs(r.data || []); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const heatLabel = (i) => {
+    const heat = pick(i, 'heat_number', 'heatNumber') || '—';
+    const grade = pick(i, 'grade', 'steel_grade') || '';
+    const supplier = pick(i, 'supplier_name', 'supplier', 'supplier_id');
+    return [heat, grade, supplier ? `· ${supplier}` : ''].filter(Boolean).join(' ');
+  };
+  const canConfirm = alloyId && msId && !busy;
+
+  return (
+    <Modal title="Welding (Joining) — record BOM" onClose={busy ? () => {} : onCancel} width={520}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY }}>
+          Select the alloy steel + MS heats welded into this block. Recorded as the block’s bill of materials as you close the operation.
+        </div>
+        <div>
+          <Label>Alloy steel heat</Label>
+          <select className="form-select" value={alloyId} onChange={(e) => setAlloyId(e.target.value)}>
+            <option value="">Select alloy heat…</option>
+            {alloy.map((i) => <option key={pick(i, 'id')} value={pick(i, 'id')}>{heatLabel(i)}</option>)}
+          </select>
+        </div>
+        <div>
+          <Label>MS heat</Label>
+          <select className="form-select" value={msId} onChange={(e) => setMsId(e.target.value)}>
+            <option value="">Select MS heat…</option>
+            {ms.map((i) => <option key={pick(i, 'id')} value={pick(i, 'id')}>{heatLabel(i)}</option>)}
+          </select>
+        </div>
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
+          <button className="btn btn-sm" onClick={onCancel} disabled={busy} type="button">Cancel</button>
+          <button className="btn btn-primary" disabled={!canConfirm} type="button"
+            onClick={() => onConfirm({ alloyIntakeId: Number(alloyId), msIntakeId: Number(msId) })}>
+            {busy ? 'Recording…' : 'Record weld & advance'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function ActiveItemCard({ item, nowMs, canAct, onClose, pending }) {
   const status = itemStatus(item);
   const accent = dotColor(status);
@@ -443,6 +503,7 @@ export default function FaridabadMyWorkstation() {
 
   const [pending, setPending] = useState(null); // item id currently acting on
   const [closeFor, setCloseFor] = useState(null); // item (MS Cutting modal)
+  const [weldFor, setWeldFor] = useState(null);   // item (Welding/Joining modal)
   const [balance, setBalance] = useState(null); // returned MS Cutting balance
   const [actionError, setActionError] = useState(null);
 
@@ -501,8 +562,29 @@ export default function FaridabadMyWorkstation() {
     [closeFor, refetch]
   );
 
+  // Welding (Joining) close: operator records the alloy + MS BOM, then advance.
+  const handleWeldClose = useCallback(
+    async (payload) => {
+      if (!weldFor) return;
+      setActionError(null);
+      setPending(itemId(weldFor));
+      try {
+        await faridabadApi.closeItem(itemId(weldFor), payload);
+        await refetch();
+        setWeldFor(null);
+      } catch (err) {
+        setActionError(err?.message || 'Could not record the weld — please try again.');
+      } finally {
+        setPending(null);
+      }
+    },
+    [weldFor, refetch]
+  );
+
   function onCloseActive(item) {
-    if (isMsCutting(item)) {
+    if (isWelding(item)) {
+      setWeldFor(item);
+    } else if (isMsCutting(item)) {
       setBalance(null);
       setCloseFor(item);
     } else {
@@ -678,6 +760,15 @@ export default function FaridabadMyWorkstation() {
           balance={balance}
           onCancel={dismissMsModal}
           onConfirm={handleMsClose}
+        />
+      )}
+
+      {weldFor && (
+        <WeldingModal
+          item={weldFor}
+          busy={pendingFor(weldFor) === true}
+          onCancel={() => setWeldFor(null)}
+          onConfirm={handleWeldClose}
         />
       )}
     </div>
