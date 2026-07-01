@@ -218,8 +218,11 @@ function MsCuttingModal({ item, onCancel, onConfirm, busy, balance }) {
     onConfirm(payload);
   }
 
-  const strips = Array.isArray(pick(balance || {}, 'strips')) ? balance.strips : [];
+  const sheetWt = pick(balance || {}, 'sheetWeightKg');
+  const piecesWt = pick(balance || {}, 'piecesWeightKg');
   const totalBalance = pick(balance || {}, 'totalBalanceWeightKg');
+  const utilPct = pick(balance || {}, 'utilizationPct');
+  const overAllocated = pick(balance || {}, 'overAllocated');
 
   return (
     <Modal
@@ -290,21 +293,25 @@ function MsCuttingModal({ item, onCancel, onConfirm, busy, balance }) {
       {balance && (
         <div className="card" style={{ background: 'var(--bg-muted, #f4f7f2)', boxShadow: 'none', padding: '14px 16px', marginBottom: 18 }}>
           <Label style={{ marginBottom: 10 }}>Calculated balance — leftover material</Label>
-          {strips.length === 0 ? (
-            <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY }}>No leftover strips.</div>
-          ) : (
-            strips.map((s, i) => (
-              <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Mono style={{ fontSize: 12, color: T_SECONDARY }}>
-                  Strip {i + 1} · {pick(s, 'width')}mm × {pick(s, 'length')}mm
-                </Mono>
-                <Mono style={{ fontSize: 12, fontWeight: 700, color: T_PRIMARY }}>{pick(s, 'weight')} kg</Mono>
-              </div>
-            ))
+          {sheetWt != null && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Mono style={{ fontSize: 12, color: T_SECONDARY }}>Sheet weight</Mono>
+              <Mono style={{ fontSize: 12, fontWeight: 700, color: T_PRIMARY }}>{sheetWt} kg</Mono>
+            </div>
           )}
-          {totalBalance != null && (
+          {piecesWt != null && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Mono style={{ fontSize: 12, color: T_SECONDARY }}>Cut pieces{utilPct != null ? ` · ${utilPct}% used` : ''}</Mono>
+              <Mono style={{ fontSize: 12, fontWeight: 700, color: T_PRIMARY }}>− {piecesWt} kg</Mono>
+            </div>
+          )}
+          {overAllocated ? (
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-card, #e3ebde)', fontFamily: SANS, fontSize: 12, color: 'var(--status-danger-dark, #c0392b)' }}>
+              Cut pieces exceed the sheet — check the sheet size and piece quantities.
+            </div>
+          ) : totalBalance != null && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-card, #e3ebde)' }}>
-              <Label>Total balance weight</Label>
+              <Label>Balance (scrap) weight</Label>
               <Mono style={{ fontSize: 14, fontWeight: 700, color: 'var(--status-success, #22a06b)' }}>{totalBalance} kg</Mono>
             </div>
           )}
