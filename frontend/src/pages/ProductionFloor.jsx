@@ -1,14 +1,33 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { usePolling } from '../hooks/usePolling';
 import { useApp } from '../store/AppContext';
+import { useAuth } from '../store/AuthContext';
 import { uidsApi } from '../api/uids';
+import { jobsApi } from '../api/jobs';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
 
 const MONO = "'IBM Plex Mono', monospace";
 const ARCHIVO = "'Archivo', sans-serif";
 const SANS = "'IBM Plex Sans', sans-serif";
+
+const ACTIVE_JOB_STATUSES = ['in_progress', 'running', 'active', 'paused'];
+function jpick(o, ...keys) { if (!o) return undefined; for (const k of keys) if (o[k] != null) return o[k]; return undefined; }
+function jstatus(j) { return String(jpick(j, 'status', 'state', 'job_status') || 'queued').toLowerCase(); }
+function fmtHMS(total) {
+  const s = Math.max(0, Math.floor(total || 0));
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+function elapsedFrom(iso, nowMs) {
+  if (!iso) return 0;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return 0;
+  return Math.max(0, (nowMs - t) / 1000);
+}
 
 /* Storage locations shown in the side panel (PAGE 7 spec). */
 const STORAGE_ORDER = ['RM', 'RM-Q', 'RM-D', 'HT-Q', 'HT-D', 'MC-Q', 'MC-D', 'QC-Q', 'QC-D', 'FG'];
@@ -97,17 +116,21 @@ function UidRow({ uid }) {
 }
 
 /* A single workstation card. */
-function StationCard({ station }) {
-  const { code, name, running, queued, runningUids, queuedUids } = station;
+function StationCard({ station, onClick }) {
+  const { code, name, running, queued, runningUids, queuedUids, jobs = [] } = station;
   const isIdle = running === 0 && queued === 0;
   const status = stationStatus(running, queued);
+  const operators = jobs.map((j) => jpick(j, 'operator_name', 'operator')).filter(Boolean);
+  const clickable = { cursor: 'pointer' };
 
   // Idle tiles: smaller, greyed out, no queue info (per spec).
   if (isIdle) {
     return (
       <div
         className="card"
-        style={{ padding: '14px 16px', opacity: 0.62, display: 'flex', flexDirection: 'column', gap: 4 }}
+        onClick={onClick}
+        title="View workstation detail"
+        style={{ padding: '14px 16px', opacity: 0.62, display: 'flex', flexDirection: 'column', gap: 4, ...clickable }}
       >
         <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: 'var(--text-primary, #15366a)' }}>{code}</div>
         <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>{name}</div>
@@ -121,7 +144,7 @@ function StationCard({ station }) {
   const moreQueue = queued - visibleQueue.length;
 
   return (
-    <div className="card" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column' }}>
+    <div className="card" onClick={onClick} title="View workstation detail" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', ...clickable }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
         <div>
           <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary, #15366a)' }}>{code}</div>
@@ -134,6 +157,12 @@ function StationCard({ station }) {
       <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-secondary, #5d7188)', marginTop: 5 }}>
         {running} in progress{queued ? ` · ${queued} queued` : ''}
       </div>
+      {operators.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, fontFamily: SANS, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>
+          <Icon name="user" size={11} />
+          {operators.slice(0, 2).map((o) => String(o).split(' ')[0]).join(', ')}{operators.length > 2 ? ` +${operators.length - 2}` : ''}
+        </div>
+      )}
 
       {/* In-progress UIDs */}
       {restRunning > 0 ? (
@@ -171,21 +200,32 @@ function StationCard({ station }) {
 
 export default function ProductionFloor() {
   const { location, locationLabel } = useApp();
+  const { user } = useAuth();
+  const currentUserId = jpick(user || {}, 'id', 'user_id', 'operator_id');
   const [search, setSearch] = useState('');
   const [storageFilter, setStorageFilter] = useState(null);
+  const [view, setView] = useState('all');           // 'all' | 'individual'
+  const [selectedCode, setSelectedCode] = useState(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // Live data. stationSummary gives the workstation roster + active counts;
   // the UID list gives the actual pieces. Both are polled together and merged
   // client-side into per-station running / queued buckets.
   const { data, loading, error, refetch } = usePolling(
     async () => {
-      const [stations, active, held, wip] = await Promise.all([
+      const [stations, active, held, wip, jobsRes] = await Promise.all([
         uidsApi.stationSummary().then((r) => r.data),
         uidsApi.list({ location, status: 'active', per_page: 200 }).then((r) => r.data),
         uidsApi.list({ location, status: 'hold', per_page: 200 }).then((r) => r.data),
         uidsApi.wipSummary().then((r) => r.data).catch(() => []),
+        jobsApi.list({}).then((r) => r.data).catch(() => []),
       ]);
-      return { stations: stations || [], uids: [...(active || []), ...(held || [])], wip: wip || [] };
+      const jobs = Array.isArray(jobsRes) ? jobsRes : (jobsRes?.jobs || jobsRes?.items || []);
+      return { stations: stations || [], uids: [...(active || []), ...(held || [])], wip: wip || [], jobs };
     },
     [location]
   );
@@ -193,6 +233,17 @@ export default function ProductionFloor() {
   const stations = data?.stations || [];
   const uids = data?.uids || [];
   const wip = data?.wip || [];
+  const jobs = data?.jobs || [];
+
+  const jobsByStation = useMemo(() => {
+    const m = new Map();
+    for (const j of jobs) {
+      const code = jpick(j, 'workstation_type_code', 'workstation_code', 'unit_code') || '—';
+      if (!m.has(code)) m.set(code, []);
+      m.get(code).push(j);
+    }
+    return m;
+  }, [jobs]);
 
   // Filtered UID set (search + storage-location side-panel filter).
   const filteredUids = useMemo(() => {
@@ -229,9 +280,18 @@ export default function ProductionFloor() {
         queued: queuedUids.length,
         runningUids,
         queuedUids,
+        jobs: jobsByStation.get(s.code) || [],
       };
     });
-  }, [stations, filteredUids]);
+  }, [stations, filteredUids, jobsByStation]);
+
+  // Individual view: only stations where the current user has an assigned job.
+  const visibleCards = useMemo(() => {
+    if (view !== 'individual' || currentUserId == null) return stationCards;
+    return stationCards.filter((s) => (s.jobs || []).some((j) => String(jpick(j, 'operator_id', 'operatorId')) === String(currentUserId)));
+  }, [stationCards, view, currentUserId]);
+
+  const selectedStation = useMemo(() => stationCards.find((s) => s.code === selectedCode) || null, [stationCards, selectedCode]);
 
   const totalOnFloor = filteredUids.length;
   const activeCount = filteredUids.filter((u) => u.status === 'active').length;
@@ -259,10 +319,25 @@ export default function ProductionFloor() {
             {locationLabel} · live workstation view {loading && !data ? '· loading…' : ''}
           </div>
         </div>
-        <button className="btn btn-sm" onClick={refetch} type="button">
-          <Icon name="refresh" size={14} />
-          Refresh
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* All / Individual view switch */}
+          <div style={{ display: 'inline-flex', border: '1px solid var(--border-input, #d6e0d2)', borderRadius: 'var(--radius-md, 9px)', overflow: 'hidden' }}>
+            {[['all', 'All'], ['individual', 'Individual']].map(([key, label]) => {
+              const on = view === key;
+              return (
+                <button key={key} type="button" onClick={() => setView(key)}
+                  style={{ padding: '7px 14px', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, letterSpacing: '0.04em', fontWeight: on ? 700 : 400,
+                    background: on ? 'var(--ink-650, #15366a)' : 'transparent', color: on ? '#fff' : 'var(--text-secondary, #5d7188)' }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <button className="btn btn-sm" onClick={refetch} type="button">
+            <Icon name="refresh" size={14} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Status bar */}
@@ -305,12 +380,12 @@ export default function ProductionFloor() {
           <div>
             {loading && !data ? (
               <LoadingState />
-            ) : stationCards.length === 0 ? (
-              <EmptyState message="No workstations configured for this location." />
+            ) : visibleCards.length === 0 ? (
+              <EmptyState message={view === 'individual' ? 'No workstations are assigned to you right now. Switch to “All” to see the whole floor.' : 'No workstations configured for this location.'} />
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
-                {stationCards.map((s) => (
-                  <StationCard key={s.code} station={s} />
+                {visibleCards.map((s) => (
+                  <StationCard key={s.code} station={s} onClick={() => setSelectedCode(s.code)} />
                 ))}
               </div>
             )}
@@ -350,6 +425,73 @@ export default function ProductionFloor() {
           </div>
         </div>
       )}
+
+      {selectedStation && (
+        <StationDrawer station={selectedStation} nowMs={nowMs} onClose={() => setSelectedCode(null)} />
+      )}
+    </div>
+  );
+}
+
+/* Right-side detail drawer: the "My Workstation" view for one station —
+   live operator jobs (with timers) plus the pending-UID lists. */
+function StationDrawer({ station, nowMs, onClose }) {
+  const jobs = station.jobs || [];
+  const active = jobs.filter((j) => ACTIVE_JOB_STATUSES.includes(jstatus(j)));
+  const queued = jobs.filter((j) => !ACTIVE_JOB_STATUSES.includes(jstatus(j)));
+
+  const JobRow = ({ j }) => {
+    const running = jstatus(j) === 'in_progress';
+    const secs = (Number(jpick(j, 'net_work_seconds', 'net_seconds')) || 0) + (running ? elapsedFrom(jpick(j, 'started_at'), nowMs) : 0);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 0', borderBottom: '1px solid var(--border-card, #eef2f7)', fontFamily: SANS, fontSize: 12.5 }}>
+        <StatusPill status={jstatus(j)} />
+        <span style={{ color: 'var(--text-primary, #15366a)', fontWeight: 600 }}>{jpick(j, 'operator_name', 'operator') || 'Unassigned'}</span>
+        {jpick(j, 'uid_code', 'uid') && <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>{jpick(j, 'uid_code', 'uid')}</span>}
+        {jpick(j, 'step_number', 'step') != null && <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted, #9bb4d4)' }}>· Step {jpick(j, 'step_number', 'step')}</span>}
+        {running && <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--text-primary, #15366a)' }}>{fmtHMS(secs)}</span>}
+      </div>
+    );
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.35)', zIndex: 60, display: 'flex', justifyContent: 'flex-end' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(420px, 92vw)', height: '100%', background: 'var(--bg-card, #fff)', borderLeft: '1px solid var(--border-card, #e6ecf3)', boxShadow: '-8px 0 30px rgba(0,0,0,0.12)', overflowY: 'auto', padding: '20px 22px 40px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 19, color: 'var(--text-primary, #15366a)' }}>{station.name}</div>
+            <div style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary, #5d7188)', marginTop: 2 }}>{station.code}</div>
+          </div>
+          <button className="btn btn-sm" type="button" onClick={onClose}><Icon name="close" size={14} /></button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+          <Stat label="In progress" value={station.running} />
+          <Stat label="Queued" value={station.queued} />
+          <Stat label="Operators" value={new Set(jobs.map((j) => jpick(j, 'operator_id', 'operator_name')).filter(Boolean)).size} />
+        </div>
+
+        <SectionLabel style={{ marginTop: 20, marginBottom: 6 }}>Active jobs</SectionLabel>
+        {active.length ? active.map((j) => <JobRow key={jpick(j, 'id', 'job_id') || jpick(j, 'uid_code')} j={j} />)
+          : <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-muted, #9bb4d4)' }}>No operator job in progress.</div>}
+
+        {queued.length > 0 && (
+          <>
+            <SectionLabel style={{ marginTop: 18, marginBottom: 6 }}>Assigned queue · {queued.length}</SectionLabel>
+            {queued.map((j) => <JobRow key={jpick(j, 'id', 'job_id') || jpick(j, 'uid_code')} j={j} />)}
+          </>
+        )}
+
+        <SectionLabel style={{ marginTop: 18, marginBottom: 6 }}>Pieces at this station</SectionLabel>
+        {(station.runningUids.length + station.queuedUids.length) === 0 ? (
+          <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-muted, #9bb4d4)' }}>No UID pieces attributed here.</div>
+        ) : (
+          <>
+            {station.runningUids.map((u) => <UidRow key={u.uid_code} uid={u} />)}
+            {station.queuedUids.slice(0, 12).map((u) => <UidRow key={u.uid_code} uid={u} />)}
+          </>
+        )}
+      </div>
     </div>
   );
 }
