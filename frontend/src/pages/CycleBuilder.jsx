@@ -18,10 +18,12 @@ const SANS = "'IBM Plex Sans', system-ui, sans-serif";
 const SIZES = [1500, 1424, 2750]; // base size first
 const BASE_SIZE = 1500;
 
-// Furnace: floor(base × 1500 / bar_length)
+// Furnace is slot-based: `base` slots of 1500mm; a bar uses ceil(length/1500)
+// slots, so capacity = floor(base / ceil(bar_length / 1500)). Bars ≤1500mm all
+// take one slot (1424mm → same as 1500mm); 2750mm takes two → half capacity.
 function furnaceDerived(base) {
   const b = Number(base) || 0;
-  return SIZES.map((mm) => ({ mm, bars: Math.floor((b * BASE_SIZE) / mm) }));
+  return SIZES.map((mm) => ({ mm, bars: Math.floor(b / Math.max(1, Math.ceil(mm / BASE_SIZE))) }));
 }
 
 // Bunch grinding: bed 3000mm, sets placed end-to-end, set length = bar length.
@@ -435,7 +437,7 @@ function FurnaceCap({ base, ws, canWrite, onChange }) {
         ))}
       </div>
       <div style={{ marginTop: 7, fontFamily: MONO, fontSize: 9.5, color: 'var(--text-muted)' }}>
-        floor(base × 1500 / bar_length) · derived values read-only
+        floor(base ÷ ceil(bar_length ÷ 1500)) · slot-based · read-only
       </div>
     </div>
   );
@@ -896,11 +898,18 @@ function StepsEditorInner({
                     />
                   </td>
                   <td style={TD}>
-                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      {s.isTemper ? <span className="badge" style={{ background: 'rgba(217,122,43,0.14)', color: 'var(--status-warning)' }}>TEMPER</span> : null}
-                      {s.isSplit ? <span className="badge" style={{ background: 'rgba(122,79,192,0.16)', color: 'var(--cycle-swan)' }}>SPLIT</span> : null}
-                      {!s.isTemper && !s.isSplit ? <span style={{ color: 'var(--text-muted)' }}>—</span> : null}
-                    </div>
+                    {(() => {
+                      const hrcPct = pick(s.raw || {}, 'hrc_sample_pct', 'hrcSamplePct');
+                      const hasHrc = hrcPct != null && hrcPct !== '' && Number(hrcPct) > 0;
+                      return (
+                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                          {s.isTemper ? <span className="badge" style={{ background: 'rgba(217,122,43,0.14)', color: 'var(--status-warning)' }}>TEMPER</span> : null}
+                          {s.isSplit ? <span className="badge" style={{ background: 'rgba(122,79,192,0.16)', color: 'var(--cycle-swan)' }}>SPLIT</span> : null}
+                          {hasHrc ? <span className="badge" style={{ background: 'rgba(192,118,43,0.14)', color: '#c0762b' }} title="Random HRC inspection sample">HRC {Number(hrcPct)}%</span> : null}
+                          {!s.isTemper && !s.isSplit && !hasHrc ? <span style={{ color: 'var(--text-muted)' }}>—</span> : null}
+                        </div>
+                      );
+                    })()}
                   </td>
                 </tr>
               ))}

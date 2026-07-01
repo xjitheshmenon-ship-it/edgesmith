@@ -3,7 +3,7 @@ const { query, withTransaction } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
-const { furnaceCapacityForSize, validateGrindingCombination, bunchGrindingRunCapacity } = require('../utils/scrapCalculator');
+const { furnaceCapacityForSize, furnaceSlotsForBar, validateGrindingCombination, bunchGrindingRunCapacity } = require('../utils/scrapCalculator');
 const { checkDeviation } = require('../utils/deviationChecker');
 
 const router = express.Router();
@@ -78,19 +78,31 @@ furnaceRouter.get('/queue', async (req, res) => {
     [step.step_number, cycle_code]
   );
 
-  // Compute effective capacity given the mix of sizes in queue (proportional rule).
-  // Conservative: use the smallest derived capacity among sizes present, so the
-  // threshold reflects the worst case (e.g. any 2750mm bars reduce the effective max).
-  let effectiveCapacity = step.capacity_1500 || 0;
-  if (step.capacity_basis === 'furnace_scaled' && queued.length) {
-    const sizesPresent = [...new Set(queued.map((q) => q.size_mm).filter(Boolean))];
-    const derivedCaps = sizesPresent.map((sz) => furnaceCapacityForSize(step.capacity_1500, sz));
-    effectiveCapacity = derivedCaps.length ? Math.min(...derivedCaps) : step.capacity_1500;
-  }
-
+  // Furnace capacity is slot-based: `base` slots of 1500mm; a bar spans
+  // ceil(length/1500) slots. A mixed load fills by slots (e.g. base 80 fits
+  // 10×2750mm = 20 slots + 60×1500mm = 60 slots = 80). Fill in priority order
+  // and keep any bar whose slots still fit — so shorter bars can top up the run.
   const minThreshold = step.min_queue_threshold || 1;
   const ready = queued.length >= minThreshold;
-  const batchSize = Math.min(queued.length, effectiveCapacity || queued.length);
+  const furnace = step.capacity_basis === 'furnace_scaled';
+  const baseSlots = step.capacity_1500 || 0;
+
+  let proposed;
+  let effectiveCapacity;
+  if (furnace && baseSlots > 0) {
+    let usedSlots = 0;
+    proposed = [];
+    for (const q of queued) {
+      const slots = furnaceSlotsForBar(q.size_mm || 1500);
+      if (usedSlots + slots > baseSlots) continue; // top up with anything that still fits
+      usedSlots += slots;
+      proposed.push(q);
+    }
+    effectiveCapacity = proposed.length;
+  } else {
+    effectiveCapacity = step.capacity_1500 || queued.length;
+    proposed = queued.slice(0, Math.min(queued.length, effectiveCapacity || queued.length));
+  }
 
   return res.json({
     success: true,
@@ -101,7 +113,7 @@ furnaceRouter.get('/queue', async (req, res) => {
       queuedCount: queued.length,
       moreNeeded: Math.max(0, minThreshold - queued.length),
       ready,
-      proposedBatch: queued.slice(0, batchSize).map((q) => ({ id: q.id, uid_code: q.uid_code, priority: q.priority, size_mm: q.size_mm })),
+      proposedBatch: proposed.map((q) => ({ id: q.id, uid_code: q.uid_code, priority: q.priority, size_mm: q.size_mm })),
       fullQueue: queued.map((q) => ({ id: q.id, uid_code: q.uid_code, priority: q.priority, size_mm: q.size_mm, created_at: q.created_at })),
     },
   });
