@@ -83,6 +83,9 @@ export const qcApi = {
   signOff: (uidCode, result, notes) => api.post('/qc/sign-off', { uidCode, result, notes }),
   log: (payload) => api.post('/qc/log', payload),
   rework: (uidCode, targetStep, reason) => api.post('/qc/rework', { uidCode, targetStep, reason }),
+  // Random HRC inspection sampling queue
+  hrcSamples: (status) => api.get('/qc/hrc-samples', { status }),
+  recordHrc: (id, hrcValue, result, notes) => api.post(`/qc/hrc-samples/${id}/result`, { hrcValue, result, notes }),
 };
 
 export const reportsApi = {
