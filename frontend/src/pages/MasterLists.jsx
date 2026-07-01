@@ -176,6 +176,30 @@ const TABS = [
     ],
   },
   {
+    key: 'badgeTypes',
+    label: 'Certifications',
+    icon: 'lock',
+    fetch: () => masterApi.badgeTypes().then((r) => r.data),
+    create: (p) => masterApi.createBadgeType(p),
+    update: (id, p) => masterApi.updateBadgeType(id, p),
+    archive: (id) => masterApi.archiveBadgeType(id),
+    columns: ['Certification', 'Workstation', 'Validity', 'Status', ''],
+    renderRow: (row, ctx) => (
+      <>
+        <td style={TD}>{pick(row, ['name'])}</td>
+        <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['workstationCode', 'workstation_code']) || pick(row, ['workstationName', 'workstation_name']) || '—'}</td>
+        <td style={TD}>{pick(row, ['validityMonths', 'validity_months']) ? `${pick(row, ['validityMonths', 'validity_months'])} mo` : '—'}</td>
+        <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+      </>
+    ),
+    fields: [
+      { name: 'name', label: 'Certification name', required: true, placeholder: 'e.g. HT90 Furnace Certified' },
+      { name: 'workstationTypeId', label: 'Workstation', type: 'select', options: [], required: true },
+      { name: 'validityMonths', label: 'Validity (months)', type: 'number', placeholder: 'e.g. 12' },
+    ],
+  },
+  {
     key: 'products',
     label: 'Products',
     icon: 'stack',
@@ -673,7 +697,21 @@ export default function MasterLists() {
   const { isAdmin, isManager } = useAuth();
   const canWrite = isAdmin || isManager;
   const [active, setActive] = useState(TABS[0].key);
-  const tab = TABS.find((t) => t.key === active) || TABS[0];
+
+  // Workstation options for the Certifications tab (dynamic FK dropdown).
+  const { data: wsData } = usePolling(() => masterApi.workstationTypes().then((r) => r.data), []);
+  const wsOptions = useMemo(
+    () => asList(wsData).map((w) => ({ value: String(pick(w, ['id'])), label: `${pick(w, ['code', 'workstation_code'])} — ${pick(w, ['name', 'workstation_name'])}` })),
+    [wsData]
+  );
+
+  const tab = useMemo(() => {
+    const base = TABS.find((t) => t.key === active) || TABS[0];
+    if (base.key === 'badgeTypes') {
+      return { ...base, fields: base.fields.map((f) => (f.name === 'workstationTypeId' ? { ...f, options: wsOptions } : f)) };
+    }
+    return base;
+  }, [active, wsOptions]);
 
   return (
     <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>

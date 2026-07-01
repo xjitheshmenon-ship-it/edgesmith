@@ -29,11 +29,14 @@ if [ "${SEED_DEMO:-false}" = "true" ]; then
   node seeds/demo.js
 fi
 
-# Optional bulk sample jobs: 2000+ UIDs with a pending queue at every operation.
-# Idempotent (skips when the UID table is already large). Set SEED_BULK=true once.
+# Optional bulk sample data: 2000+ Dharmapuri UIDs and ~600 Faridabad blocks,
+# each with a pending queue at every operation. Idempotent (each skips when its
+# table is already large). Set SEED_BULK=true once.
 if [ "${SEED_BULK:-false}" = "true" ]; then
   echo "[entrypoint] seeding bulk sample jobs..."
   node seeds/bulk-jobs.js
+  echo "[entrypoint] seeding bulk Faridabad blocks..."
+  node seeds/bulk-blocks.js
 fi
 
 # exec so node becomes PID 1 and receives Render's stop signals directly.

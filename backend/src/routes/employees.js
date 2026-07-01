@@ -132,6 +132,7 @@ router.get('/badge-types', async (req, res) => {
             wt.id AS workstation_type_id, wt.code AS workstation_code, wt.name AS workstation_name
      FROM badge_types bt
      LEFT JOIN workstation_types wt ON wt.id = bt.workstation_type_id
+     WHERE bt.status <> 'archived'
      ORDER BY bt.name`
   );
   return res.json({ success: true, data: rows });

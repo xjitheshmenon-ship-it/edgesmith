@@ -114,6 +114,11 @@ export const masterApi = {
   updateProduct: (id, p) => api.patch(`/master/products/${id}`, p),
   archiveProduct: (id) => api.delete(`/master/products/${id}`),
 
+  badgeTypes: () => api.get('/master/badge-types'),
+  createBadgeType: (p) => api.post('/master/badge-types', p),
+  updateBadgeType: (id, p) => api.patch(`/master/badge-types/${id}`, p),
+  archiveBadgeType: (id) => api.delete(`/master/badge-types/${id}`),
+
   sizes: () => api.get('/master/sizes'),
   createSize: (p) => api.post('/master/sizes', p),
   updateSize: (id, p) => api.patch(`/master/sizes/${id}`, p),
