@@ -306,24 +306,54 @@ function EmployeeForm({ initial, busy, onCancel, onSubmit }) {
 }
 
 // ── Assign-badge form ────────────────────────────────────────────────────────
-const BLANK_BADGE = { badge_name: '', workstation: '', certified_date: '', certified_by: '', expiry_date: '' };
+const BLANK_BADGE = { badgeTypeId: '', certified_date: '', certified_by: '', expiry_date: '' };
+
+// Predefine the expiry from certified date + the badge type's validity period.
+function computeExpiry(certDate, months) {
+  if (!certDate || !months) return '';
+  const d = new Date(certDate);
+  if (Number.isNaN(d.getTime())) return '';
+  d.setMonth(d.getMonth() + Number(months));
+  return d.toISOString().slice(0, 10);
+}
 
 function AssignBadgeForm({ busy, onCancel, onSubmit }) {
+  const [types, setTypes] = useState([]);
   const [form, setForm] = useState({ ...BLANK_BADGE });
   const [err, setErr] = useState(null);
-  const set = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
+
+  useEffect(() => {
+    let alive = true;
+    employeesApi.badgeTypes().then((r) => { if (alive) setTypes(r.data || []); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const selected = types.find((t) => String(t.id) === String(form.badgeTypeId)) || null;
+  const workstation = selected ? (selected.workstation_code || selected.workstation_name || '—') : '';
+
+  // Badge type is predefined; picking one sets the workstation and (optionally) expiry.
+  function onTypeChange(e) {
+    const id = e.target.value;
+    const t = types.find((x) => String(x.id) === String(id));
+    setForm((s) => ({ ...s, badgeTypeId: id, expiry_date: computeExpiry(s.certified_date, t?.validity_months) || s.expiry_date }));
+  }
+  function onCertChange(e) {
+    const certified_date = e.target.value;
+    setForm((s) => ({ ...s, certified_date, expiry_date: computeExpiry(certified_date, selected?.validity_months) || s.expiry_date }));
+  }
+  const setField = (k) => (e) => setForm((s) => ({ ...s, [k]: e.target.value }));
 
   function submit(e) {
     e.preventDefault();
     setErr(null);
-    if (!form.badge_name.trim()) return setErr('Badge name is required.');
+    if (!form.badgeTypeId) return setErr('Select a badge type.');
     if (!form.certified_date) return setErr('Certification date is required.');
     const payload = {
-      badge_name: form.badge_name.trim(),
-      workstation: form.workstation.trim() || null,
-      certified_date: form.certified_date,
-      certified_by: form.certified_by.trim() || null,
-      expiry_date: form.expiry_date || null,
+      badgeTypeId: Number(form.badgeTypeId),
+      badge_name: selected ? selected.name : '',        // for the success notice
+      certifiedDate: form.certified_date,
+      certifiedBy: form.certified_by.trim() || null,
+      expiryDate: form.expiry_date || null,
     };
     onSubmit(payload).then((apiErr) => {
       if (apiErr) setErr(apiErr);
@@ -339,25 +369,29 @@ function AssignBadgeForm({ busy, onCancel, onSubmit }) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 11 }}>
         <div>
           <label className="form-label">Badge type</label>
-          <input className="form-input" value={form.badge_name} onChange={set('badge_name')} placeholder="e.g. HT90 Furnace Certified" autoComplete="off" />
+          <select className="form-select" value={form.badgeTypeId} onChange={onTypeChange}>
+            <option value="">Select badge type…</option>
+            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
         </div>
         <div>
           <label className="form-label">Workstation</label>
-          <input className="form-input" value={form.workstation} onChange={set('workstation')} placeholder="e.g. HT90" autoComplete="off" />
+          <input className="form-input" value={workstation} readOnly tabIndex={-1} placeholder="Set by badge type"
+            style={{ background: 'var(--bg-muted, #eef2f7)', color: 'var(--text-secondary, #5d7188)', cursor: 'not-allowed' }} />
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 11 }}>
         <div>
           <label className="form-label">Date certified</label>
-          <input className="form-input" type="date" value={form.certified_date} onChange={set('certified_date')} />
+          <input className="form-input" type="date" value={form.certified_date} onChange={onCertChange} />
         </div>
         <div>
           <label className="form-label">Certified by</label>
-          <input className="form-input" value={form.certified_by} onChange={set('certified_by')} placeholder="trainer name" autoComplete="off" />
+          <input className="form-input" value={form.certified_by} onChange={setField('certified_by')} placeholder="trainer name" autoComplete="off" />
         </div>
         <div>
           <label className="form-label">Expiry (optional)</label>
-          <input className="form-input" type="date" value={form.expiry_date} onChange={set('expiry_date')} />
+          <input className="form-input" type="date" value={form.expiry_date} onChange={setField('expiry_date')} />
         </div>
       </div>
       {err ? <ErrorBanner message={err} /> : null}
