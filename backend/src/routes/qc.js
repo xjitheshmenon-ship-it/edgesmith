@@ -3,6 +3,7 @@ const { query, withTransaction } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
+const { createAlert } = require('../utils/alerts');
 
 const router = express.Router();
 router.use(authenticate, auditContext);
@@ -47,6 +48,11 @@ router.post('/sign-off', requireRole(['admin', 'manager', 'supervisor']), async 
 
     if (result === 'Fail') {
       await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`QC failed at step ${uid.current_step}`, uid.id]);
+      await createAlert(client.query.bind(client), {
+        type: 'qc_fail', severity: 'critical', uidId: uid.id,
+        message: `QC FAIL — ${uid.uid_code} held at step ${uid.current_step}`,
+        targetRole: 'supervisor', linkPage: 'qc', linkRecordId: uid.uid_code,
+      });
       return { uidCode, result: 'Fail' };
     }
 
@@ -88,6 +94,11 @@ router.post('/log', requireRole(['admin', 'manager', 'supervisor', 'operator']),
 
   if (result === 'Fail') {
     await query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`QC failed: ${checkType}`, uid.id]);
+    await createAlert(query, {
+      type: 'qc_fail', severity: 'critical', uidId: uid.id,
+      message: `QC FAIL (${checkType}) — ${uid.uid_code} held at step ${uid.current_step}`,
+      targetRole: 'supervisor', linkPage: 'qc', linkRecordId: uid.uid_code,
+    });
   }
 
   await req.audit({ tableName: 'uid_step_logs', recordId: uidCode, action: 'UPDATE', after: { checkType, value, result } });
@@ -161,6 +172,11 @@ router.post('/hrc-samples/:id/result', requireRole(['admin', 'manager', 'supervi
     if (status === 'fail') {
       await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`,
         [`HRC sample failed (${hrcValue ?? '—'} HRC)`, sample.uid_id]);
+      await createAlert(client.query.bind(client), {
+        type: 'qc_fail', severity: 'critical', uidId: sample.uid_id,
+        message: `HRC FAIL (${hrcValue ?? '—'} HRC) — sample held for review`,
+        targetRole: 'supervisor', linkPage: 'qc', linkRecordId: String(sample.uid_id),
+      });
     }
     return rows[0];
   });
