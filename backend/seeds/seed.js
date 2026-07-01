@@ -40,7 +40,7 @@ async function main() {
   await seedColorCodes();
   await seedTruckCapacityDefault();
   await seedSampleSuppliersAndContractors();
-  await seedWorkstationCertifications();
+  await seedSkillCertifications();
 
   console.log('\nSeed complete.');
   console.log('Admin login: username "admin", password "ChangeMe123!" — CHANGE THIS IMMEDIATELY.');
@@ -420,18 +420,41 @@ async function seedSampleSuppliersAndContractors() {
   }
 }
 
-// One "<Workstation> Certified" badge type per workstation type that lacks one,
-// so every workstation has a certification available. Idempotent.
-async function seedWorkstationCertifications() {
-  const { rowCount } = await query(
-    `INSERT INTO badge_types (name, workstation_type_id, expires, validity_months)
-     SELECT wt.name || ' Certified', wt.id, true, 12
-     FROM workstation_types wt
-     WHERE NOT EXISTS (
-       SELECT 1 FROM badge_types bt WHERE bt.workstation_type_id = wt.id AND bt.status <> 'archived'
-     )`
+// Skill-based certifications (code + name). One per skill, not per workstation.
+const SKILL_CERTS = [
+  ['GRIND', 'Grinding'],
+  ['HT', 'Heat Treatment'],
+  ['MILL', 'Milling'],
+  ['CUT', 'Cutting'],
+  ['TAG', 'Tagging'],
+  ['COAT', 'Coating'],
+  ['INSP', 'Inspection'],
+  ['STR', 'Straightening'],
+];
+
+async function seedSkillCertifications() {
+  const codes = SKILL_CERTS.map((c) => c[0]);
+  const { rows: existing } = await query(`SELECT COUNT(*)::int AS c FROM badge_types WHERE code = ANY($1)`, [codes]);
+  if (existing[0].c >= SKILL_CERTS.length) return; // already migrated
+
+  // Retire the earlier per-workstation auto/demo certifications so the list is
+  // the clean skill set. One-time — guarded by the check above.
+  await query(
+    `UPDATE badge_types SET status = 'archived'
+     WHERE status <> 'archived' AND workstation_type_id IS NOT NULL AND name LIKE '% Certified'`
   );
-  if (rowCount) console.log(`✓ Seeded ${rowCount} workstation certification badge types`);
+
+  let added = 0;
+  for (const [code, name] of SKILL_CERTS) {
+    const { rowCount } = await query(
+      `INSERT INTO badge_types (name, code, workstation_type_id, expires, validity_months)
+       SELECT $1::text, $2::text, NULL, true, 12
+       WHERE NOT EXISTS (SELECT 1 FROM badge_types WHERE code = $2::text)`,
+      [name, code]
+    );
+    added += rowCount;
+  }
+  if (added) console.log(`✓ Seeded ${added} skill certifications`);
 }
 
 main().catch((err) => {

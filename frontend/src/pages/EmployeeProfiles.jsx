@@ -329,7 +329,7 @@ function AssignBadgeForm({ busy, onCancel, onSubmit }) {
   }, []);
 
   const selected = types.find((t) => String(t.id) === String(form.badgeTypeId)) || null;
-  const workstation = selected ? (selected.workstation_code || selected.workstation_name || '—') : '';
+  const skillCode = selected ? (selected.code || selected.workstation_code || '—') : '';
 
   // Badge type is predefined; picking one sets the workstation and (optionally) expiry.
   function onTypeChange(e) {
@@ -375,8 +375,8 @@ function AssignBadgeForm({ busy, onCancel, onSubmit }) {
           </select>
         </div>
         <div>
-          <label className="form-label">Workstation</label>
-          <input className="form-input" value={workstation} readOnly tabIndex={-1} placeholder="Set by badge type"
+          <label className="form-label">Code</label>
+          <input className="form-input" value={skillCode} readOnly tabIndex={-1} placeholder="Set by certification"
             style={{ background: 'var(--bg-muted, #eef2f7)', color: 'var(--text-secondary, #5d7188)', cursor: 'not-allowed' }} />
         </div>
       </div>

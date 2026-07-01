@@ -128,7 +128,7 @@ router.delete('/:id/badges/:badgeId', requireRole(['admin']), async (req, res) =
  */
 router.get('/badge-types', async (req, res) => {
   const { rows } = await query(
-    `SELECT bt.id, bt.name, bt.validity_months, bt.expires,
+    `SELECT bt.id, bt.code, bt.name, bt.validity_months, bt.expires,
             wt.id AS workstation_type_id, wt.code AS workstation_code, wt.name AS workstation_name
      FROM badge_types bt
      LEFT JOIN workstation_types wt ON wt.id = bt.workstation_type_id
