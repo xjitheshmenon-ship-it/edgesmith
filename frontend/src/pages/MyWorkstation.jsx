@@ -26,6 +26,9 @@ const T_MUTED = 'var(--text-muted, #9bb4d4)';
 
 /* Tempering steps require actual temperature + soak time on close. */
 const TEMPERING_STEPS = [9, 10, 14, 23];
+/* Surface Grind steps — thickness is measured here with a VCL gauge at the same
+   workstation (no trip to an inspection table), captured on close. */
+const SURFACE_GRIND_STEPS = [12, 20];
 const TOTAL_STEPS = 27;
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -258,6 +261,7 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
   const step = Number(jobStep(job)) || 0;
   const isTempering = TEMPERING_STEPS.includes(step);
   const isQcStep = step === 26;
+  const isSurfaceGrind = SURFACE_GRIND_STEPS.includes(step);
 
   const [qc, setQc] = useState(isQcStep ? 'Visual' : 'No QC check for this step');
   const [measured, setMeasured] = useState('');
@@ -265,6 +269,7 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
   const [notes, setNotes] = useState('');
   const [temp, setTemp] = useState('');
   const [soak, setSoak] = useState('');
+  const [thickness, setThickness] = useState(''); // VCL thickness reading (surface grind)
 
   const hasQc = qc !== 'No QC check for this step';
   const nextStep = step ? step + 1 : null;
@@ -273,10 +278,12 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
   //  - QC step 26 cannot close without Pass/Fail (result is always set here, fine)
   //  - QC check selected → measured value required
   //  - tempering step → actual temperature + soak time required
+  //  - surface grind → VCL thickness reading required
   const valid =
     (!hasQc || measured.trim()) &&
     (!isQcStep || result) &&
-    (!isTempering || (temp.trim() && soak.trim()));
+    (!isTempering || (temp.trim() && soak.trim())) &&
+    (!isSurfaceGrind || thickness.trim());
 
   const pauses = pick(job, 'pause_count', 'pauses', 'pause_cycles');
   const totalElapsed = pick(job, 'total_elapsed_seconds', 'elapsed_seconds');
@@ -284,13 +291,16 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
   function submit() {
     const payload = {
       qc_check: hasQc ? qc : null,
-      qc_result: hasQc || isQcStep ? result : null,
+      qc_result: hasQc || isQcStep || isSurfaceGrind ? result : null,
       measured_value: hasQc ? measured.trim() : null,
       notes: notes.trim() || null,
     };
     if (isTempering) {
       payload.actual_temperature = temp.trim();
       payload.actual_soak_time = soak.trim();
+    }
+    if (isSurfaceGrind) {
+      payload.thicknessMm = thickness.trim();
     }
     onConfirm(payload);
   }
@@ -332,10 +342,47 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
         </div>
       )}
 
-      <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY, marginBottom: 8 }}>
-        {isQcStep ? 'QC inspection result — required' : 'QC check required at this step?'}
-      </div>
-      {!isQcStep &&
+      {isSurfaceGrind && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY, marginBottom: 4 }}>Thickness inspection (VCL) — required</div>
+          <div style={{ fontFamily: SANS, fontSize: 12, color: T_SECONDARY, marginBottom: 8 }}>
+            Measure thickness with the VCL gauge at this workstation — no trip to the inspection table.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
+            <div>
+              <label className="form-label">Thickness (mm)</label>
+              <input className="form-input" value={thickness} onChange={(e) => setThickness(e.target.value)} inputMode="decimal" autoFocus />
+            </div>
+            <div>
+              <label className="form-label">Result</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {['Pass', 'Fail', 'Borderline'].map((r) => {
+                  const sel = result === r;
+                  const c = r === 'Pass' ? '#22a06b' : r === 'Fail' ? '#e5484d' : '#f0a020';
+                  return (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setResult(r)}
+                      className="btn"
+                      style={{ height: 44, flex: 1, justifyContent: 'center', border: '1.5px solid ' + (sel ? c : 'var(--border-input, #d6e0d2)'), background: sel ? c + '22' : 'var(--bg-card, #fff)', color: sel ? c : T_SECONDARY, fontWeight: 700 }}
+                    >
+                      {r}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!isSurfaceGrind && (
+        <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY, marginBottom: 8 }}>
+          {isQcStep ? 'QC inspection result — required' : 'QC check required at this step?'}
+        </div>
+      )}
+      {!isQcStep && !isSurfaceGrind &&
         QC_OPTIONS.map((o) => (
           <RadioRow key={o} name="qc-check" value={o} current={qc} onChange={setQc}>
             {o}
@@ -389,7 +436,7 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
         />
       </div>
 
-      {result === 'Fail' && (hasQc || isQcStep) && (
+      {result === 'Fail' && (hasQc || isQcStep || isSurfaceGrind) && (
         <div style={{ marginTop: 12, padding: '10px 13px', borderRadius: 9, background: 'var(--bg-soft-amber, #fdf6ef)', color: 'var(--status-danger-dark, #c0392b)', fontFamily: SANS, fontSize: 12 }}>
           A Fail result places the UID on hold automatically and alerts the supervisor.
         </div>
