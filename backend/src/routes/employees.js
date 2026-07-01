@@ -122,6 +122,22 @@ router.delete('/:id/badges/:badgeId', requireRole(['admin']), async (req, res) =
 });
 
 /**
+ * GET /api/v1/employees/badge-types
+ * Predefined badge types with the workstation each certifies. Used to populate
+ * the assign-badge form so badge type + workstation are picked, not free-typed.
+ */
+router.get('/badge-types', async (req, res) => {
+  const { rows } = await query(
+    `SELECT bt.id, bt.name, bt.validity_months, bt.expires,
+            wt.id AS workstation_type_id, wt.code AS workstation_code, wt.name AS workstation_name
+     FROM badge_types bt
+     LEFT JOIN workstation_types wt ON wt.id = bt.workstation_type_id
+     ORDER BY bt.name`
+  );
+  return res.json({ success: true, data: rows });
+});
+
+/**
  * GET /api/v1/employees/badge-checks/can-assign?employeeId=&workstationTypeId=
  * Used by Job Assignment drag-and-drop: validates badge + furnace-supervisor-only rule.
  */

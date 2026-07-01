@@ -54,6 +54,7 @@ export const employeesApi = {
   list: (filters) => api.get('/employees', filters),
   create: (payload) => api.post('/employees', payload),
   update: (id, fields) => api.patch(`/employees/${id}`, fields),
+  badgeTypes: () => api.get('/employees/badge-types'),
   badges: (id) => api.get(`/employees/${id}/badges`),
   addBadge: (id, payload) => api.post(`/employees/${id}/badges`, payload),
   removeBadge: (id, badgeId) => api.delete(`/employees/${id}/badges/${badgeId}`),
