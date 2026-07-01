@@ -85,6 +85,7 @@ app.use(`${API_PREFIX}/reports`, require('./src/routes/reports'));
 app.use(`${API_PREFIX}/service`, require('./src/routes/service'));
 app.use(`${API_PREFIX}/master`, require('./src/routes/master'));
 app.use(`${API_PREFIX}/admin`, require('./src/routes/admin'));
+app.use(`${API_PREFIX}/imports`, require('./src/routes/imports'));
 app.use(`${API_PREFIX}/alerts`, require('./src/routes/alerts'));
 app.use(`${API_PREFIX}/workstation-assignments`, require('./src/routes/workstationAssignments'));
 // batches.js internally covers two resource families under one router

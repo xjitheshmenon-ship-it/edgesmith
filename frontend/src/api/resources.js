@@ -68,6 +68,12 @@ export const mosApi = {
   linkUids: (id, uidCodes, applyMoValues) => api.post(`/mos/${id}/link-uids`, { uidCodes, applyMoValues }),
 };
 
+export const importApi = {
+  templates: () => api.get('/imports/templates'),
+  preview: (factory, rows) => api.post('/imports/operations/preview', { factory, rows }),
+  apply: (factory, rows) => api.post('/imports/operations/apply', { factory, rows }),
+};
+
 export const qcApi = {
   pending: () => api.get('/qc/pending'),
   signOff: (uidCode, result, notes) => api.post('/qc/sign-off', { uidCode, result, notes }),
