@@ -499,17 +499,18 @@ function ActiveFurnaceBatches() {
 /* ════════════════════════════════════════════════════════════════════
    PAGE
    ════════════════════════════════════════════════════════════════════ */
-export default function BatchManagement() {
+/* Reusable furnace batch builder — the cycle/step picker plus the multi-select
+   FurnaceBuilder. Rendered on the Batch Tracker AND on Work Assignment so a
+   supervisor can batch furnace jobs while assigning work. */
+export function FurnaceBatchPanel({ showActive = true }) {
   const { isSupervisor, isAdmin, isManager } = useAuth();
   const canBuild = isSupervisor || isAdmin || isManager;
 
   const [stepId, setStepId] = useState(FURNACE_STEPS[2].id); // Tempering 1 default
   const [cycleCode, setCycleCode] = useState('EAT');
-
   const step = FURNACE_STEPS.find((s) => s.id === stepId) || FURNACE_STEPS[0];
 
   // Dharmapuri cycle types that actually carry furnace steps (configured cycles).
-  // Faridabad (FAR) rolling lives on its own Faridabad Batch Management page.
   const { data: cyclesData } = usePolling(() => cyclesApi.list().then((r) => r.data).catch(() => []), []);
   const cycleOptions = useMemo(() => {
     const rows = Array.isArray(cyclesData) ? cyclesData : [];
@@ -518,18 +519,16 @@ export default function BatchManagement() {
   }, [cyclesData]);
 
   return (
-    <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
-      <Heading />
-
-      {/* Active batches */}
-      <div style={{ marginTop: 20 }}>
-        <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.03em', color: 'var(--text-primary)', marginBottom: 10 }}>
-          Active furnace batches
+    <>
+      {showActive && (
+        <div style={{ marginTop: 20 }}>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.03em', color: 'var(--text-primary)', marginBottom: 10 }}>
+            Active furnace batches
+          </div>
+          <ActiveFurnaceBatches />
         </div>
-        <ActiveFurnaceBatches />
-      </div>
+      )}
 
-      {/* Build a batch */}
       <div className="card" style={{ marginTop: 20, padding: '18px 20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.03em', color: 'var(--text-primary)' }}>
@@ -559,6 +558,15 @@ export default function BatchManagement() {
           <FurnaceBuilder key={`${step.id}|${cycleCode}`} step={step} cycleCode={cycleCode} isSupervisor={canBuild} />
         )}
       </div>
+    </>
+  );
+}
+
+export default function BatchManagement() {
+  return (
+    <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
+      <Heading />
+      <FurnaceBatchPanel />
     </div>
   );
 }
