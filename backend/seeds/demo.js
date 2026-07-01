@@ -148,6 +148,27 @@ async function grantSkillCertsToOperators() {
   if (granted) console.log(`✓ Granted ${granted} skill certifications so operators can work their stations.`);
 }
 
+// §6 — stock the FAR-MC pool so the Welding step's alloy+MS gate is live. One
+// alloy + one MS per Faridabad item cycle/size, generously stocked. Idempotent:
+// only creates missing pools, never resets a count that already exists.
+async function seedFarMcInventory() {
+  const { rows } = await query(
+    `SELECT DISTINCT cycle_type_id, COALESCE(size_mm, 1500) AS size_mm FROM faridabad_items`
+  );
+  let added = 0;
+  for (const r of rows) {
+    for (const material of ['alloy', 'ms']) {
+      const { rowCount } = await query(
+        `INSERT INTO far_mc_inventory (cycle_type_id, size_mm, material_type, quantity)
+         VALUES ($1,$2,$3,50) ON CONFLICT (cycle_type_id, size_mm, material_type) DO NOTHING`,
+        [r.cycle_type_id, r.size_mm, material]
+      );
+      added += rowCount;
+    }
+  }
+  if (added) console.log(`✓ Stocked ${added} FAR-MC inventory pools for the Welding gate.`);
+}
+
 async function main() {
   console.log('Seeding comprehensive DEMO data (SEED_DEMO=true)...\n');
 
@@ -157,6 +178,7 @@ async function main() {
   await seedOperatorJobsAcrossWorkstations();
   await seedFaridabadOperatorItems();
   await grantSkillCertsToOperators();
+  await seedFarMcInventory();
 
   const exists = await query(`SELECT id FROM contractor_dispatches WHERE batch_reference = $1`, [DEMO_DISPATCH_REF]);
   if (exists.rows[0]) {
