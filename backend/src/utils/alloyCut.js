@@ -14,12 +14,21 @@
 
 const DEFAULT_SIZES = [1250, 850];
 
+// How strongly to favour the priority size (1250) over pure minimum-wastage.
+// The priority piece is worth its length + this bonus, so the planner will give
+// up to ~this many mm of finished length to place one more 1250. Kept below 850
+// so it never sacrifices a whole standard piece to force a 1250 in (matches the
+// user's "prefer 1250 but stay smart" choice — e.g. 1700 → 2×850, not 1×1250).
+const DEFAULT_PRIORITY_BONUS = 400;
+
 /**
  * Best cut plan for one bar.
  * @param {number} barLengthMm  raw bar length in mm
  * @param {object} [opts]
- * @param {number[]} [opts.sizes]  target cut lengths (mm), default [1250, 850]
- * @param {number} [opts.kerf]     saw blade width consumed per cut (mm), default 0
+ * @param {number[]} [opts.sizes]        target cut lengths (mm), default [1250, 850]
+ * @param {number} [opts.kerf]           saw blade width consumed per cut (mm), default 0
+ * @param {number} [opts.prioritySize]   size to favour, default the largest (1250)
+ * @param {number} [opts.priorityBonus]  value bonus for the priority size, default 400 (0 = pure min-waste)
  * @returns {{ barLengthMm:number, cuts:Array<{size:number,qty:number}>, totalPieces:number,
  *             usedMm:number, kerfMm:number, wastageMm:number, wastagePct:number }}
  */
@@ -33,11 +42,17 @@ function alloyCutPlan(barLengthMm, opts = {}) {
   if (!sizes.length) throw new Error('At least one positive cut size is required.');
 
   const kerf = Math.max(0, Number(opts.kerf) || 0);
+  const prioritySize = Number(opts.prioritySize) > 0 ? Number(opts.prioritySize) : Math.max(...sizes);
+  const priorityBonus = opts.priorityBonus != null ? Math.max(0, Number(opts.priorityBonus) || 0) : DEFAULT_PRIORITY_BONUS;
+  // Per-size value: finished length, plus a bonus for the priority size so the
+  // planner leans toward it. Wastage below is always computed from real lengths,
+  // never from these values, so the bonus only affects *which* plan is chosen.
+  const value = sizes.map((s) => s + (s === prioritySize ? priorityBonus : 0));
 
   // Unbounded knapsack over capacity 0..L.
   //   weight(size) = size + kerf   (bar length consumed to yield one piece)
-  //   value(size)  = size          (finished piece length we keep)
-  const best = new Int32Array(L + 1);   // max finished length reachable at capacity c
+  //   value(size)  = size (+ priority bonus)
+  const best = new Float64Array(L + 1);   // max value reachable at capacity c
   const choice = new Int32Array(L + 1).fill(-1); // index of last size added
 
   for (let c = 1; c <= L; c++) {
@@ -46,7 +61,7 @@ function alloyCutPlan(barLengthMm, opts = {}) {
     for (let i = 0; i < sizes.length; i++) {
       const w = sizes[i] + kerf;
       if (w <= c) {
-        const cand = best[c - w] + sizes[i];
+        const cand = best[c - w] + value[i];
         if (cand > best[c]) {
           best[c] = cand;
           choice[c] = i;
