@@ -21,8 +21,9 @@ export const faridabadApi = {
   // Work items moving through the 10-step FAR cycle (floor + workstation)
   floor: () => api.get('/faridabad/floor'),
   createItem: (payload) => api.post('/faridabad/items', payload),
-  startItem: (id) => api.post(`/faridabad/items/${id}/start`),
+  startItem: (id, payload) => api.post(`/faridabad/items/${id}/start`, payload || {}),
   closeItem: (id, payload) => api.post(`/faridabad/items/${id}/close`, payload),
+  farMcInventory: () => api.get('/faridabad/far-mc-inventory'),
   // Batch Management — two-leg dispatch journey
   batches: () => api.get('/faridabad/batches'),
   dispatchOnward: (id, payload) => api.post(`/faridabad/batches/${id}/dispatch-onward`, payload),
