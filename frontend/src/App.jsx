@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/AuthContext';
 import { AppProvider, useApp } from './store/AppContext';
-import { NAV, SECTIONS_BY_ROLE, OPERATOR_ALLOWED_ROUTES } from './components/layout/nav';
+import { NAV, SECTIONS_BY_ROLE, OPERATOR_ALLOWED_ROUTES, HIDDEN_ROUTES } from './components/layout/nav';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
 import Placeholder from './pages/Placeholder';
@@ -90,13 +90,14 @@ const PAGES = {
   dataimport: DataImport,
 };
 
-const ALL_KEYS = NAV.flatMap(([, items]) => items.map(([key]) => key));
+const ALL_KEYS = NAV.flatMap(([, items]) => items.map(([key]) => key)).concat(HIDDEN_ROUTES);
 
 function allowedKeysFor(role) {
   const sections = SECTIONS_BY_ROLE[role] || [];
   let keys = NAV.filter(([s]) => sections.includes(s)).flatMap(([, items]) => items.map(([k]) => k));
-  if (role === 'operator') keys = keys.filter((k) => OPERATOR_ALLOWED_ROUTES.includes(k));
-  return keys;
+  if (role === 'operator') return keys.filter((k) => OPERATOR_ALLOWED_ROUTES.includes(k));
+  // Hidden routes (e.g. Batch Tracker) are reachable but not in the sidebar.
+  return keys.concat(HIDDEN_ROUTES);
 }
 
 function RequireAuth({ children }) {

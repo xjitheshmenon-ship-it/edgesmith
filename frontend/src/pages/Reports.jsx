@@ -1,5 +1,7 @@
 import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useApp } from '../store/AppContext';
+import { useAuth } from '../store/AuthContext';
 import { reportsApi } from '../api/resources';
 import { ApiError } from '../api/client';
 import { downloadCSV, downloadPDF } from '../utils/exporters';
@@ -224,6 +226,8 @@ function fmt(v) {
 
 export default function Reports() {
   const { location, locationLabel } = useApp();
+  const { isOperator } = useAuth();
+  const navigate = useNavigate();
   const [activeId, setActiveId] = useState('production');
 
   // Date-range filter (default: trailing 30 days through today).
@@ -314,10 +318,18 @@ export default function Reports() {
             <LocationBadge location={location} />
           </div>
         </div>
-        <button className="btn btn-sm" type="button" onClick={fetchReport} disabled={loading}>
-          <Icon name="refresh" size={14} />
-          Refresh
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {!isOperator && (
+            <button className="btn btn-sm" type="button" onClick={() => navigate('/batch')} title="Furnace queues, capacity & batch history">
+              <Icon name="stack" size={14} />
+              Batch Tracker
+            </button>
+          )}
+          <button className="btn btn-sm" type="button" onClick={fetchReport} disabled={loading}>
+            <Icon name="refresh" size={14} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filter bar — date range + per-report secondary filters. NO location
