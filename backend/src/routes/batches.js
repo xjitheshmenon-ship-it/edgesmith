@@ -78,14 +78,19 @@ furnaceRouter.get('/queue', async (req, res) => {
     [step.step_number, cycle_code]
   );
 
-  // Furnace capacity is slot-based: `base` slots of 1500mm; a bar spans
-  // ceil(length/1500) slots. A mixed load fills by slots (e.g. base 80 fits
-  // 10×2750mm = 20 slots + 60×1500mm = 60 slots = 80). Fill in priority order
-  // and keep any bar whose slots still fit — so shorter bars can top up the run.
+  // Furnace capacity + threshold are BOTH measured in capacity units (not bar
+  // count): a bar spans ceil(length/1500) units. A mixed load fills by units
+  // (e.g. base 80 fits 10×2750mm = 20 + 60×1500mm = 60 = 80), and the queue is
+  // READY once the queued units reach the minimum threshold — so 40×3000mm
+  // (= 80 units) is ready for an 80-unit HT90 step.
   const minThreshold = step.min_queue_threshold || 1;
-  const ready = queued.length >= minThreshold;
   const furnace = step.capacity_basis === 'furnace_scaled';
   const baseSlots = step.capacity_1500 || 0;
+  const queuedUnits = queued.reduce((n, q) => n + furnaceSlotsForBar(q.size_mm || 1500), 0);
+
+  // For furnace steps the threshold is in units; elsewhere it's a piece count.
+  const readyMeasure = furnace ? queuedUnits : queued.length;
+  const ready = readyMeasure >= minThreshold;
 
   let proposed;
   let effectiveCapacity;
@@ -109,9 +114,11 @@ furnaceRouter.get('/queue', async (req, res) => {
     data: {
       stepNumber: step.step_number,
       minThreshold,
+      thresholdUnit: furnace ? 'units' : 'pieces',
       effectiveCapacity,
       queuedCount: queued.length,
-      moreNeeded: Math.max(0, minThreshold - queued.length),
+      queuedUnits: furnace ? queuedUnits : undefined,
+      moreNeeded: Math.max(0, minThreshold - readyMeasure),
       ready,
       proposedBatch: proposed.map((q) => ({ id: q.id, uid_code: q.uid_code, priority: q.priority, size_mm: q.size_mm })),
       fullQueue: queued.map((q) => ({ id: q.id, uid_code: q.uid_code, priority: q.priority, size_mm: q.size_mm, created_at: q.created_at })),
@@ -157,9 +164,20 @@ furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor']), async (
       });
     }
 
-    if (uidIds.length < (step.min_queue_threshold || 1) && !overrideThreshold) {
+    // Threshold is in capacity units for furnace steps, else a piece count.
+    const furnaceStep = step.capacity_basis === 'furnace_scaled';
+    let haveMeasure = uidIds.length;
+    if (furnaceStep) {
+      const { rows: szRows } = await client.query(
+        `SELECT s.size_mm FROM uids u LEFT JOIN sizes s ON s.id = u.size_id WHERE u.id = ANY($1::bigint[])`,
+        [uidIds]
+      );
+      haveMeasure = szRows.reduce((n, r) => n + furnaceSlotsForBar(r.size_mm || 1500), 0);
+    }
+    if (haveMeasure < (step.min_queue_threshold || 1) && !overrideThreshold) {
       throw Object.assign(new Error('Minimum queue threshold not met'), {
-        status: 409, code: 'THRESHOLD_NOT_MET', meta: { needed: step.min_queue_threshold, have: uidIds.length },
+        status: 409, code: 'THRESHOLD_NOT_MET',
+        meta: { needed: step.min_queue_threshold, have: haveMeasure, unit: furnaceStep ? 'units' : 'pieces' },
       });
     }
 

@@ -375,8 +375,10 @@ async function convertUid(req, res) {
   const { code } = req.params;
   const { childLengthsMm, childCycleCodes, scrapReason, reasonNotes, conversionPatternId } = req.body;
 
-  if (!Array.isArray(childLengthsMm) || childLengthsMm.length < 2 || childLengthsMm.length > 4) {
-    return res.status(400).json({ success: false, error: { code: 'INVALID_CHILDREN', message: 'Provide 2-4 child lengths.' } });
+  // Converting can be a simple resize (e.g. 1500→1424 = 1 child, 1 cut, 73mm scrap)
+  // through to a 4-way split — so 1 to 4 children.
+  if (!Array.isArray(childLengthsMm) || childLengthsMm.length < 1 || childLengthsMm.length > 4) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_CHILDREN', message: 'Provide 1–4 child lengths.' } });
   }
 
   const result = await withTransaction(async (client) => {

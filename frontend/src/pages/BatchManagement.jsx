@@ -119,10 +119,26 @@ function FurnaceBuilder({ step, cycleCode, isSupervisor }) {
     () => (Array.isArray(data?.fullQueue) ? data.fullQueue : Array.isArray(data?.uids) ? data.uids : Array.isArray(data) ? data : data?.queue || []).map(normalizeUid),
     [data]
   );
-  const capacity = num(pick(data || {}, 'effectiveCapacity', 'capacity', 'max_capacity')) || step.baseCap;
+  // Furnace capacity + threshold are measured in capacity UNITS, not bar count:
+  // a bar spans ceil(length/1500) units, so a 2750mm bar costs 2 units. The base
+  // slot count (step.baseCap) is the unit ceiling; a mixed load fills by units
+  // (base 80 fits 10×2750mm = 20 + 60×1500mm = 60 = 80).
+  const capacityUnits = step.baseCap;
   const threshold = num(pick(data || {}, 'minThreshold', 'min_threshold', 'threshold', 'minimum_queue_threshold'));
   const targetTemp = pick(data || {}, 'target_temp', 'target_temperature') ?? step.targetTemp;
   const targetSoak = pick(data || {}, 'target_soak', 'target_soak_mins', 'target_soaking_time') ?? step.targetSoak;
+
+  const unitsOf = (u) => Math.max(1, Math.ceil((num(u?.length) || 1500) / 1500));
+  const unitsById = useMemo(() => {
+    const m = new Map();
+    for (const u of queue) m.set(u.id, unitsOf(u));
+    return m;
+  }, [queue]);
+  const selectedUnits = useMemo(() => {
+    let n = 0;
+    for (const id of selected) n += unitsById.get(id) || 1;
+    return n;
+  }, [selected, unitsById]);
 
   function toggle(u) {
     setActionError(null);
@@ -131,20 +147,22 @@ function FurnaceBuilder({ step, cycleCode, isSupervisor }) {
       const next = new Set(prev);
       if (next.has(u.id)) {
         next.delete(u.id);
-      } else {
-        if (next.size >= capacity) return prev; // capacity guard
-        next.add(u.id);
+        return next;
       }
+      let usedUnits = 0;
+      for (const id of prev) usedUnits += unitsById.get(id) || 1;
+      if (usedUnits + unitsOf(u) > capacityUnits) return prev; // unit capacity guard
+      next.add(u.id);
       return next;
     });
   }
 
   const selectedCount = selected.size;
-  const meetsThreshold = !threshold || selectedCount >= threshold;
+  const meetsThreshold = !threshold || selectedUnits >= threshold;
   const thresholdBlocked = !meetsThreshold && !(override && isSupervisor && overrideReason.trim());
   const canConfirm =
     selectedCount > 0 &&
-    selectedCount <= capacity &&
+    selectedUnits <= capacityUnits &&
     !thresholdBlocked &&
     (!override || (isSupervisor && overrideReason.trim().length > 0));
 
@@ -163,7 +181,7 @@ function FurnaceBuilder({ step, cycleCode, isSupervisor }) {
         payload.overrideReason = overrideReason.trim();
       }
       await batchesApi.furnaceCreate(payload);
-      setOkMsg(`Furnace batch created for ${step.label} (${selectedCount} bars).`);
+      setOkMsg(`Furnace batch created for ${step.label} (${selectedCount} bars / ${selectedUnits} units).`);
       setSelected(new Set());
       setOverride(false);
       setOverrideReason('');
@@ -193,14 +211,15 @@ function FurnaceBuilder({ step, cycleCode, isSupervisor }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
             {queue.map((u) => {
               const isSelected = selected.has(u.id);
-              const atCap = !isSelected && selectedCount >= capacity;
+              const uUnits = unitsOf(u);
+              const atCap = !isSelected && selectedUnits + uUnits > capacityUnits;
               const disabled = atCap;
               return (
                 <button
                   key={u.id}
                   onClick={() => toggle(u)}
                   disabled={disabled}
-                  title={atCap ? `Capacity ${capacity} reached` : ''}
+                  title={atCap ? `Furnace full — ${selectedUnits}/${capacityUnits} units used` : `${uUnits} unit${uUnits > 1 ? 's' : ''}`}
                   style={{
                     display: 'grid',
                     gridTemplateColumns: '1fr auto auto auto',
@@ -239,10 +258,11 @@ function FurnaceBuilder({ step, cycleCode, isSupervisor }) {
 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14 }}>
           <div>
-            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Selected</div>
+            <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-secondary)' }}>Furnace units</div>
             <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 26, letterSpacing: '-0.03em', color: 'var(--text-primary)', lineHeight: 1 }}>
-              {selectedCount}<span style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: MONO, fontWeight: 400 }}> / {capacity}</span>
+              {selectedUnits}<span style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: MONO, fontWeight: 400 }}> / {capacityUnits}</span>
             </div>
+            <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)', marginTop: 3 }}>{selectedCount} bar{selectedCount === 1 ? '' : 's'} selected</div>
           </div>
           {lockedCycle ? (
             <div style={{ textAlign: 'right' }}>
@@ -258,14 +278,14 @@ function FurnaceBuilder({ step, cycleCode, isSupervisor }) {
 
         {/* Capacity bar */}
         <div style={{ height: 8, borderRadius: 6, background: 'var(--bg-muted)', marginTop: 12, overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: `${Math.min(100, (selectedCount / capacity) * 100)}%`, background: 'var(--status-success)', transition: 'width 0.2s' }} />
+          <div style={{ height: '100%', width: `${Math.min(100, (selectedUnits / capacityUnits) * 100)}%`, background: 'var(--status-success)', transition: 'width 0.2s' }} />
         </div>
 
         {/* Threshold notice + supervisor override (distinct from cycle rule) */}
         {threshold ? (
           <div style={{ marginTop: 14 }}>
             <div style={{ fontFamily: MONO, fontSize: 10, color: meetsThreshold ? 'var(--status-success-dark)' : 'var(--status-warning)' }}>
-              Minimum queue threshold: {threshold} bars {meetsThreshold ? '— met' : '— not met'}
+              Minimum queue threshold: {threshold} units {meetsThreshold ? '— met' : `— ${Math.max(0, threshold - selectedUnits)} more`}
             </div>
             {!meetsThreshold && (
               isSupervisor ? (
