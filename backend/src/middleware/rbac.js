@@ -47,9 +47,9 @@ const LOCATION_CODE_TO_ID = { dharmapuri: 1, faridabad: 2 };
 
 function enforceLocationScope(req, res, next) {
   const role = req.user.role;
-  if (role === 'admin' || role === 'manager') return next(); // unrestricted
+  if (role === 'admin') return next(); // §10 — Admin is the only cross-location role
 
-  // supervisor/operator/service/shopfloor are locked to their own location_id.
+  // manager/supervisor/operator/service/shopfloor are locked to their location_id.
   // The request may name a location as a code ('dharmapuri') or an id (1); a
   // missing param falls through (resolveLocation scopes it). Anything that
   // isn't the caller's own location — including 'both' — is rejected.
@@ -80,7 +80,7 @@ function requireLocationAccess(locationId) {
       return res.status(401).json({ success: false, error: { code: 'NO_TOKEN', message: 'Authentication required.' } });
     }
     const role = req.user.role;
-    if (role === 'admin' || role === 'manager') return next();
+    if (role === 'admin') return next(); // §10 — only Admin is cross-location
     if (String(req.user.location_id) === String(locationId)) return next();
     return res.status(403).json({
       success: false,
@@ -100,7 +100,7 @@ function requireLocationAccess(locationId) {
  */
 function resolveLocation(req, locationCodeToId) {
   const role = req.user.role;
-  if (role !== 'admin' && role !== 'manager') {
+  if (role !== 'admin') { // §10 — only Admin sees across / toggles location
     return { mode: 'one', locationId: req.user.location_id };
   }
   const q = (req.query.location || 'both').toLowerCase();

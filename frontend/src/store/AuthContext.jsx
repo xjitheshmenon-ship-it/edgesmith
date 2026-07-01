@@ -84,7 +84,7 @@ export function AuthProvider({ children }) {
     isOperator: user?.role === 'operator',
     isService: user?.role === 'service',
     isShopfloor: user?.role === 'shopfloor',
-    canSwitchLocation: user?.role === 'admin' || user?.role === 'manager',
+    canSwitchLocation: user?.role === 'admin', // §10 — only Admin may switch location
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
