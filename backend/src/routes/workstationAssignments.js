@@ -64,9 +64,22 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, re
     const { rows: wsRows } = await client.query(`SELECT category, code FROM workstation_types WHERE id = $1`, [workstationTypeId]);
     if (!wsRows[0]) throw Object.assign(new Error('Workstation not found'), { status: 404, code: 'WORKSTATION_NOT_FOUND' });
 
+    // §8.4 — furnace workstations require a valid HT (Heat Treatment)
+    // certification, not merely a role. No override for this specific rule.
+    // Admin/Manager are oversight roles and exempt.
     const isFurnace = wsRows[0].category === 'heat_treatment';
-    if (isFurnace && !['supervisor', 'manager', 'admin'].includes(empRows[0].role)) {
-      throw Object.assign(new Error('Furnace workstations require Supervisor role'), { status: 409, code: 'FURNACE_REQUIRES_SUPERVISOR' });
+    if (isFurnace && empRows[0].role !== 'admin' && empRows[0].role !== 'manager') {
+      const { rows: ht } = await client.query(
+        `SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
+          WHERE eb.employee_id = $1 AND bt.code = 'HT' AND bt.status = 'active' AND eb.revoked_at IS NULL
+            AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE) LIMIT 1`,
+        [employeeId]
+      );
+      if (!ht.length) {
+        throw Object.assign(new Error('Furnace workstations require a valid HT (Heat Treatment) certification — no override.'), {
+          status: 409, code: 'FURNACE_REQUIRES_HT_BADGE',
+        });
+      }
     }
 
     // Skill-badge check (warning, not a hard block — Supervisor can override

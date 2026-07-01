@@ -181,7 +181,7 @@ function FurnaceBuilder({ step, cycleCode, isSupervisor }) {
         payload.overrideReason = overrideReason.trim();
       }
       await batchesApi.furnaceCreate(payload);
-      setOkMsg(`Furnace batch created for ${step.label} (${selectedCount} bars / ${selectedUnits} units).`);
+      setOkMsg(`Furnace batch set up for ${step.label} (${selectedCount} bars / ${selectedUnits} units) — awaiting Supervisor verification.`);
       setSelected(new Set());
       setOverride(false);
       setOverrideReason('');
@@ -402,6 +402,34 @@ function CompleteForm({ batch, targetTemp, targetSoak, onDone }) {
   );
 }
 
+/* §8.3 — a Supervisor verifies the operator's furnace setup before START. */
+function VerifyButton({ id, onDone }) {
+  const { isSupervisor, isManager, isAdmin } = useAuth();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const canVerify = isSupervisor || isManager || isAdmin;
+  async function verify() {
+    setBusy(true); setErr(null);
+    try { await batchesApi.furnaceVerify(id); onDone && onDone(); }
+    catch (e) { setErr(e); } finally { setBusy(false); }
+  }
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--status-warning)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 5 }}>
+        <Icon name="lock" size={11} color="var(--status-warning)" /> Awaiting Supervisor verification — START blocked
+      </div>
+      {canVerify ? (
+        <button className="btn btn-sm btn-primary" style={{ justifyContent: 'center' }} disabled={busy} onClick={verify}>
+          {busy ? 'Verifying…' : 'Verify & start run'}
+        </button>
+      ) : (
+        <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--text-muted)' }}>Only a Supervisor can verify this setup.</div>
+      )}
+      {err && <div style={{ marginTop: 8 }}><ErrorBox error={err} /></div>}
+    </div>
+  );
+}
+
 function ActiveFurnaceBatches() {
   const { data, error, loading, refetch } = usePolling(() => batchesApi.furnaceList().then((r) => r.data), []);
   const [openId, setOpenId] = useState(null);
@@ -420,7 +448,8 @@ function ActiveFurnaceBatches() {
         const targetTemp = pick(b, 'target_temp', 'target_temperature');
         const targetSoak = pick(b, 'target_soak', 'target_soaking_time');
         const uids = pick(b, 'uids', 'uid_codes') || [];
-        const awaiting = String(status).toLowerCase().includes('await') || String(status).toLowerCase() === 'running';
+        const pending = String(status).toLowerCase() === 'pending_verification';
+        const awaiting = !pending && (String(status).toLowerCase().includes('await') || String(status).toLowerCase() === 'running');
         return (
           <div key={id} className="card" style={{ padding: '14px 16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -443,6 +472,8 @@ function ActiveFurnaceBatches() {
                 {uids.map((u) => (typeof u === 'string' ? u : pick(u, 'code', 'uid_code'))).join('  ·  ')}
               </div>
             )}
+
+            {pending && <VerifyButton id={id} onDone={refetch} />}
 
             {awaiting && (
               openId === id ? (
