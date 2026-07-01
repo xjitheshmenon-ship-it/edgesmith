@@ -123,6 +123,31 @@ async function seedOperatorJobsAcrossWorkstations() {
   if (r.created) console.log(`\u2713 Spread ${r.created} operator jobs so every Dharmapuri workstation shows an operator (${r.stationsCovered} units).`);
 }
 
+// Skill enforcement is live: an operator can only start a job at a station they
+// hold the matching skill certification for. Grant every operator all skill
+// certifications (created by the base seed) so the demo runs end to end. Runs
+// regardless of the main demo guard so it also backfills an already-seeded
+// deploy where operators exist but predate enforcement. Idempotent via the
+// UNIQUE(employee_id, badge_type_id) constraint.
+async function grantSkillCertsToOperators() {
+  const { rows: skillBadges } = await query(`SELECT id FROM badge_types WHERE code IS NOT NULL AND status = 'active'`);
+  if (!skillBadges.length) return;
+  const { rows: ops } = await query(`SELECT id FROM employees WHERE role = 'operator' AND status = 'active'`);
+  let granted = 0;
+  for (const op of ops) {
+    for (const sb of skillBadges) {
+      const { rowCount } = await query(
+        `INSERT INTO employee_badges (employee_id, badge_type_id, certified_date, certified_by, expiry_date)
+         VALUES ($1,$2,$3,'Plant Head',$4)
+         ON CONFLICT (employee_id, badge_type_id) DO NOTHING`,
+        [op.id, sb.id, daysFromNow(-100), daysFromNow(365)]
+      );
+      granted += rowCount;
+    }
+  }
+  if (granted) console.log(`✓ Granted ${granted} skill certifications so operators can work their stations.`);
+}
+
 async function main() {
   console.log('Seeding comprehensive DEMO data (SEED_DEMO=true)...\n');
 
@@ -131,6 +156,7 @@ async function main() {
   await backfillWeldBomIfEmpty();
   await seedOperatorJobsAcrossWorkstations();
   await seedFaridabadOperatorItems();
+  await grantSkillCertsToOperators();
 
   const exists = await query(`SELECT id FROM contractor_dispatches WHERE batch_reference = $1`, [DEMO_DISPATCH_REF]);
   if (exists.rows[0]) {
@@ -458,9 +484,11 @@ async function main() {
     console.log(`✓ Demo data created: ${operators.length + 4} extra employees, 3 MOs, Faridabad chain (3 dispatches), ${allUidIds.length} UIDs, step+QC logs, 1 furnace + 1 production batch, today's shift with jobs, and 4 alerts.`);
   });
 
-  // Fresh DB: operators exist now — spread jobs across every workstation.
+  // Fresh DB: operators exist now — spread jobs across every workstation and
+  // grant them the skill certifications the skill gate now requires.
   await seedOperatorJobsAcrossWorkstations();
   await seedFaridabadOperatorItems();
+  await grantSkillCertsToOperators();
 
   console.log('  Log in and explore — every page should now have data. Default new-user password: Demo123!');
   await pool.end();
