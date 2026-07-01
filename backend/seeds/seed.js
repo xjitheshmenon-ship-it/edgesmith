@@ -67,7 +67,6 @@ const WORKSTATIONS = [
   // code,      name,                        category,         locationCode (null = both)
   ['BSW-01', 'Band Saw 1', 'cutting', null],
   ['BSW-02', 'Band Saw 2 / Converting', 'cutting', null],
-  ['RCV-01', 'Receiving / Work Table', 'other', null],
   ['TAG-01', 'Tagging Table', 'other', 'dharmapuri'],
   ['HT70', 'Hardening Furnace', 'heat_treatment', null],
   ['HT80', 'Quench Tank', 'heat_treatment', null],
