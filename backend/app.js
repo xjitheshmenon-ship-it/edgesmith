@@ -17,6 +17,7 @@ const { rateLimiter } = require('./src/middleware/rateLimiter');
 const { runShiftAutoStart } = require('./src/jobs/shiftStart');
 const { runBadgeExpiryCheck } = require('./src/jobs/badgeExpiry');
 const { runOverdueReceivingCheck } = require('./src/jobs/overdueReceiving');
+const { runPauseThresholdCheck } = require('./src/jobs/pauseThreshold');
 
 const app = express();
 
@@ -107,6 +108,7 @@ if (process.env.NODE_ENV !== 'test') {
   cron.schedule('* * * * *', () => runShiftAutoStart().catch((e) => console.error('[cron] shiftStart failed', e)));
   cron.schedule('0 * * * *', () => runBadgeExpiryCheck().catch((e) => console.error('[cron] badgeExpiry failed', e)));
   cron.schedule('*/5 * * * *', () => runOverdueReceivingCheck().catch((e) => console.error('[cron] overdueReceiving failed', e)));
+  cron.schedule('*/5 * * * *', () => runPauseThresholdCheck().catch((e) => console.error('[cron] pauseThreshold failed', e)));
 }
 
 // ── Start server ─────────────────────────────────────────────────────────────
