@@ -189,12 +189,16 @@ furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor']), async (
 
     const batchNumber = await generateBatchNumber(client, step.step_number, cycleCode);
 
+    // §9.4 — tag the batch to the shift it starts in.
+    const { rows: startShift } = await client.query(`SELECT id FROM shifts WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1`);
+    const startShiftId = startShift[0] ? startShift[0].id : null;
+
     const { rows: batchRows } = await client.query(
       `INSERT INTO furnace_batches (batch_number, cycle_step_id, cycle_type_id, workstation_unit_id,
-                                     target_temp_c, target_soak_min, status, started_at, operator_id)
-       VALUES ($1,$2,$3,$4,$5,$6,'running', now(), $7) RETURNING *`,
+                                     target_temp_c, target_soak_min, status, started_at, operator_id, shift_id)
+       VALUES ($1,$2,$3,$4,$5,$6,'running', now(), $7, $8) RETURNING *`,
       [batchNumber, step.id, cycleTypeId, workstationUnitId || null,
-        params ? params.target_temp_c : null, params ? params.target_soak_min : null, req.user.sub]
+        params ? params.target_temp_c : null, params ? params.target_soak_min : null, req.user.sub, startShiftId]
     );
     const batch = batchRows[0];
 
@@ -248,10 +252,13 @@ furnaceRouter.patch('/:id/complete', requireRole(['admin', 'manager', 'superviso
       actualSoakMin: actualSoakMin,
     });
 
+    // §9.4 — if the batch finishes in a different shift than it started, record both.
+    const { rows: endShift } = await client.query(`SELECT id FROM shifts WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1`);
+    const endShiftId = endShift[0] && endShift[0].id !== batch.shift_id ? endShift[0].id : null;
     await client.query(
       `UPDATE furnace_batches SET actual_temp_c = $1, actual_soak_min = $2, deviation_flag = $3,
-              status = 'complete', closed_at = now() WHERE id = $4`,
-      [actualTempC || null, actualSoakMin || null, deviation.flagged, batch.id]
+              status = 'complete', closed_at = now(), end_shift_id = $5 WHERE id = $4`,
+      [actualTempC || null, actualSoakMin || null, deviation.flagged, batch.id, endShiftId]
     );
 
     const { rows: uidRows } = await client.query(`SELECT uid_id FROM furnace_batch_uids WHERE furnace_batch_id = $1`, [batch.id]);
@@ -515,7 +522,10 @@ grindingRouter.post('/batches/:id/close', requireRole(['admin', 'manager', 'supe
       }
     }
 
-    await client.query(`UPDATE production_batches SET status = 'complete', closed_at = now() WHERE id = $1`, [batch.id]);
+    // §9.4 — record the finishing shift when it differs from the starting one.
+    const { rows: endShiftPb } = await client.query(`SELECT id FROM shifts WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1`);
+    const endShiftPbId = endShiftPb[0] && endShiftPb[0].id !== batch.shift_id ? endShiftPb[0].id : null;
+    await client.query(`UPDATE production_batches SET status = 'complete', closed_at = now(), end_shift_id = $2 WHERE id = $1`, [batch.id, endShiftPbId]);
     await req.audit({ tableName: 'production_batches', recordId: batch.id, action: 'UPDATE', after: { status: 'complete', uidCount: uidRows.length } });
     return { batchId: batch.id, advanced: uidRows.length };
   });
