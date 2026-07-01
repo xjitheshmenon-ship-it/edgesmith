@@ -52,6 +52,13 @@ function FactoryBatch() {
   const { location } = useApp();
   return location === 'faridabad' ? <FaridabadBatchManagement /> : <BatchManagement />;
 }
+/* "Material arriving" is one view per factory: Faridabad logs raw-material
+   intake from suppliers, Dharmapuri logs blocks received from Faridabad. A
+   single nav entry follows the shared factory toggle. */
+function FactoryReceiving() {
+  const { location } = useApp();
+  return location === 'faridabad' ? <RawMaterialIntake /> : <Receiving />;
+}
 
 const PAGES = {
   dashboard: Dashboard,
@@ -70,7 +77,7 @@ const PAGES = {
   mo: MoLinking,
   masters: MasterLists,
   users: UsersRoles,
-  receiving: Receiving,
+  receiving: FactoryReceiving,
   shift: ShiftManagement,
   jobs: JobAssignment,
   reports: Reports,
