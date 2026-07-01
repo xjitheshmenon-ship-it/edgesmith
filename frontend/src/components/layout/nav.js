@@ -8,34 +8,22 @@ export const NAV = [
   ['OVERVIEW', [
     ['dashboard', 'Dashboard', 'grid', 'dashboardAlerts'],
     ['shopfloor', 'Shopfloor Display', 'monitor', null],
-    // Receiving / Intake, Production Floor, My Workstation and Batch Management are
+    // Receiving & Intake, Production Floor, My Workstation and Batch Tracker are
     // shared across both factories — the topbar factory toggle selects which
     // factory's data (and page) is shown.
-    ['receiving', 'Receiving / Intake', 'inbox', 'expectedArrivals'],
+    ['receiving', 'Receiving & Intake', 'inbox', 'expectedArrivals'],
     ['floor', 'Production Floor', 'factory', 'onHoldUids'],
     ['jobexec', 'My Workstation', 'timer', null],
-    ['shift', 'Shift Management', 'calendar', null],
-    ['jobs', 'Job Assignment', 'assign', 'unassignedJobs'],
-    ['batch', 'Batch Management', 'stack', 'activeBatches'],
-  ]],
-  // FARIDABAD section is now fully covered by the shared factory toggle:
-  //  - Raw Material Intake → the "Receiving / Intake" entry (toggle = Faridabad)
-  //  - Joining Operation → recorded inline by the operator when they close the
-  //    WELD-01 (Welding) step in their Faridabad workstation view; the alloy+MS
-  //    BOM is captured there. The /joining route stays registered for old links.
-  //  - Faridabad Batch Management → the "Batch Management" entry (toggle = Faridabad)
-  //  - Contractor Dispatch → dispatch creation lives in Faridabad Batch Management.
-  ['FARIDABAD', [
-  ]],
-  ['DHARMAPURI', [
-    ['uid', 'UID Creation', 'tag', null],
+    ['uid', 'UID Lookup', 'tag', null],
+    ['shift', 'Shift Planner', 'calendar', null],
+    ['jobs', 'Work Assignment', 'assign', 'unassignedJobs'],
+    ['batch', 'Batch Tracker', 'stack', 'activeBatches'],
   ]],
   ['OPERATIONS', [
-    ['qc', 'QC', 'check', 'pendingQc'],
-    ['mo', 'MO Linking', 'doc', 'openMos'],
+    ['qc', 'Quality Control', 'check', 'pendingQc'],
+    ['mo', 'Manufacturing Orders', 'doc', 'openMos'],
     ['reports', 'Reports', 'chart', null],
     ['activity', 'Activity Log', 'timer', null],
-    ['service', 'Service Lookup', 'search', null],
   ]],
   ['CONFIGURATION', [
     ['cycle', 'Cycle Builder', 'flow', null],
@@ -52,15 +40,15 @@ export const NAV = [
  * still individually restrict write actions further (handled per-page via
  * useAuth role flags) — this controls what's visible in the sidebar at all. */
 export const SECTIONS_BY_ROLE = {
-  admin: ['OVERVIEW', 'FARIDABAD', 'DHARMAPURI', 'OPERATIONS', 'CONFIGURATION'],
-  manager: ['OVERVIEW', 'FARIDABAD', 'DHARMAPURI', 'OPERATIONS', 'CONFIGURATION'],
-  supervisor: ['OVERVIEW', 'DHARMAPURI', 'OPERATIONS'],
+  admin: ['OVERVIEW', 'OPERATIONS', 'CONFIGURATION'],
+  manager: ['OVERVIEW', 'OPERATIONS', 'CONFIGURATION'],
+  supervisor: ['OVERVIEW', 'OPERATIONS'],
   operator: ['OVERVIEW', 'OPERATIONS'], // filtered to My Workstation/QC below (QC now lives in OPERATIONS)
   service: [],
   shopfloor: [],
 };
 
-/** Operators only see a narrow slice even within DHARMAPURI section */
+/** Operators only see a narrow slice — My Workstation and Quality Control */
 export const OPERATOR_ALLOWED_ROUTES = ['jobexec', 'qc'];
 
 export function routeTitle(routeKey) {
