@@ -475,6 +475,7 @@ function ScheduleTab({ location, canManage }) {
   const [publishing, setPublishing] = useState(false);
   const [pubMsg, setPubMsg] = useState(null);
   const [editing, setEditing] = useState(null); // { date: Date, shiftNumber, cell }
+  const [rowBusy, setRowBusy] = useState(null);  // `${key}` while a quick action runs
 
   const singleLocation = location !== 'both';
   const canEdit = canManage && singleLocation;
@@ -545,6 +546,42 @@ function ScheduleTab({ location, canManage }) {
       setPubMsg({ kind: 'err', text: err?.message || 'Could not publish schedule.' });
     } finally {
       setPublishing(false);
+    }
+  }
+
+  // Quick action: copy one cell's crew to the same shift on every day this week.
+  async function copyToWeek(cell, sn) {
+    if (!canEdit || !cell) return;
+    setRowBusy(`week|${sn}`);
+    setPubMsg(null);
+    try {
+      for (const d of days) {
+        await shiftsApi.setSchedule({
+          shiftDate: isoDate(d), shiftNumber: sn, locationCode: location,
+          supervisorId: cell.supervisor_id || null,
+          operatorIds: Array.isArray(cell.operator_ids) ? cell.operator_ids : [],
+        });
+      }
+      setPubMsg({ kind: 'ok', text: `Copied Shift ${sn} crew across the week (draft).` });
+      refetch();
+    } catch (e) {
+      setPubMsg({ kind: 'err', text: e?.message || 'Could not copy across the week.' });
+    } finally {
+      setRowBusy(null);
+    }
+  }
+
+  // Quick action: clear a single cell.
+  async function clearCell(d, sn) {
+    if (!canEdit) return;
+    setRowBusy(`${isoDate(d)}|${sn}`);
+    try {
+      await shiftsApi.setSchedule({ shiftDate: isoDate(d), shiftNumber: sn, locationCode: location, supervisorId: null, operatorIds: [] });
+      refetch();
+    } catch (e) {
+      setPubMsg({ kind: 'err', text: e?.message || 'Could not clear the cell.' });
+    } finally {
+      setRowBusy(null);
     }
   }
 
@@ -626,34 +663,58 @@ function ScheduleTab({ location, canManage }) {
                   {days.map((d) => {
                     const cell = byCell[`${isoDate(d)}|${sn}`];
                     const clickable = canEdit;
+                    const opCount = cell && Array.isArray(cell.operator_ids) ? cell.operator_ids.length : 0;
+                    const cellKey = `${isoDate(d)}|${sn}`;
+                    const busyHere = rowBusy === cellKey || rowBusy === `week|${sn}`;
                     return (
-                      <td
-                        key={isoDate(d)}
-                        style={{ ...cellStyle(), cursor: clickable ? 'pointer' : 'default' }}
-                        onClick={clickable ? () => setEditing({ date: d, shiftNumber: sn, cell: cell || null }) : undefined}
-                        title={clickable ? (cell ? 'Edit shift assignment' : 'Add shift assignment') : undefined}
-                      >
+                      <td key={isoDate(d)} style={{ ...cellStyle(), verticalAlign: 'top' }}>
                         {cell ? (
                           <div
+                            onClick={clickable ? () => setEditing({ date: d, shiftNumber: sn, cell }) : undefined}
+                            title={clickable ? 'Edit shift assignment' : undefined}
+                            className="cp-sched-cell"
                             style={{
-                              padding: '7px 9px',
-                              borderRadius: 'var(--radius-sm, 5px)',
+                              position: 'relative', padding: '8px 9px', borderRadius: 'var(--radius-md, 9px)', cursor: clickable ? 'pointer' : 'default',
                               background: cell.published ? 'var(--bg-soft-green, #e7ece4)' : 'var(--bg-soft-amber, #fdf6ef)',
-                              border: cell.published ? 'none' : '1px dashed var(--status-amber, #f0c674)',
+                              border: `1px solid ${cell.published ? 'rgba(34,160,107,0.25)' : 'var(--status-amber, #f0c674)'}`,
+                              opacity: busyHere ? 0.55 : 1,
                             }}
                           >
-                            <div style={{ fontFamily: SANS, fontSize: 12, fontWeight: 600, color: 'var(--text-primary, #15366a)' }}>
-                              {cell.supervisor_name || 'No supervisor'}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <Icon name="assign" size={12} color="var(--text-secondary, #5d7188)" />
+                              <span style={{ fontFamily: SANS, fontSize: 12, fontWeight: 700, color: 'var(--text-primary, #15366a)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {cell.supervisor_name || 'No supervisor'}
+                              </span>
                             </div>
-                            <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-secondary, #5d7188)', marginTop: 2 }}>
-                              {Array.isArray(cell.operator_ids) ? cell.operator_ids.length : 0} ops
-                              {cell.published ? '' : ' · draft'}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                              <span style={{ fontFamily: MONO, fontSize: 10, fontWeight: 700, color: opCount ? 'var(--status-success-dark, #1a7f54)' : 'var(--status-warning, #d97a2b)' }}>{opCount} ops</span>
+                              <span style={{ fontFamily: MONO, fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', padding: '1px 6px', borderRadius: 999, color: cell.published ? 'var(--status-success-dark, #1a7f54)' : 'var(--status-warning, #d97a2b)', background: cell.published ? 'rgba(34,160,107,0.14)' : 'rgba(240,198,116,0.25)' }}>
+                                {cell.published ? 'LIVE' : 'DRAFT'}
+                              </span>
                             </div>
+                            {clickable && (
+                              <div className="cp-sched-actions" style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                                <button type="button" title="Copy this crew to every day this week" disabled={busyHere}
+                                  onClick={(e) => { e.stopPropagation(); copyToWeek(cell, sn); }}
+                                  style={{ flex: 1, fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: '0.03em', border: '1px solid var(--border-input, #d6e0d2)', borderRadius: 6, background: 'var(--bg-card, #fff)', color: 'var(--text-secondary, #5d7188)', padding: '3px 0', cursor: 'pointer' }}>
+                                  → WEEK
+                                </button>
+                                <button type="button" title="Clear this cell" disabled={busyHere}
+                                  onClick={(e) => { e.stopPropagation(); clearCell(d, sn); }}
+                                  style={{ width: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-input, #d6e0d2)', borderRadius: 6, background: 'var(--bg-card, #fff)', color: 'var(--status-danger, #e5484d)', padding: '3px 0', cursor: 'pointer' }}>
+                                  <Icon name="close" size={11} color="var(--status-danger, #e5484d)" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ) : clickable ? (
-                          <div style={{ fontFamily: MONO, fontSize: 16, color: 'var(--text-muted, #9bb4d4)', textAlign: 'center', lineHeight: 1 }}>+</div>
+                          <button type="button" onClick={() => setEditing({ date: d, shiftNumber: sn, cell: null })}
+                            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, border: '1px dashed var(--border-input, #d6e0d2)', borderRadius: 'var(--radius-md, 9px)', background: 'transparent', color: 'var(--text-muted, #9bb4d4)', padding: '10px 0', cursor: 'pointer', fontFamily: MONO, fontSize: 10.5, fontWeight: 600, letterSpacing: '0.04em' }}
+                            title="Assign a crew">
+                            <Icon name="plus" size={12} /> ASSIGN
+                          </button>
                         ) : (
-                          <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted, #9bb4d4)', textAlign: 'center' }}>—</div>
+                          <div style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted, #9bb4d4)', textAlign: 'center', padding: '10px 0' }}>—</div>
                         )}
                       </td>
                     );
