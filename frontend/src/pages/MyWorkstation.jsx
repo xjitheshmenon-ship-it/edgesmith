@@ -1080,9 +1080,9 @@ function QueueRow({ job, idx, nowMs, canAct, onStart, pending }) {
    Admins aren't assigned to a station, so instead of a personal queue they get
    an overview of every workstation that has work: the count of UIDs pending at
    that station, plus any live operator jobs (with timers) assigned there. */
-function StationOversightCard({ row, nowMs }) {
+function StationOversightCard({ row, nowMs, onClick }) {
   return (
-    <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div className="card" onClick={onClick} title="View workstation detail" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10, cursor: 'pointer' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
         <div>
           <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, color: T_PRIMARY }}>{row.name}</div>
@@ -1122,8 +1122,83 @@ function StatChip({ label, value }) {
   );
 }
 
+/* Right-hand detail drawer for a workstation on the oversight board — mirrors
+   the Production Floor drawer: who is active, on which UID, plus the assignment. */
+function OversightDrawer({ row, nowMs, onClose }) {
+  const jobs = row.jobs || [];
+  const active = jobs.filter((j) => jobStatus(j) === 'in_progress');
+  const others = jobs.filter((j) => jobStatus(j) !== 'in_progress');
+  const operators = new Set(jobs.map((j) => pick(j, 'operator_name', 'operator')).filter(Boolean)).size;
+
+  const Row = ({ j }) => {
+    const running = jobStatus(j) === 'in_progress';
+    const secs = serverNetSeconds(j) + (running ? elapsedFrom(pick(j, 'started_at'), nowMs) : 0);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 0', borderBottom: '1px solid var(--border-card, #eef2f7)', fontFamily: SANS, fontSize: 12.5 }}>
+        <StatusPill status={jobStatus(j)} />
+        <span style={{ color: T_PRIMARY, fontWeight: 600 }}>{pick(j, 'operator_name', 'operator') || 'Unassigned'}</span>
+        {pick(j, 'uid_code', 'uid') && <span style={{ fontFamily: MONO, fontSize: 11, color: T_SECONDARY }}>{pick(j, 'uid_code', 'uid')}</span>}
+        {jobStep(j) != null && <span style={{ fontFamily: MONO, fontSize: 11, color: T_MUTED }}>· Step {jobStep(j)}</span>}
+        {running && <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: T_PRIMARY }}>{fmtHMS(secs)}</span>}
+      </div>
+    );
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.35)', zIndex: 60, display: 'flex', justifyContent: 'flex-end' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(420px, 92vw)', height: '100%', background: 'var(--bg-card, #fff)', borderLeft: '1px solid var(--border-card, #e6ecf3)', boxShadow: '-8px 0 30px rgba(0,0,0,0.12)', overflowY: 'auto', padding: '20px 22px 40px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 19, color: T_PRIMARY }}>{row.name}</div>
+            {row.name !== row.code && <div style={{ fontFamily: MONO, fontSize: 11.5, color: T_SECONDARY, marginTop: 2 }}>{row.code}</div>}
+          </div>
+          <button className="btn btn-sm" type="button" onClick={onClose}><Icon name="close" size={14} /></button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+          <StatChip label="UIDs waiting" value={row.pending} />
+          <StatChip label="In progress" value={active.length} />
+          <StatChip label="Operators" value={operators} />
+        </div>
+
+        {active.length > 0 && (
+          <div className="card" style={{ marginTop: 16, padding: '12px 14px', boxShadow: 'none', background: 'var(--bg-muted, #f4f7f2)', borderLeft: '4px solid var(--status-success, #22a06b)' }}>
+            <Label style={{ marginBottom: 8 }}>Active now</Label>
+            {active.map((j) => {
+              const secs = serverNetSeconds(j) + elapsedFrom(pick(j, 'started_at'), nowMs);
+              return (
+                <div key={jobId(j)} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                  <Icon name="user" size={14} color={T_SECONDARY} />
+                  <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+                    <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700, color: T_PRIMARY }}>{pick(j, 'operator_name', 'operator') || 'Unassigned'}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 11, color: T_SECONDARY }}>
+                      {pick(j, 'uid_code', 'uid') || '— no UID —'}
+                      {jobStep(j) != null ? ` · Step ${jobStep(j)}` : ''}
+                      {pick(j, 'operation', 'operation_name') ? ` · ${pick(j, 'operation', 'operation_name')}` : ''}
+                    </span>
+                  </div>
+                  <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--status-success-dark, #1c7a52)' }}>{fmtHMS(secs)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <Label style={{ marginTop: 20, marginBottom: 6 }}>Assigned jobs</Label>
+        {jobs.length === 0 ? <div style={{ fontFamily: SANS, fontSize: 12, color: T_MUTED }}>No operator assigned.</div> : (
+          <>
+            {active.map((j) => <Row key={jobId(j)} j={j} />)}
+            {others.map((j) => <Row key={jobId(j)} j={j} />)}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AllWorkstationsBoard() {
   const nowMs = useNow(true);
+  const [selectedCode, setSelectedCode] = useState(null);
   const { data, loading, error, refetch } = usePolling(
     () => Promise.all([
       uidsApi.stationSummary().then((r) => r.data).catch(() => []),
@@ -1172,13 +1247,17 @@ function AllWorkstationsBoard() {
         <StatChip label="Jobs in progress" value={totalActiveJobs} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14, marginTop: 16 }}>
-        {board.map((r) => <StationOversightCard key={r.code} row={r} nowMs={nowMs} />)}
+        {board.map((r) => <StationOversightCard key={r.code} row={r} nowMs={nowMs} onClick={() => setSelectedCode(r.code)} />)}
       </div>
       {board.length === 0 && (
         <div className="card" style={{ marginTop: 16, padding: 40, textAlign: 'center', fontFamily: SANS, fontSize: 13, color: T_SECONDARY }}>
           {loading ? 'Loading workstations…' : 'No workstations have work right now.'}
         </div>
       )}
+      {selectedCode && (() => {
+        const r = board.find((b) => b.code === selectedCode);
+        return r ? <OversightDrawer row={r} nowMs={nowMs} onClose={() => setSelectedCode(null)} /> : null;
+      })()}
     </>
   );
 }
