@@ -1,7 +1,15 @@
 const { Pool } = require('pg');
 
+// SSL is only needed for EXTERNAL connections (e.g. seeding the Render DB from a
+// GitHub Actions runner). Render's own internal connection needs no SSL config,
+// so this stays off unless DATABASE_SSL=true (or PGSSLMODE=require) is set — the
+// in-container boot is unchanged.
+const useSsl =
+  process.env.DATABASE_SSL === 'true' || process.env.PGSSLMODE === 'require';
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: useSsl ? { rejectUnauthorized: false } : undefined,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,

@@ -1,0 +1,83 @@
+name: Seed remote database
+
+# Manually triggered: Actions tab → "Seed remote database" → Run workflow.
+#
+# Seeds the LIVE Render Postgres with base + demo + bulk sample data. GitHub's
+# runners can reach the database directly, so this works even when the backend
+# won't re-seed on its own (e.g. the DB already has data and the boot seeders
+# skip).
+#
+# One-time setup — add a repo secret:
+#   Settings → Secrets and variables → Actions → New repository secret
+#   Name:  RENDER_DATABASE_URL
+#   Value: Render → your database → "External Database URL" (starts with
+#          postgresql://… and ends with the external host + ?sslmode=require)
+#
+# The seeders are idempotent: base/demo skip when data already exists, bulk
+# skips once the tables are large. To regenerate from scratch, tick "reset".
+on:
+  workflow_dispatch:
+    inputs:
+      demo:
+        description: 'Seed demo data (accounts, sample UIDs/items, both factories)'
+        type: boolean
+        default: true
+      bulk:
+        description: 'Seed bulk data (~2000 UIDs + ~600 blocks)'
+        type: boolean
+        default: true
+      reset:
+        description: 'DANGER — wipe the database first (drops ALL data)'
+        type: boolean
+        default: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.RENDER_DATABASE_URL }}
+      DATABASE_SSL: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Fail early if the DB secret is missing
+        run: |
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "::error::RENDER_DATABASE_URL secret is not set. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Reset schema (destructive — only when 'reset' is ticked)
+        if: ${{ inputs.reset }}
+        working-directory: backend
+        run: node scripts/reset-schema.js
+
+      - name: Apply migrations
+        working-directory: backend
+        run: node scripts/migrate.js
+
+      - name: Seed base data
+        working-directory: backend
+        run: node seeds/seed.js
+
+      - name: Seed demo data
+        if: ${{ inputs.demo }}
+        working-directory: backend
+        env:
+          SEED_DEMO: 'true'
+        run: node seeds/demo.js
+
+      - name: Seed bulk sample data
+        if: ${{ inputs.bulk }}
+        working-directory: backend
+        run: |
+          node seeds/bulk-jobs.js
+          node seeds/bulk-blocks.js
