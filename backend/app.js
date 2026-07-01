@@ -87,6 +87,7 @@ app.use(`${API_PREFIX}/master`, require('./src/routes/master'));
 app.use(`${API_PREFIX}/admin`, require('./src/routes/admin'));
 app.use(`${API_PREFIX}/imports`, require('./src/routes/imports'));
 app.use(`${API_PREFIX}/alerts`, require('./src/routes/alerts'));
+app.use(`${API_PREFIX}/activity`, require('./src/routes/activity'));
 app.use(`${API_PREFIX}/workstation-assignments`, require('./src/routes/workstationAssignments'));
 // batches.js internally covers two resource families under one router
 // (/furnace-batches/* and /grinding/*) via scoped sub-routers, so it is

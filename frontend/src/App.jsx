@@ -30,6 +30,7 @@ import ShopfloorDisplay from './pages/ShopfloorDisplay';
 import EmployeeProfiles from './pages/EmployeeProfiles';
 import JobAssignment from './pages/JobAssignment';
 import Reports from './pages/Reports';
+import ActivityLog from './pages/ActivityLog';
 import CycleBuilder from './pages/CycleBuilder';
 import DataImport from './pages/DataImport';
 
@@ -81,6 +82,7 @@ const PAGES = {
   shift: ShiftManagement,
   jobs: JobAssignment,
   reports: Reports,
+  activity: ActivityLog,
   cycle: CycleBuilder,
   temper: TemperingParameters,
   employees: EmployeeProfiles,
