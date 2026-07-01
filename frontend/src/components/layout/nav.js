@@ -12,6 +12,8 @@ export const NAV = [
     // factories — the topbar factory toggle selects which factory's data is shown.
     ['floor', 'Production Floor', 'factory', 'onHoldUids'],
     ['jobexec', 'My Workstation', 'timer', null],
+    ['shift', 'Shift Management', 'calendar', null],
+    ['jobs', 'Job Assignment', 'assign', 'unassignedJobs'],
     ['batch', 'Batch Management', 'stack', 'activeBatches'],
   ]],
   ['FARIDABAD', [
@@ -30,8 +32,6 @@ export const NAV = [
   ]],
   ['OPERATIONS', [
     ['mo', 'MO Linking', 'doc', 'openMos'],
-    ['shift', 'Shift Management', 'calendar', null],
-    ['jobs', 'Job Assignment', 'assign', 'unassignedJobs'],
     ['dataimport', 'Data Import', 'download', null],
     ['reports', 'Reports', 'chart', null],
     ['service', 'Service Lookup', 'search', null],
