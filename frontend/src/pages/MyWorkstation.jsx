@@ -3,6 +3,7 @@ import { usePolling } from '../hooks/usePolling';
 import { jobsApi, PAUSE_REASONS } from '../api/jobs';
 import { uidsApi } from '../api/uids';
 import { batchesApi } from '../api/batches';
+import { cyclesApi, masterApi } from '../api/resources';
 import { useAuth } from '../store/AuthContext';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
@@ -399,6 +400,148 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
         <button className="btn btn-primary" style={{ height: 48, padding: '0 22px' }} disabled={!valid || busy} onClick={submit}>
           <Icon name="check" size={16} />
           {busy ? 'Closing…' : nextStep ? `Confirm close — advance to step ${nextStep}` : 'Confirm close'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/* ── Generate UID modal (RCV-01 / Work Table operator) ───────────────────────
+   UID creation is just an operation the receiving operator performs: they take a
+   cycle, a quantity and (optionally) a raw-material size, and the system mints the
+   codes at step 1 (RM-Q). No admin needed — this is the genesis of every job. */
+
+function GenerateUidModal({ onClose, onDone }) {
+  const [cycles, setCycles] = useState(null);
+  const [sizes, setSizes] = useState([]);
+  const [cycleCode, setCycleCode] = useState('');
+  const [quantity, setQuantity] = useState('1');
+  const [sizeId, setSizeId] = useState('');
+  const [priority, setPriority] = useState('Normal');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [created, setCreated] = useState(null); // string[] of minted codes
+
+  useEffect(() => {
+    let live = true;
+    Promise.all([cyclesApi.list(), masterApi.sizes().catch(() => ({ data: [] }))])
+      .then(([c, s]) => {
+        if (!live) return;
+        const rows = (c?.data || []).filter((r) => (r.status || 'active') !== 'archived');
+        setCycles(rows);
+        setSizes(s?.data || []);
+        if (rows[0]) setCycleCode(rows[0].code);
+      })
+      .catch(() => live && setCycles([]));
+    return () => { live = false; };
+  }, []);
+
+  const qtyNum = Math.max(0, parseInt(quantity, 10) || 0);
+  const valid = cycleCode && qtyNum >= 1 && qtyNum <= 5000;
+
+  async function submit() {
+    if (!valid) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await uidsApi.bulkCreate({
+        cycleCode,
+        quantity: qtyNum,
+        sizeId: sizeId ? Number(sizeId) : undefined,
+        priority,
+      });
+      setCreated(res?.data?.created || []);
+      onDone?.();
+    } catch (err) {
+      setError(err?.message || 'Could not generate UIDs — please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (created) {
+    return (
+      <Modal title={`UIDs generated — ${created.length}`} onClose={onClose} width={520}>
+        <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginBottom: 12 }}>
+          {created.length} new {created.length === 1 ? 'UID has' : 'UIDs have'} been created at step 1 (RM-Q) and are now in the receiving queue.
+        </div>
+        <div className="card" style={{ background: 'var(--bg-muted, #f4f7f2)', boxShadow: 'none', padding: '12px 14px', maxHeight: 220, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {created.map((code) => (
+              <Mono key={code} style={{ fontSize: 12, fontWeight: 700, color: T_PRIMARY, background: 'var(--bg-card, #fff)', border: '1px solid var(--border-card, #e3ebde)', borderRadius: 7, padding: '4px 9px' }}>
+                {code}
+              </Mono>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+          <button className="btn" style={{ height: 48, padding: '0 22px' }} onClick={() => { setCreated(null); setError(null); }}>Generate more</button>
+          <button className="btn btn-primary" style={{ height: 48, padding: '0 22px' }} onClick={onClose}>Done</button>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="Generate UID — Receiving / Work Table" onClose={busy ? () => {} : onClose} width={520}>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY, marginBottom: 16 }}>
+        Mint new UIDs for material received at this workstation. Each UID starts at step 1 (RM-Q) and enters the receiving queue.
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <label className="form-label">Cycle</label>
+        {cycles === null ? (
+          <div style={{ fontFamily: SANS, fontSize: 13, color: T_MUTED }}>Loading cycles…</div>
+        ) : (
+          <select className="form-input" value={cycleCode} onChange={(e) => setCycleCode(e.target.value)} disabled={busy}>
+            {cycles.length === 0 && <option value="">No cycles available</option>}
+            {cycles.map((c) => (
+              <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+        <div>
+          <label className="form-label">Quantity</label>
+          <input
+            className="form-input"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value.replace(/[^0-9]/g, ''))}
+            inputMode="numeric"
+            disabled={busy}
+          />
+        </div>
+        <div>
+          <label className="form-label">Priority</label>
+          <select className="form-input" value={priority} onChange={(e) => setPriority(e.target.value)} disabled={busy}>
+            {['Normal', 'High', 'Urgent'].map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 6 }}>
+        <label className="form-label">Raw-material size (optional)</label>
+        <select className="form-input" value={sizeId} onChange={(e) => setSizeId(e.target.value)} disabled={busy}>
+          <option value="">— not specified —</option>
+          {sizes.map((s) => (
+            <option key={s.id} value={s.id}>{s.size_mm} mm{s.description ? ` · ${s.description}` : ''}</option>
+          ))}
+        </select>
+      </div>
+
+      {error && (
+        <div style={{ marginTop: 14, padding: '10px 13px', borderRadius: 9, background: 'var(--bg-soft-amber, #fdf6ef)', color: 'var(--status-danger-dark, #c0392b)', fontFamily: SANS, fontSize: 12 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        <button className="btn" style={{ height: 48, padding: '0 22px' }} onClick={onClose} disabled={busy}>Cancel</button>
+        <button className="btn btn-primary" style={{ height: 48, padding: '0 22px' }} disabled={!valid || busy} onClick={submit}>
+          <Icon name="tag" size={16} />
+          {busy ? 'Generating…' : `Generate ${qtyNum || ''} UID${qtyNum === 1 ? '' : 's'}`.trim()}
         </button>
       </div>
     </Modal>
@@ -1056,6 +1199,7 @@ export default function MyWorkstation() {
   const [pauseFor, setPauseFor] = useState(null); // job
   const [closeFor, setCloseFor] = useState(null); // job
   const [actionError, setActionError] = useState(null);
+  const [showGen, setShowGen] = useState(false); // Generate-UID modal (RCV-01 operator)
 
   const runAction = useCallback(
     async (job, action, fn) => {
@@ -1103,17 +1247,29 @@ export default function MyWorkstation() {
 
   /* ── render states ── */
 
+  // The Receiving / Work Table (RCV-01) operator generates UIDs there — show the
+  // action when they're working that station (or have no jobs yet, i.e. genesis).
+  const atReceiving = stations.some((s) => /rcv|receiv|work table/i.test(`${s.code} ${s.name}`));
+  const canGenerateUid = isOperator && (atReceiving || stations.length === 0);
+
   const header = (
-    <>
-      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: T_PRIMARY }}>My Workstation</div>
-      <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>
-        {isAdmin
-          ? 'All working workstations · UIDs waiting and live operator jobs'
-          : `${pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your assigned workstations this shift`}
-        {loading && !isAdmin ? ' · loading…' : ''}
-        {(isManager && !isAdmin) ? ' · read-only' : ''}
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+      <div>
+        <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: T_PRIMARY }}>My Workstation</div>
+        <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>
+          {isAdmin
+            ? 'All working workstations · UIDs waiting and live operator jobs'
+            : `${pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your assigned workstations this shift`}
+          {loading && !isAdmin ? ' · loading…' : ''}
+          {(isManager && !isAdmin) ? ' · read-only' : ''}
+        </div>
       </div>
-    </>
+      {canGenerateUid && (
+        <button className="btn btn-primary" type="button" onClick={() => setShowGen(true)} style={{ flexShrink: 0 }}>
+          <Icon name="tag" size={15} /> Generate UID
+        </button>
+      )}
+    </div>
   );
 
   if (!isAdmin && error) {
@@ -1292,6 +1448,12 @@ export default function MyWorkstation() {
           busy={pendingFor(closeFor, 'close') === 'close'}
           onCancel={() => setCloseFor(null)}
           onConfirm={handleCloseConfirm(closeFor)}
+        />
+      )}
+      {showGen && (
+        <GenerateUidModal
+          onClose={() => setShowGen(false)}
+          onDone={refetch}
         />
       )}
     </div>
