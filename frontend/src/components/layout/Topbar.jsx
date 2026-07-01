@@ -94,7 +94,7 @@ export default function Topbar({ alertCount = 0 }) {
 
       {/* Right cluster */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
-        <button onClick={() => navigate('/shift')} title="Shift Management"
+        <button onClick={() => navigate('/shift')} title="Shift Planner"
           style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#0c2750', border: 'none', borderRadius: 9, padding: '0 12px', height: 36, cursor: 'pointer' }}>
           <Icon name="calendar" size={14} color={shift.color} />
           <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, fontWeight: 600, color: '#cfe0ee', whiteSpace: 'nowrap' }}>
