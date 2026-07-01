@@ -76,7 +76,7 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, re
     if (requiredSkill && !overrideBadgeWarning) {
       const { rows: held } = await client.query(
         `SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
-          WHERE eb.employee_id = $1 AND bt.code = $2 AND bt.status = 'active'
+          WHERE eb.employee_id = $1 AND bt.code = $2 AND bt.status = 'active' AND eb.revoked_at IS NULL
             AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE) LIMIT 1`,
         [employeeId, requiredSkill]
       );
@@ -167,7 +167,7 @@ router.get('/eligible-operators', async (req, res) => {
   if (location && location !== 'both') { conds.push(`(l.code = $${p++} OR e.location_id IS NULL)`); params.push(location); }
   if (requiresBadge) {
     conds.push(`EXISTS (SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
-                        WHERE eb.employee_id = e.id AND bt.code = $${p++} AND bt.status = 'active'
+                        WHERE eb.employee_id = e.id AND bt.code = $${p++} AND bt.status = 'active' AND eb.revoked_at IS NULL
                           AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE))`);
     params.push(requiredSkill);
   }
@@ -207,7 +207,7 @@ router.get('/eligible-workstations', async (req, res) => {
     `SELECT wt.code, wt.name, wt.category,
             (wt.required_skill_code IS NOT NULL) AS requires_badge,
             EXISTS (SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
-                    WHERE eb.employee_id = $1 AND bt.code = wt.required_skill_code AND bt.status = 'active'
+                    WHERE eb.employee_id = $1 AND bt.code = wt.required_skill_code AND bt.status = 'active' AND eb.revoked_at IS NULL
                       AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)) AS has_badge
      FROM workstation_types wt
      LEFT JOIN locations l ON l.id = wt.location_id

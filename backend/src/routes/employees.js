@@ -32,11 +32,11 @@ router.get('/', requireRole(['admin', 'manager', 'supervisor']), async (req, res
                       FROM employee_badges eb
                       JOIN badge_types bt ON bt.id = eb.badge_type_id
                       JOIN workstation_types wt ON wt.id = bt.workstation_type_id
-                      WHERE eb.employee_id = e.id
+                      WHERE eb.employee_id = e.id AND eb.revoked_at IS NULL
                         AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)), '{}') AS badges,
-            (SELECT COUNT(*) FROM employee_badges eb WHERE eb.employee_id = e.id) AS badge_count,
-            (SELECT COUNT(*) FROM employee_badges eb WHERE eb.employee_id = e.id AND eb.expiry_date < CURRENT_DATE) AS expired_badges,
-            (SELECT COUNT(*) FROM employee_badges eb WHERE eb.employee_id = e.id AND eb.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days') AS expiring_badges
+            (SELECT COUNT(*) FROM employee_badges eb WHERE eb.employee_id = e.id AND eb.revoked_at IS NULL) AS badge_count,
+            (SELECT COUNT(*) FROM employee_badges eb WHERE eb.employee_id = e.id AND eb.revoked_at IS NULL AND eb.expiry_date < CURRENT_DATE) AS expired_badges,
+            (SELECT COUNT(*) FROM employee_badges eb WHERE eb.employee_id = e.id AND eb.revoked_at IS NULL AND eb.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days') AS expiring_badges
      FROM employees e LEFT JOIN locations l ON l.id = e.location_id
      ${where} ORDER BY e.full_name`,
     params
@@ -93,7 +93,7 @@ router.get('/:id/badges', async (req, res) => {
      FROM employee_badges eb
      JOIN badge_types bt ON bt.id = eb.badge_type_id
      LEFT JOIN workstation_types wt ON wt.id = bt.workstation_type_id
-     WHERE eb.employee_id = $1 ORDER BY bt.name`,
+     WHERE eb.employee_id = $1 AND eb.revoked_at IS NULL ORDER BY bt.name`,
     [req.params.id]
   );
   return res.json({ success: true, data: rows });
@@ -106,7 +106,7 @@ router.post('/:id/badges', requireRole(['admin']), async (req, res) => {
     `INSERT INTO employee_badges (employee_id, badge_type_id, certified_date, certified_by, expiry_date)
      VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (employee_id, badge_type_id) DO UPDATE SET certified_date = EXCLUDED.certified_date,
-       certified_by = EXCLUDED.certified_by, expiry_date = EXCLUDED.expiry_date
+       certified_by = EXCLUDED.certified_by, expiry_date = EXCLUDED.expiry_date, revoked_at = NULL
      RETURNING *`,
     [req.params.id, badgeTypeId, certifiedDate, certifiedBy || null, expiryDate || null]
   );
@@ -114,11 +114,13 @@ router.post('/:id/badges', requireRole(['admin']), async (req, res) => {
   return res.status(201).json({ success: true, data: rows[0] });
 });
 
-/** DELETE /api/v1/employees/:id/badges/:badgeId (Admin only) */
+/** DELETE /api/v1/employees/:id/badges/:badgeId (Admin only) — soft delete (§15) */
 router.delete('/:id/badges/:badgeId', requireRole(['admin']), async (req, res) => {
-  await query(`DELETE FROM employee_badges WHERE employee_id = $1 AND id = $2`, [req.params.id, req.params.badgeId]);
-  await req.audit({ tableName: 'employee_badges', recordId: req.params.badgeId, action: 'DELETE' });
-  return res.json({ success: true, data: { deleted: true } });
+  // Rule Book §15: archive, never hard-delete. Mark the certification revoked so
+  // the history is preserved; a NULL revoked_at means currently held.
+  await query(`UPDATE employee_badges SET revoked_at = now() WHERE employee_id = $1 AND id = $2 AND revoked_at IS NULL`, [req.params.id, req.params.badgeId]);
+  await req.audit({ tableName: 'employee_badges', recordId: req.params.badgeId, action: 'UPDATE', after: { revoked: true } });
+  return res.json({ success: true, data: { revoked: true } });
 });
 
 /**
@@ -165,7 +167,7 @@ router.get('/badge-checks/can-assign', async (req, res) => {
   const { rows: held } = await query(
     `SELECT eb.expiry_date FROM employee_badges eb
      JOIN badge_types bt ON bt.id = eb.badge_type_id
-     WHERE eb.employee_id = $1 AND bt.code = $2 AND bt.status = 'active'`,
+     WHERE eb.employee_id = $1 AND bt.code = $2 AND bt.status = 'active' AND eb.revoked_at IS NULL`,
     [employeeId, requiredSkill]
   );
 
@@ -182,12 +184,12 @@ router.get('/badge-dashboard/summary', requireRole(['admin']), async (req, res) 
   const expired = await query(
     `SELECT e.full_name, bt.name AS badge_name, eb.expiry_date FROM employee_badges eb
      JOIN employees e ON e.id = eb.employee_id JOIN badge_types bt ON bt.id = eb.badge_type_id
-     WHERE eb.expiry_date < CURRENT_DATE`
+     WHERE eb.expiry_date < CURRENT_DATE AND eb.revoked_at IS NULL`
   );
   const expiringSoon = await query(
     `SELECT e.full_name, bt.name AS badge_name, eb.expiry_date FROM employee_badges eb
      JOIN employees e ON e.id = eb.employee_id JOIN badge_types bt ON bt.id = eb.badge_type_id
-     WHERE eb.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'`
+     WHERE eb.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days' AND eb.revoked_at IS NULL`
   );
   const noQualifiedOperator = await query(
     `SELECT wt.code, wt.name FROM workstation_types wt
@@ -195,7 +197,7 @@ router.get('/badge-dashboard/summary', requireRole(['admin']), async (req, res) 
        AND wt.required_skill_code IS NOT NULL
        AND NOT EXISTS (
          SELECT 1 FROM employee_badges eb JOIN badge_types bt ON bt.id = eb.badge_type_id
-         WHERE bt.code = wt.required_skill_code AND bt.status = 'active'
+         WHERE bt.code = wt.required_skill_code AND bt.status = 'active' AND eb.revoked_at IS NULL
            AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)
        )`
   );

@@ -11,7 +11,8 @@ async function runBadgeExpiryCheck() {
      FROM employee_badges eb
      JOIN employees e ON e.id = eb.employee_id
      JOIN badge_types bt ON bt.id = eb.badge_type_id
-     WHERE eb.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'`
+     WHERE eb.expiry_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
+       AND eb.revoked_at IS NULL`
   );
 
   for (const badge of expiring) {
