@@ -14,24 +14,24 @@ function calculateScrap(inputMm, childLengthsMm, kerfMm = 3) {
 }
 
 /**
- * Furnace capacity scaling formula (HT70 Hardening, HT80 Quenching, HT90
- * Tempering x4). Admin sets a base capacity at 1500mm; capacity for other
- * sizes is derived: floor(base * 1500 / bar_length_mm).
+ * Furnace capacity (HT70 Hardening, HT80 Quenching, HT90 Tempering x4).
  *
- * Worked examples from the instructions:
- *   HT70/HT80 base=6  -> 2750mm: floor(6*1500/2750)  = 3
- *   HT90      base=80 -> 2750mm: floor(80*1500/2750) = 43
- *   1424mm bars: floor(6*1500/1424)=6, floor(80*1500/1424)=84 -> capped at base (see note below)
+ * The furnace stacks bars into a fixed number of 1500mm-long slots — `base` slots
+ * at 1500mm. A bar up to 1500mm uses one slot; a longer bar spans
+ * ceil(length / 1500) slots. So capacity = floor(base / ceil(length / 1500)):
  *
- * Note: the instructions specify 1424mm capacity equals the 1500mm base
- * (not the raw formula output, which would exceed base for shorter bars).
- * We therefore cap the derived value at the base capacity — a furnace
- * cannot run *more* pieces than its 1500mm baseline regardless of how
- * short the bar is; the formula only ever reduces capacity for longer bars.
+ *   HT90 base=80 -> 1500mm: 80/1 = 80 · 1424mm: 80/1 = 80 · 2750mm: 80/2 = 40
+ *   HT70/HT80 base=6 -> 2750mm: 6/2 = 3
+ *
+ * Shorter-but-still-<=1500mm bars do NOT increase capacity (still one slot each),
+ * and bars over 1500mm reduce it in whole-slot steps.
  */
+function furnaceSlotsForBar(barLengthMm) {
+  return Math.max(1, Math.ceil(Number(barLengthMm) / 1500));
+}
+
 function furnaceCapacityForSize(baseCapacity1500, barLengthMm) {
-  const raw = Math.floor((baseCapacity1500 * 1500) / barLengthMm);
-  return Math.min(raw, baseCapacity1500);
+  return Math.floor(baseCapacity1500 / furnaceSlotsForBar(barLengthMm));
 }
 
 /**
@@ -63,6 +63,7 @@ function bunchGrindingRunCapacity(barLengthMm, bedLengthMm, barsPerSet) {
 module.exports = {
   calculateScrap,
   furnaceCapacityForSize,
+  furnaceSlotsForBar,
   validateGrindingCombination,
   bunchGrindingRunCapacity,
 };
