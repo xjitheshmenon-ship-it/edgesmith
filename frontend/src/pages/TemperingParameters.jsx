@@ -10,21 +10,24 @@ const SANS = "'IBM Plex Sans', sans-serif";
 
 // ── Domain constants ───────────────────────────────────────────────────────
 // The furnace sets the operation: HT70 = Hardening, HT80 = Quenching,
-// HT90 = Tempering. Tempering parameters are per cycle type × tempering step,
-// and every tempering step on the HT90 furnace is configured here.
-const FURNACE = 'HT90';
+// HT90 = Tempering. Heat-treatment parameters are per cycle type × step, across
+// all three furnaces, and every heat-treatment step is configured here.
+const FURNACES = ['HT70', 'HT80', 'HT90'];
 
 // The three cycle types — rows in the matrix. Colours/badges come from Badges.jsx.
 const CYCLE_TYPES = ['EAT', 'SWAN', 'OVEN'];
 
-// The four HT90 tempering steps — columns in the matrix. `key` is the backend's
+// The heat-treatment steps — columns in the matrix. `key` is the backend's
 // tempering_step value (used both to match a param record and as the PATCH path
-// param); `step` is only the human-facing step number shown in the subtitle.
+// param); `step` is the human-facing step number and `furnace` the furnace that
+// runs it, shown in the subtitle.
 const STEPS = [
-  { key: 'tempering_1', step: 9, label: 'Tempering 1', sub: 'Step 9 · first temper' },
-  { key: 'tempering_2', step: 10, label: 'Tempering 2', sub: 'Step 10 · second temper' },
-  { key: 'tempering_3', step: 14, label: 'Tempering 3', sub: 'Step 14 · after machining' },
-  { key: 'tempering_4', step: 23, label: 'Tempering 4', sub: 'Step 23 · stress relief' },
+  { key: 'hardening', step: 6, label: 'Hardening', sub: 'Step 6 · austenitise', furnace: 'HT70' },
+  { key: 'quenching', step: 7, label: 'Quenching', sub: 'Step 7 · controlled quench', furnace: 'HT80' },
+  { key: 'tempering_1', step: 9, label: 'Tempering 1', sub: 'Step 9 · first temper', furnace: 'HT90' },
+  { key: 'tempering_2', step: 10, label: 'Tempering 2', sub: 'Step 10 · second temper', furnace: 'HT90' },
+  { key: 'tempering_3', step: 14, label: 'Tempering 3', sub: 'Step 14 · after machining', furnace: 'HT90' },
+  { key: 'tempering_4', step: 23, label: 'Tempering 4', sub: 'Step 23 · stress relief', furnace: 'HT90' },
 ];
 
 // ── Field accessors (match the backend columns; keep camelCase fallbacks) ────
@@ -89,10 +92,10 @@ function SuccessBanner({ message }) {
   );
 }
 
-function FurnaceTag() {
+function FurnaceTag({ furnace = FURNACES.join(' · ') }) {
   return (
     <span className="badge" style={{ background: hexToRgba('#c0762b', 0.14), color: '#c0762b' }}>
-      <Icon name="thermo" size={11} color="#c0762b" /> {FURNACE}
+      <Icon name="thermo" size={11} color="#c0762b" /> {furnace}
     </span>
   );
 }
@@ -316,12 +319,12 @@ export default function TemperingParameters() {
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: 'var(--text-primary, #15366a)' }}>
-              Tempering Parameters
+              Heat Treatment Parameters
             </div>
             <FurnaceTag />
           </div>
           <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--text-secondary, #5d7188)', marginTop: 4 }}>
-            Target temperatures, soak times and deviation tolerances for all four {FURNACE} tempering steps, per cycle type
+            Target temperatures, soak times and deviation tolerances for every heat-treatment step — hardening (HT70), quenching (HT80) and the four HT90 tempering steps — per cycle type
             {loading ? ' · loading…' : ''}
           </div>
         </div>
@@ -338,7 +341,7 @@ export default function TemperingParameters() {
       {/* Matrix */}
       <div className="card" style={{ marginTop: 18, padding: '18px 20px' }}>
         <SectionTitle right={<FurnaceTag />}>
-          Parameter Matrix · Cycle Type × Tempering Step
+          Parameter Matrix · Cycle Type × Heat-treatment Step
         </SectionTitle>
 
         {loadError ? (
@@ -361,7 +364,7 @@ export default function TemperingParameters() {
                         {s.label}
                       </div>
                       <div style={{ fontFamily: MONO, fontSize: 9, color: 'var(--text-muted-2, #7d96bb)', marginTop: 2 }}>
-                        {s.sub} · {FURNACE}
+                        {s.sub} · {s.furnace}
                       </div>
                     </th>
                   ))}

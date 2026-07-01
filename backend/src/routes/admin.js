@@ -7,7 +7,9 @@ const { auditContext } = require('../middleware/audit');
 const router = express.Router();
 router.use(authenticate, auditContext);
 
-const TEMPERING_STEPS = ['tempering_1', 'tempering_2', 'tempering_3', 'tempering_4'];
+// Heat-treatment steps across all three furnaces: HT70 hardening, HT80
+// quenching, HT90 tempering (4 steps).
+const TEMPERING_STEPS = ['hardening', 'quenching', 'tempering_1', 'tempering_2', 'tempering_3', 'tempering_4'];
 
 /** GET /api/v1/admin/tempering-params */
 router.get('/tempering-params', async (req, res) => {
@@ -17,7 +19,10 @@ router.get('/tempering-params', async (req, res) => {
      JOIN cycle_types ct ON ct.id = tp.cycle_type_id
      LEFT JOIN employees e ON e.id = tp.changed_by
      ORDER BY ct.code,
-       CASE tp.tempering_step WHEN 'tempering_1' THEN 1 WHEN 'tempering_2' THEN 2 WHEN 'tempering_3' THEN 3 ELSE 4 END`
+       CASE tp.tempering_step
+         WHEN 'hardening' THEN 1 WHEN 'quenching' THEN 2
+         WHEN 'tempering_1' THEN 3 WHEN 'tempering_2' THEN 4
+         WHEN 'tempering_3' THEN 5 WHEN 'tempering_4' THEN 6 ELSE 7 END`
   );
   return res.json({ success: true, data: rows });
 });

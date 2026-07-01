@@ -258,7 +258,12 @@ async function seedEatCycle(wsIds) {
  * production use. SWAN/OVEN left unconfigured until those cycles exist.
  */
 // [step, target_temp_c, target_soak_min, tolerance_temp_c, tolerance_soak_min, rising_time_min]
+// Heat treatment covers three furnaces: HT70 hardening (austenitising), HT80
+// quenching (controlled cool), HT90 tempering (4 steps). Placeholder-but-
+// realistic values — Admin must review against the metallurgical spec.
 const TEMPERING_DEFAULTS = [
+  ['hardening', 850, 60, 10, 5, 60],  // HT70 · Step 6 — austenitise
+  ['quenching', 60, 15, 10, 5, null], // HT80 · Step 7 — oil/medium quench dwell
   ['tempering_1', 180, 90, 5, 5, 45],
   ['tempering_2', 160, 90, 5, 5, 40],
   ['tempering_3', 150, 60, 5, 5, 35],
