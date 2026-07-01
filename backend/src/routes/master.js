@@ -67,7 +67,13 @@ router.use('/products', simpleResource('products', {
 }));
 
 router.use('/sizes', simpleResource('sizes', {
-  fields: [{ key: 'sizeMm', column: 'size_mm' }, { key: 'description', column: 'description' }, { key: 'status', column: 'status' }],
+  fields: [
+    { key: 'sizeMm', column: 'size_mm' },
+    { key: 'description', column: 'description' },
+    { key: 'locationId', column: 'location_id' },
+    { key: 'cutStage', column: 'cut_stage' },
+    { key: 'status', column: 'status' },
+  ],
 }));
 
 router.use('/suppliers', simpleResource('suppliers', {

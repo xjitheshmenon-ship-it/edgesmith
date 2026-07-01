@@ -8,6 +8,7 @@
     "start": "NODE_ENV=production node app.js",
     "migrate": "node scripts/migrate.js",
     "seed": "node seeds/seed.js",
+    "seed:bulk": "node seeds/bulk-jobs.js",
     "validate-schema": "node scripts/validate_schema.js",
     "test": "echo \"No automated test suite yet — see scripts/validate_schema.js and the manual HTTP smoke checks in the build notes\" && exit 0"
   },
