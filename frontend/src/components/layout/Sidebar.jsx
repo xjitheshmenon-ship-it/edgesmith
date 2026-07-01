@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../store/AuthContext';
 import { useApp } from '../../store/AppContext';
-import { NAV, SECTIONS_BY_ROLE, OPERATOR_ALLOWED_ROUTES } from './nav';
+import { NAV, SECTIONS_BY_ROLE, OPERATOR_ALLOWED_ROUTES, SERVICE_ALLOWED_ROUTES } from './nav';
 import Icon from '../common/Icon';
 
 const CHROME = '#11305f';
@@ -21,7 +21,10 @@ export default function Sidebar({ counts = {} }) {
     .filter(([section]) => visibleSections.includes(section))
     .map(([section, items]) => [
       section,
-      items.filter(([key]) => (role === 'operator' ? OPERATOR_ALLOWED_ROUTES.includes(key) : true)),
+      items.filter(([key]) => (
+        role === 'operator' ? OPERATOR_ALLOWED_ROUTES.includes(key)
+          : role === 'service' ? SERVICE_ALLOWED_ROUTES.includes(key)
+            : true)),
     ])
     .filter(([, items]) => items.length > 0);
 

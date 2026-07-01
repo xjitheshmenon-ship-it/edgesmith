@@ -1,12 +1,12 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { AuthProvider, useAuth } from './store/AuthContext';
 import { AppProvider, useApp } from './store/AppContext';
-import { NAV, SECTIONS_BY_ROLE, OPERATOR_ALLOWED_ROUTES, HIDDEN_ROUTES } from './components/layout/nav';
+import { NAV, SECTIONS_BY_ROLE, OPERATOR_ALLOWED_ROUTES, SERVICE_ALLOWED_ROUTES, HIDDEN_ROUTES } from './components/layout/nav';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
 import Placeholder from './pages/Placeholder';
 import Dashboard from './pages/Dashboard';
-import UidCreation from './pages/UidCreation';
+import UidLookup from './pages/UidLookup';
 import UidDetail from './pages/UidDetail';
 import ProductionFloor from './pages/ProductionFloor';
 import MyWorkstation from './pages/MyWorkstation';
@@ -63,7 +63,7 @@ function FactoryReceiving() {
 
 const PAGES = {
   dashboard: Dashboard,
-  uid: UidCreation,
+  uid: UidLookup,
   floor: FactoryFloor,
   jobexec: FactoryWorkstation,
   batch: FactoryBatch,
@@ -96,6 +96,7 @@ function allowedKeysFor(role) {
   const sections = SECTIONS_BY_ROLE[role] || [];
   let keys = NAV.filter(([s]) => sections.includes(s)).flatMap(([, items]) => items.map(([k]) => k));
   if (role === 'operator') return keys.filter((k) => OPERATOR_ALLOWED_ROUTES.includes(k));
+  if (role === 'service') return keys.filter((k) => SERVICE_ALLOWED_ROUTES.includes(k));
   // Hidden routes (e.g. Batch Tracker) are reachable but not in the sidebar.
   return keys.concat(HIDDEN_ROUTES);
 }
