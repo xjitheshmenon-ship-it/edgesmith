@@ -175,7 +175,7 @@ export default function Receiving() {
             <LocationBadge location="dharmapuri" />
           </div>
           <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-            Log rolled composite billets arriving from Faridabad. Each delivery is matched to its dispatch by colour code before it is recorded.
+            Log rolled composite blocks arriving from Faridabad. Each delivery is matched to its dispatch by colour code before it is recorded.
           </div>
         </div>
       </div>
@@ -346,11 +346,11 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear
     if (!formValid) {
       setError({ message: damage && !notes.trim()
         ? 'Damage was recorded — notes describing the damage are required.'
-        : 'Complete all required fields (date, billet count, received colour code, received by).' });
+        : 'Complete all required fields (date, block count, received colour code, received by).' });
       return;
     }
     if (remaining != null && billetsNum > remaining) {
-      setError({ message: `This delivery (${billetsNum}) exceeds the ${remaining} billets still in transit for this dispatch.` });
+      setError({ message: `This delivery (${billetsNum}) exceeds the ${remaining} blocks still in transit for this dispatch.` });
       return;
     }
 
@@ -470,7 +470,7 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear
               const { remaining: rem } = dispatchTotals(d);
               return (
                 <option key={id} value={id}>
-                  {dispatchRef(d)} · {d.contractor || d.rolling_contractor || 'contractor'}{rem != null ? ` · ${rem} billets remaining` : ''}
+                  {dispatchRef(d)} · {d.contractor || d.rolling_contractor || 'contractor'}{rem != null ? ` · ${rem} blocks remaining` : ''}
                 </option>
               );
             })}
@@ -485,7 +485,7 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear
             <Field k="Rolling contractor" v={dispatch.contractor || dispatch.rolling_contractor || dispatch.contractor_name || '—'} />
             <Field k="Faridabad batch" v={dispatchRef(dispatch)} mono />
             <Field k="Expected colour code" v={expColor || '—'} mono />
-            <Field k="Remaining in transit" v={remaining != null ? `${remaining} billets` : '—'} mono />
+            <Field k="Remaining in transit" v={remaining != null ? `${remaining} blocks` : '—'} mono />
           </div>
         )}
 
@@ -495,7 +495,7 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear
             <input className="form-input" type="date" value={dateReceived} onChange={(e) => setDateReceived(e.target.value)} />
           </div>
           <div>
-            <Label required>Billets in this delivery</Label>
+            <Label required>Blocks in this delivery</Label>
             <input className="form-input" type="number" min="1" placeholder="e.g. 12" value={billets} onChange={(e) => setBillets(e.target.value)} />
           </div>
         </div>
@@ -504,7 +504,7 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear
         <div>
           <Label required>Received colour code</Label>
           <select className="form-select" value={receivedColor} onChange={(e) => setReceivedColor(e.target.value)}>
-            <option value="">Select the colour code on the arriving billets…</option>
+            <option value="">Select the colour code on the arriving blocks…</option>
             {expColor && !colorCodes.some((c) => normColor(c.code || c.name || c) === normColor(expColor)) && (
               <option value={expColor}>{expColor} (expected)</option>
             )}
@@ -613,7 +613,7 @@ function MismatchConfirm({ mismatch, note, onNote, confirming, onConfirm, onCanc
         </div>
 
         <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: 14 }}>
-          The colour code on the arriving billets does not match the Faridabad dispatch record. This indicates the wrong material may have arrived. Confirm only if you have physically verified the discrepancy.
+          The colour code on the arriving blocks does not match the Faridabad dispatch record. This indicates the wrong material may have arrived. Confirm only if you have physically verified the discrepancy.
         </div>
 
         <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
@@ -674,11 +674,11 @@ function SavedSummary({ event }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
         <Field k="Faridabad batch" v={event.faridabad_batch_ref || dispatchRef(event)} mono />
         <Field k="Rolling contractor" v={event.contractor || event.rolling_contractor || '—'} />
-        <Field k="Billets received" v={event.billets_received ?? event.billet_count ?? '—'} mono />
+        <Field k="Blocks received" v={event.billets_received ?? event.billet_count ?? '—'} mono />
         <Field k="Condition" v={conditionLabel(event.condition)} />
         <Field k="Alloy steel" v={[alloy.supplier, alloy.heat_number || alloy.heat, alloy.grade].filter(Boolean).join(' · ') || '—'} />
         <Field k="MS" v={[ms.supplier, ms.heat_number || ms.heat, ms.grade].filter(Boolean).join(' · ') || '—'} />
-        {remaining != null && <Field k="Remaining in transit" v={`${remaining} billets`} mono />}
+        {remaining != null && <Field k="Remaining in transit" v={`${remaining} blocks`} mono />}
       </div>
     </div>
   );
@@ -687,7 +687,7 @@ function SavedSummary({ event }) {
 // ── RECEIVING LOG ─────────────────────────────────────────────────────────────
 
 function ReceivingLog({ rows, loading, error, onOpen }) {
-  const cols = ['Date', 'Receiving ref', 'Faridabad batch', 'Contractor', 'Billets', 'Colour', 'Condition', 'Status'];
+  const cols = ['Date', 'Receiving ref', 'Faridabad batch', 'Contractor', 'Blocks', 'Colour', 'Condition', 'Status'];
   return (
     <div className="card" style={{ padding: 22 }}>
       <SectionTitle icon="list" sub="All receiving events. Click a row for full detail and the UIDs created from it.">
@@ -783,7 +783,7 @@ function DetailDrawer({ id, onClose }) {
               <Field k="Date received" v={fmtDate(ev.date_received || ev.date)} mono />
               <Field k="Faridabad batch" v={ev.faridabad_batch_ref || dispatchRef(ev)} mono />
               <Field k="Rolling contractor" v={ev.contractor || ev.rolling_contractor || '—'} />
-              <Field k="Billets received" v={ev.billets_received ?? ev.billet_count ?? '—'} mono />
+              <Field k="Blocks received" v={ev.billets_received ?? ev.billet_count ?? '—'} mono />
               <Field k="Expected colour" v={ev.expected_color_code || '—'} mono />
               <Field k="Received colour" v={ev.received_color_code || ev.color_code || '—'} mono />
               <Field k="Condition" v={conditionLabel(ev.condition)} />
