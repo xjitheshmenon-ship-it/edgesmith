@@ -20,9 +20,9 @@ async function listUids(req, res) {
   const params = [];
   let p = 1;
 
-  // Location scoping — non-admin/manager roles are pinned server-side to their
-  // own location (cycle_types carries the location; ct is joined below).
-  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+  // Location scoping — everyone except Admin is pinned server-side to their own
+  // location (§10; cycle_types carries the location, ct is joined below).
+  if (req.user.role !== 'admin') {
     conditions.push(`ct.location_id = $${p++}`);
     params.push(req.user.location_id);
   }

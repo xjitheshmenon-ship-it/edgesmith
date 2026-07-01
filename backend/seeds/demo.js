@@ -151,6 +151,16 @@ async function grantSkillCertsToOperators() {
 // §6 — stock the FAR-MC pool so the Welding step's alloy+MS gate is live. One
 // alloy + one MS per Faridabad item cycle/size, generously stocked. Idempotent:
 // only creates missing pools, never resets a count that already exists.
+// §10 — Manager is now single-location; assign any legacy null-location manager
+// to Dharmapuri so they aren't locked out. Runs regardless of the demo guard.
+async function backfillManagerLocation() {
+  const { rowCount } = await query(
+    `UPDATE employees SET location_id = (SELECT id FROM locations WHERE code = 'dharmapuri')
+      WHERE role = 'manager' AND location_id IS NULL`
+  );
+  if (rowCount) console.log(`✓ Assigned ${rowCount} manager(s) a location (§10 single-location).`);
+}
+
 async function seedFarMcInventory() {
   const { rows } = await query(
     `SELECT DISTINCT cycle_type_id, COALESCE(size_mm, 1500) AS size_mm FROM faridabad_items`
@@ -179,6 +189,7 @@ async function main() {
   await seedFaridabadOperatorItems();
   await grantSkillCertsToOperators();
   await seedFarMcInventory();
+  await backfillManagerLocation();
 
   const exists = await query(`SELECT id FROM contractor_dispatches WHERE batch_reference = $1`, [DEMO_DISPATCH_REF]);
   if (exists.rows[0]) {
@@ -228,7 +239,9 @@ async function main() {
         [code, name, username, hash, role, locId]
       )).id;
 
-    const manager = await emp('EMP-D101', 'Priya Menon', 'manager', 'manager', null);
+    // §10 — Manager is single-location (only Admin is cross-location), so a
+    // Manager must carry a location. This demo manager runs Dharmapuri.
+    const manager = await emp('EMP-D101', 'Priya Menon', 'manager', 'manager', dhr);
     const supDhr = await emp('EMP-D102', 'Ravi Kumar', 'supervisor', 'supervisor', dhr);
     const supFar = await emp('EMP-F101', 'Anil Sharma', 'supervisor_far', 'supervisor', far);
     const service = await emp('EMP-D103', 'Latha R', 'service', 'service', dhr);
