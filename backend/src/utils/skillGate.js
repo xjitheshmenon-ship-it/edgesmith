@@ -41,4 +41,44 @@ async function operatorMissingSkill(q, { employeeId, workstationTypeId }) {
   return rows.length ? null : { skillCode: skill };
 }
 
-module.exports = { operatorMissingSkill };
+/**
+ * Does an employee currently hold a valid (active, non-expired, non-revoked)
+ * badge for the given skill code? @param q query fn as above.
+ */
+async function hasSkill(q, employeeId, skillCode) {
+  if (!employeeId || !skillCode) return false;
+  const { rows } = await q(
+    `SELECT 1 FROM employee_badges eb
+       JOIN badge_types bt ON bt.id = eb.badge_type_id
+      WHERE eb.employee_id = $1 AND bt.code = $2 AND bt.status = 'active'
+        AND eb.revoked_at IS NULL
+        AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)
+      LIMIT 1`,
+    [employeeId, skillCode]
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Rule Book §8.5 — who may see furnace step detail (target/actual temp, soak,
+ * deviation): Admin/Manager always; Supervisor/Operator only with a valid HT
+ * badge; nobody else.
+ */
+async function canViewFurnaceDetail(q, user) {
+  if (!user) return false;
+  if (user.role === 'admin' || user.role === 'manager') return true;
+  if (user.role === 'supervisor' || user.role === 'operator') return hasSkill(q, user.sub, 'HT');
+  return false;
+}
+
+// Null out furnace temperature/soak/deviation fields on a step-log row, leaving
+// step name, date and QC pass/fail intact.
+function redactFurnaceFields(row) {
+  return {
+    ...row,
+    target_temp_c: null, target_soak_min: null,
+    actual_temp_c: null, actual_soak_min: null, deviation_flag: null,
+  };
+}
+
+module.exports = { operatorMissingSkill, hasSkill, canViewFurnaceDetail, redactFurnaceFields };

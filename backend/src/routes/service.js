@@ -2,6 +2,7 @@ const express = require('express');
 const { query } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
+const { canViewFurnaceDetail, redactFurnaceFields } = require('../utils/skillGate');
 
 const router = express.Router();
 router.use(authenticate);
@@ -66,12 +67,50 @@ router.get('/uid/:code', requireRole(['admin', 'manager', 'supervisor', 'service
 
   const children = await query(`SELECT uid_code, status FROM uids WHERE parent_uid_id = (SELECT id FROM uids WHERE uid_code = $1)`, [code]);
 
+  const heatNote = 'Individual traceability is not available past the rolling stage. This batch may contain material from any of the heat numbers listed.';
+
+  // Rule Book §10.8 — the Service role sees a Final Inspection Report ONLY:
+  // identity, material, dispatch/traceability status, the Step 26 QC result and
+  // whether heat treatment was done (Y/N). No step history, operator names,
+  // furnace temperatures or pause records.
+  if (req.user.role === 'service') {
+    const finalQc = stepHistory.rows.find((r) => String(r.step_number) === '26');
+    const heatTreated = stepHistory.rows.some((r) => r.furnace_batch_number != null);
+    return res.json({
+      success: true,
+      data: {
+        uid_code: uid.uid_code,
+        status: uid.status,
+        cycle_code: uid.cycle_code,
+        size_mm: uid.size_mm,
+        design_code: uid.design_code,
+        mo_number: uid.mo_number,
+        customer: uid.customer,
+        dispatch_batch_reference: uid.dispatch_batch_reference,
+        color_name: uid.color_name,
+        possible_alloy_heats: uid.possible_alloy_heats,
+        possible_ms_heats: uid.possible_ms_heats,
+        possible_alloy_heats_note: heatNote,
+        received_at_dharmapuri: uid.received_at_dharmapuri,
+        heat_treatment_done: heatTreated ? 'Y' : 'N',
+        final_inspection: { step_number: '26', qc_result: finalQc ? finalQc.qc_result : null },
+        service_view: true,
+      },
+    });
+  }
+
+  // Rule Book §8.5 — furnace temperature detail gated by HT badge for
+  // Supervisor/Operator; Admin/Manager always see it.
+  const showFurnace = await canViewFurnaceDetail(query, req.user);
+  const steps = showFurnace ? stepHistory.rows : stepHistory.rows.map(redactFurnaceFields);
+
   return res.json({
     success: true,
     data: {
       ...uid,
-      possible_alloy_heats_note: 'Individual traceability is not available past the rolling stage. This batch may contain material from any of the heat numbers listed.',
-      step_history: stepHistory.rows,
+      possible_alloy_heats_note: heatNote,
+      step_history: steps,
+      furnace_detail_visible: showFurnace,
       siblings: siblings.rows,
       children: children.rows,
     },

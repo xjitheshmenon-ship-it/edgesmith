@@ -1,6 +1,7 @@
 const { query, withTransaction } = require('../config/database');
 const { calculateScrap } = require('../utils/scrapCalculator');
 const { previewUids, generateUids } = require('../utils/uidGenerator');
+const { canViewFurnaceDetail, redactFurnaceFields } = require('../utils/skillGate');
 
 const LOCATION_CODE_TO_ID = { dharmapuri: 1, faridabad: 2 };
 
@@ -127,11 +128,16 @@ async function getUidDetail(req, res) {
 
   const splitEvent = await query(`SELECT * FROM split_events WHERE parent_uid_id = $1`, [uid.id]);
 
+  // Rule Book §8.5 — gate furnace temperature detail by HT badge.
+  const showFurnace = await canViewFurnaceDetail(query, req.user);
+  const steps = showFurnace ? stepLogs.rows : stepLogs.rows.map(redactFurnaceFields);
+
   return res.json({
     success: true,
     data: {
       ...uid,
-      step_history: stepLogs.rows,
+      step_history: steps,
+      furnace_detail_visible: showFurnace,
       children: children.rows,
       siblings: siblings.rows,
       split_event: splitEvent.rows[0] || null,
