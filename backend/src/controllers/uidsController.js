@@ -359,10 +359,15 @@ async function holdUid(req, res) {
  */
 async function releaseUid(req, res) {
   const { code } = req.params;
+  // Rule Book §7: hold release requires a reason, and that reason is logged.
+  const reason = ((req.body && req.body.reason) || '').trim();
+  if (!reason) {
+    return res.status(400).json({ success: false, error: { code: 'REASON_REQUIRED', message: 'A release reason is required.' } });
+  }
   const { rows } = await query(`UPDATE uids SET status = 'active', hold_reason = NULL WHERE uid_code = $1 RETURNING *`, [code]);
   if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'UID_NOT_FOUND', message: `UID ${code} not found.` } });
 
-  await req.audit({ tableName: 'uids', recordId: rows[0].id, action: 'UPDATE', after: { status: 'active' } });
+  await req.audit({ tableName: 'uids', recordId: rows[0].id, action: 'UPDATE', after: { status: 'active', releaseReason: reason } });
   return res.json({ success: true, data: rows[0] });
 }
 

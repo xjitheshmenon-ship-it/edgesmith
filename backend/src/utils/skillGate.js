@@ -33,6 +33,7 @@ async function operatorMissingSkill(q, { employeeId, workstationTypeId }) {
       WHERE eb.employee_id = $1
         AND bt.code = $2
         AND bt.status = 'active'
+        AND eb.revoked_at IS NULL
         AND (eb.expiry_date IS NULL OR eb.expiry_date >= CURRENT_DATE)
       LIMIT 1`,
     [employeeId, skill]
