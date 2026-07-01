@@ -433,7 +433,7 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
         const { rows: runRows } = await client.query(
           `INSERT INTO ms_sheet_cutting_runs (sheet_length_mm, sheet_width_mm, sheet_height_mm, pieces, strips, total_balance_weight_kg, operator_id)
            VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-          [sheet.length_mm, sheet.width_mm, sheet.height_mm, JSON.stringify(pieces), JSON.stringify(bal.strips), bal.totalBalanceWeightKg, req.user.sub]
+          [sheet.length_mm, sheet.width_mm, sheet.height_mm, JSON.stringify(pieces), JSON.stringify(bal.pieces || []), bal.totalBalanceWeightKg, req.user.sub]
         );
         return { balance: bal, runId: runRows[0].id };
       });
@@ -596,7 +596,7 @@ router.post('/ms-cutting/runs', requireRole(['admin', 'manager', 'supervisor', '
        (ms_intake_id, sheet_length_mm, sheet_width_mm, sheet_height_mm, pieces, strips, total_balance_weight_kg, operator_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
     [msIntakeId || null, sheet.length_mm, sheet.width_mm, sheet.height_mm,
-      JSON.stringify(pieces), JSON.stringify(balance.strips), balance.totalBalanceWeightKg, req.user.sub]
+      JSON.stringify(pieces), JSON.stringify(balance.pieces || []), balance.totalBalanceWeightKg, req.user.sub]
   );
   await req.audit({ tableName: 'ms_sheet_cutting_runs', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
   return res.status(201).json({ success: true, data: { ...rows[0], balance } });
