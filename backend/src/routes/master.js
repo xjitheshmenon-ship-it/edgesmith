@@ -72,6 +72,7 @@ router.use('/sizes', simpleResource('sizes', {
     { key: 'description', column: 'description' },
     { key: 'locationId', column: 'location_id' },
     { key: 'cutStage', column: 'cut_stage' },
+    { key: 'materialRole', column: 'material_role' },
     { key: 'status', column: 'status' },
   ],
 }));

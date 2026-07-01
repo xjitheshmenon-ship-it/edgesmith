@@ -51,6 +51,8 @@ function SuccessBanner({ message }) {
 const TH = { padding: '6px 12px 9px 0', textAlign: 'left', fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted, #9bb4d4)', whiteSpace: 'nowrap' };
 const TD = { padding: '9px 12px 9px 0', fontFamily: SANS, fontSize: 12.5, color: 'var(--text-primary, #15366a)', verticalAlign: 'top' };
 
+const MATERIAL_ROLE_LABELS = { raw_material: 'Raw material', job: 'Job', final_product: 'Final product' };
+
 function Table({ columns, rows, renderRow, empty, keyOf }) {
   if (!rows.length) return <Empty>{empty}</Empty>;
   return (
@@ -240,11 +242,12 @@ const TABS = [
     create: (p) => masterApi.createSize(p),
     update: (id, p) => masterApi.updateSize(id, p),
     archive: (id) => masterApi.archiveSize(id),
-    columns: ['Size (mm)', 'Description', 'Status', ''],
+    columns: ['Size (mm)', 'Description', 'Role', 'Status', ''],
     renderRow: (row, ctx) => (
       <>
         <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['sizeMm', 'size_mm', 'size', 'mm'])}</td>
         <td style={TD}>{pick(row, ['description', 'desc', 'label'])}</td>
+        <td style={TD}>{MATERIAL_ROLE_LABELS[pick(row, ['materialRole', 'material_role'])] || '—'}</td>
         <td style={TD}>{StatusOf(row)}</td>
         <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
       </>
@@ -252,6 +255,11 @@ const TABS = [
     fields: [
       { name: 'sizeMm', label: 'Size (mm)', required: true, type: 'number', placeholder: 'e.g. 12' },
       { name: 'description', label: 'Description', full: true },
+      { name: 'materialRole', label: 'Material role', type: 'select', options: [
+        { value: 'raw_material', label: 'Raw material' },
+        { value: 'job', label: 'Job (work-in-process)' },
+        { value: 'final_product', label: 'Final product' },
+      ] },
     ],
     transform: (v) => ({ ...v, sizeMm: v.sizeMm !== '' && v.sizeMm != null ? Number(v.sizeMm) : undefined }),
   },

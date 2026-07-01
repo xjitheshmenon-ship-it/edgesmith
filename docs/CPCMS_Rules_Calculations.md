@@ -452,57 +452,33 @@ This applies to every one of the 10 Faridabad steps — not just Welding. Since 
 ### Inputs
 - Sheet dimensions from MS Intake: length (mm), width (mm), height/thickness (mm)
 - One or more cut piece types, each with: piece length (mm), piece width (mm), quantity required
-- Fixed cutting margin: **5mm deducted from both length and width of every individual piece**
 
-### Grid-fit per piece type
-For each piece type against available sheet width W and length L:
-
-```
-effective_piece_length = piece_length + 5mm   (the space each piece occupies on the sheet)
-effective_piece_width  = piece_width  + 5mm
-
-pieces_per_row    = floor(W / effective_piece_width)
-pieces_per_column = floor(L / effective_piece_length)
-max_pieces_fit    = pieces_per_row × pieces_per_column
-
-used_width  = pieces_per_row    × effective_piece_width
-used_length = pieces_per_column × effective_piece_length
-```
-
-If more pieces fit than are required, only the required quantity is cut. Fill order: rows first (left to right), then columns (top to bottom). The unused grid capacity remains part of the available sheet area for the next piece type.
-
-Multiple piece types are allocated sequentially against the same sheet. Each subsequent type is fit against the remaining available area after prior types have claimed their space.
-
-### Balance strips (two per sheet)
-
-After all piece types are allocated:
+### Balance weight (volume method — the primary reported metric)
+The balance is the material left after the pieces are cut out. Pieces are cut at
+full sheet thickness, so each piece's volume is `length × width × height`. The
+leftover is simply the sheet volume minus the total volume of the pieces cut,
+converted to weight:
 
 ```
-Strip A (remaining width edge):
-  strip_A_width  = sheet_width − used_width
-  strip_A_length = sheet_length
+sheet_volume   = sheet_length × sheet_width × height          (mm³)
+pieces_volume  = Σ (piece_length × piece_width × height × quantity)   (mm³)
+balance_volume = sheet_volume − pieces_volume                 (mm³, ≥ 0)
 
-Strip B (remaining length edge):
-  strip_B_width  = used_width
-  strip_B_length = sheet_length − used_length
-```
-
-### Balance weight (the primary reported metric)
-
-```
-strip_A_weight = 0.0000079 × strip_A_width × strip_A_length × height   (kg)
-strip_B_weight = 0.0000079 × strip_B_width × strip_B_length × height   (kg)
-
-total_balance_weight = strip_A_weight + strip_B_weight
+total_balance_weight = 0.0000079 × balance_volume             (kg)
 ```
 
 The constant 0.0000079 is the steel density coefficient in kg/mm³.
 
-**This weight is auto-calculated by the system — the operator never measures or enters it.** It appears on the MS Cutting close panel (read-only, auto-populated) and is the value recorded against the batch record.
+This is the physically meaningful leftover. (An earlier version tried to model
+the leftover as two packed rectangular strips; that badly over-estimated it for
+multi-piece cuts — e.g. reporting ~10,000 kg where the true balance was ~250 kg —
+so it was replaced by the volume method above.)
+
+**This weight is auto-calculated by the system — the operator never measures or enters it.** It appears on the MS Cutting close panel (read-only, auto-populated) and is the value recorded against the batch record. If the pieces requested exceed the sheet, the run is flagged as over-allocated.
 
 ### Reports
 Primary: total balance weight per cutting run, per date range, per MS supplier, per cycle type.
-Secondary: strip dimensions (for reference), number of pieces cut per run.
+Secondary: sheet utilisation %, number of pieces cut per run.
 
 ---
 
