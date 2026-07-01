@@ -674,7 +674,7 @@ function ScheduleTab({ location, canManage }) {
         </div>
       ) : (
         <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>
-          Click any cell to assign a supervisor and operators. New entries stay as drafts until you publish.
+          Click any cell to assign a supervisor and operators — then apply the crew to the whole week or Mon–Fri in one save. New entries stay as drafts until you publish.
         </div>
       )}
 
@@ -687,6 +687,7 @@ function ScheduleTab({ location, canManage }) {
           locationCode={location}
           supervisors={supervisors}
           operators={operators}
+          weekDays={days}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); refetch(); }}
         />
@@ -702,12 +703,13 @@ const TARGET_OPERATORS = 4;
 
 /* Editor drawer — upserts one schedule cell (1 supervisor + N operators).
    Right-side drawer so large crews stay readable. */
-function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors, operators, onClose, onSaved }) {
+function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors, operators, weekDays, onClose, onSaved }) {
   const [supervisorId, setSupervisorId] = useState(cell?.supervisor_id ? String(cell.supervisor_id) : '');
   const [selected, setSelected] = useState(() => new Set(Array.isArray(cell?.operator_ids) ? cell.operator_ids.map(String) : []));
   const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState(null);
+  const [applyTo, setApplyTo] = useState('day'); // 'day' | 'weekdays' | 'week'
 
   const win = SHIFT_WINDOWS[shiftNumber];
   const opById = useMemo(() => {
@@ -740,17 +742,27 @@ function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors
     });
   }
 
-  async function persist(supId, opIds) {
+  // The dates this save writes to, based on the "Apply to" scope.
+  const targetDates = useMemo(() => {
+    const week = Array.isArray(weekDays) && weekDays.length ? weekDays : [date];
+    if (applyTo === 'week') return week;
+    if (applyTo === 'weekdays') return week.filter((d) => { const g = d.getDay(); return g >= 1 && g <= 5; });
+    return [date];
+  }, [applyTo, weekDays, date]);
+
+  async function persist(supId, opIds, dates) {
     setSaving(true);
     setErr(null);
     try {
-      await shiftsApi.setSchedule({
-        shiftDate: isoDate(date),
-        shiftNumber,
-        locationCode,
-        supervisorId: supId || null,
-        operatorIds: opIds,
-      });
+      for (const d of (dates || [date])) {
+        await shiftsApi.setSchedule({
+          shiftDate: isoDate(d),
+          shiftNumber,
+          locationCode,
+          supervisorId: supId || null,
+          operatorIds: opIds,
+        });
+      }
       onSaved?.();
     } catch (e) {
       setErr(e?.message || 'Could not save the schedule entry.');
@@ -760,8 +772,8 @@ function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors
 
   const selectedIds = [...selected];
   const count = selectedIds.length;
-  const save = () => persist(supervisorId, selectedIds);
-  const clearEntry = () => persist(null, []);
+  const save = () => persist(supervisorId, selectedIds, targetDates);
+  const clearEntry = () => persist(null, [], [date]); // clearing only affects this day
 
   const countColor = count === 0
     ? 'var(--text-muted, #9bb4d4)'
@@ -875,18 +887,41 @@ function ScheduleCellEditor({ date, shiftNumber, cell, locationCode, supervisors
         </div>
 
         {/* Sticky footer */}
-        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border-card, #e3ebde)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" type="button" onClick={save} disabled={saving}>
-            <Icon name="check" size={15} />
-            {saving ? 'Saving…' : 'Save crew'}
-          </button>
-          <button className="btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
-          {cell ? (
-            <button className="btn" type="button" onClick={clearEntry} disabled={saving} style={{ marginLeft: 'auto', color: 'var(--status-danger, #e5484d)' }}>
-              <Icon name="close" size={14} />
-              Clear cell
+        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--border-card, #e3ebde)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Apply-to scope — staff a whole week in one save instead of clicking 21 cells */}
+          <div>
+            <SectionLabel style={{ marginBottom: 6 }}>Apply this crew to</SectionLabel>
+            <div style={{ display: 'inline-flex', border: '1px solid var(--border-input, #d6e0d2)', borderRadius: 'var(--radius-md, 9px)', overflow: 'hidden' }}>
+              {[['day', 'This day'], ['weekdays', 'Mon–Fri'], ['week', 'Whole week']].map(([key, label]) => {
+                const on = applyTo === key;
+                return (
+                  <button key={key} type="button" onClick={() => setApplyTo(key)}
+                    style={{ padding: '7px 13px', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, letterSpacing: '0.03em', fontWeight: on ? 700 : 400,
+                      background: on ? 'var(--ink-650, #15366a)' : 'transparent', color: on ? '#fff' : 'var(--text-secondary, #5d7188)' }}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {applyTo !== 'day' && (
+              <div style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--text-secondary, #5d7188)', marginTop: 6 }}>
+                Writes Shift {shiftNumber} for {targetDates.length} day{targetDates.length === 1 ? '' : 's'} this week (overwrites any existing draft there).
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" type="button" onClick={save} disabled={saving}>
+              <Icon name="check" size={15} />
+              {saving ? 'Saving…' : targetDates.length > 1 ? `Save crew · ${targetDates.length} days` : 'Save crew'}
             </button>
-          ) : null}
+            <button className="btn" type="button" onClick={onClose} disabled={saving}>Cancel</button>
+            {cell ? (
+              <button className="btn" type="button" onClick={clearEntry} disabled={saving} style={{ marginLeft: 'auto', color: 'var(--status-danger, #e5484d)' }}>
+                <Icon name="close" size={14} />
+                Clear cell
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
