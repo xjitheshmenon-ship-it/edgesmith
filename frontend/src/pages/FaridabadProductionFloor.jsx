@@ -108,7 +108,7 @@ function QueueRow({ item }) {
 
 /* ── one workstation card ─────────────────────────────────────────────── */
 
-function StationCard({ station, now }) {
+function StationCard({ station, now, onClick }) {
   const { name, items } = station;
   const list = Array.isArray(items) ? items : [];
   const running = list.find((it) => it.status === 'in_progress') || null;
@@ -119,7 +119,7 @@ function StationCard({ station, now }) {
   const stepLabel = running?.operation_name || queued[0]?.operation_name || null;
 
   return (
-    <div className="card" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column' }}>
+    <div className="card" onClick={onClick} title="View workstation detail" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', cursor: 'pointer' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
         <div>
@@ -216,6 +216,76 @@ function StationCard({ station, now }) {
   );
 }
 
+/* ── workstation detail drawer (mirrors the Dharmapuri floor drawer) ────── */
+
+function StationDrawer({ station, now, onClose }) {
+  const list = Array.isArray(station.items) ? station.items : [];
+  const active = list.filter((it) => it.status === 'in_progress');
+  const queued = list.filter((it) => it.status !== 'in_progress');
+  const operators = new Set(list.map((it) => it.operator_name).filter(Boolean)).size;
+
+  const Row = ({ it }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 0', borderBottom: '1px solid var(--border-card, #eef2f7)' }}>
+      <ItemIdentity item={it} size={12.5} />
+      {it.operation_name ? <span style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>{it.operation_name}</span> : null}
+      {it.current_step != null ? <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted, #9bb4d4)' }}>· Step {it.current_step}</span> : null}
+      <span style={{ flex: 1 }} />
+      {it.status === 'in_progress' && <RunningTimer startedAt={it.started_at} now={now} />}
+    </div>
+  );
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.35)', zIndex: 60, display: 'flex', justifyContent: 'flex-end' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(420px, 92vw)', height: '100%', background: 'var(--bg-card, #fff)', borderLeft: '1px solid var(--border-card, #e6ecf3)', boxShadow: '-8px 0 30px rgba(0,0,0,0.12)', overflowY: 'auto', padding: '20px 22px 40px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 19, color: 'var(--text-primary, #15366a)' }}>{station.name}</div>
+            {station.code && station.code !== station.name ? <div style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary, #5d7188)', marginTop: 2 }}>{station.code}</div> : null}
+          </div>
+          <button className="btn btn-sm" type="button" onClick={onClose}><Icon name="close" size={14} /></button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+          <Stat label="In progress" value={active.length} />
+          <Stat label="Queued" value={queued.length} />
+          <Stat label="Operators" value={operators} />
+        </div>
+
+        {/* Active now — who is working and the block currently on the machine. */}
+        {active.length > 0 && (
+          <div className="card" style={{ marginTop: 16, padding: '12px 14px', boxShadow: 'none', background: 'var(--bg-muted, #f4f7f2)', borderLeft: '4px solid var(--status-success, #22a06b)' }}>
+            <SectionLabel style={{ marginBottom: 8 }}>Active now</SectionLabel>
+            {active.map((it) => (
+              <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                <Icon name="user" size={14} color="var(--text-secondary, #5d7188)" />
+                <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+                  <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700, color: 'var(--text-primary, #15366a)' }}>{it.operator_name || 'Unassigned'}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>
+                    {it.size_mm != null ? `${it.size_mm}mm` : '—'}
+                    {it.current_step != null ? ` · Step ${it.current_step}` : ''}
+                    {it.operation_name ? ` · ${it.operation_name}` : ''}
+                  </span>
+                </div>
+                <span style={{ marginLeft: 'auto' }}><RunningTimer startedAt={it.started_at} now={now} /></span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <SectionLabel style={{ marginTop: 20, marginBottom: 6 }}>Active items</SectionLabel>
+        {active.length ? active.map((it) => <Row key={it.id} it={it} />) : <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-muted, #9bb4d4)' }}>No item in progress.</div>}
+
+        {queued.length > 0 && (
+          <>
+            <SectionLabel style={{ marginTop: 18, marginBottom: 6 }}>Queue · {queued.length}</SectionLabel>
+            {queued.map((it) => <Row key={it.id} it={it} />)}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── page ─────────────────────────────────────────────────────────────── */
 
 export default function FaridabadProductionFloor() {
@@ -232,6 +302,7 @@ export default function FaridabadProductionFloor() {
     return () => clearInterval(id);
   }, []);
 
+  const [selectedCode, setSelectedCode] = useState(null);
   const groups = useMemo(() => (Array.isArray(data) ? data : []), [data]);
 
   // Only render groups that actually have items (done items are excluded
@@ -306,10 +377,15 @@ export default function FaridabadProductionFloor() {
           }}
         >
           {activeGroups.map((g) => (
-            <StationCard key={g.code || g.name} station={g} now={now} />
+            <StationCard key={g.code || g.name} station={g} now={now} onClick={() => setSelectedCode(g.code || g.name)} />
           ))}
         </div>
       )}
+
+      {selectedCode && (() => {
+        const st = activeGroups.find((g) => (g.code || g.name) === selectedCode);
+        return st ? <StationDrawer station={st} now={now} onClose={() => setSelectedCode(null)} /> : null;
+      })()}
     </div>
   );
 }
