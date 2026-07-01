@@ -199,7 +199,20 @@ router.post('/:id/resume', requireRole(['admin', 'manager', 'supervisor', 'opera
  * body: { qcResult?, qcType?, qcValue?, notes?, actualTempC?, actualSoakMin? }
  */
 router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
-  const { qcResult, qcType, qcValue, notes } = req.body;
+  // Accept both the camelCase contract and the snake_case keys the close modal
+  // sends, so QC readings actually persist. Thickness (measured by VCL at the
+  // Surface Grind workstation — no trip to an inspection table) is captured the
+  // same way: recorded as a "Thickness (VCL)" reading on the step log.
+  const b = req.body || {};
+  const notes = b.notes ?? null;
+  const thickness = b.thicknessMm ?? b.thickness_mm;
+  let qcResult = b.qcResult ?? b.qc_result ?? null;
+  let qcType = b.qcType ?? b.qc_check ?? b.qc_check_type ?? null;
+  let qcValue = b.qcValue ?? b.measured_value ?? b.qc_value ?? null;
+  if (thickness != null && thickness !== '') {
+    qcType = qcType || 'Thickness (VCL)';
+    qcValue = qcValue != null && qcValue !== '' ? qcValue : String(thickness);
+  }
 
   const result = await withTransaction(async (client) => {
     const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
