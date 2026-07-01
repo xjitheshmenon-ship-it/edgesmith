@@ -24,6 +24,11 @@ services:
       # data on a freshly reset database.
       - key: SEED_DEMO
         value: "true"
+      # Loads 2000+ sample jobs with a pending queue at every operation.
+      # Idempotent — skips once the UID table is already large. Set to "false"
+      # (or remove) to stop bulk-seeding on a freshly reset database.
+      - key: SEED_BULK
+        value: "true"
 
 databases:
   - name: edgesmith-db
