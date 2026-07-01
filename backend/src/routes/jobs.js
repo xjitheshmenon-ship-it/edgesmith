@@ -5,6 +5,7 @@ const { requireRole, requireLocationAccess } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { currentShiftNumber } = require('../config/shifts');
 const { operatorMissingSkill } = require('../utils/skillGate');
+const { createAlert } = require('../utils/alerts');
 
 const router = express.Router();
 // §10.7 — UID (Dharmapuri) jobs are off-limits to Faridabad-scoped users.
@@ -140,6 +141,39 @@ router.post('/:id/start', requireRole(['admin', 'manager', 'supervisor', 'operat
   });
 
   await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: { status: 'in_progress' } });
+  return res.json({ success: true, data: result });
+});
+
+/**
+ * POST /api/v1/jobs/:id/return
+ * §6 — an operator returns a job they haven't started back to the queue. The
+ * reason is mandatory and the supervisor is notified; the job is unassigned so
+ * it can be re-allotted.
+ */
+router.post('/:id/return', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const reason = ((req.body && req.body.reason) || '').trim();
+  if (!reason) {
+    return res.status(400).json({ success: false, error: { code: 'REASON_REQUIRED', message: 'A reason is required to return a job.' } });
+  }
+  const result = await withTransaction(async (client) => {
+    const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const job = jobRows[0];
+    if (!job) throw Object.assign(new Error('Job not found'), { status: 404, code: 'JOB_NOT_FOUND' });
+    if (req.user.role === 'operator' && job.operator_id !== req.user.sub) {
+      throw Object.assign(new Error('Not your job'), { status: 403, code: 'NOT_YOUR_JOB' });
+    }
+    if (job.status === 'in_progress' || job.status === 'completed' || job.status === 'closed') {
+      throw Object.assign(new Error('Only a job that has not been started can be returned.'), { status: 409, code: 'ALREADY_STARTED' });
+    }
+    await client.query(`UPDATE jobs SET status = 'queued', operator_id = NULL WHERE id = $1`, [job.id]);
+    await createAlert(client.query.bind(client), {
+      type: 'job_returned', severity: 'warning', uidId: job.uid_id || null,
+      message: `Job returned to the queue by the operator — reason: ${reason}`,
+      targetRole: 'supervisor', linkPage: 'jobs', linkRecordId: String(job.id),
+    });
+    return { ...job, status: 'queued', operator_id: null };
+  });
+  await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: { status: 'queued', returned: true, reason } });
   return res.json({ success: true, data: result });
 });
 

@@ -2,6 +2,7 @@ const { query, withTransaction } = require('../config/database');
 const { calculateScrap } = require('../utils/scrapCalculator');
 const { previewUids, generateUids } = require('../utils/uidGenerator');
 const { canViewFurnaceDetail, redactFurnaceFields } = require('../utils/skillGate');
+const { createAlert } = require('../utils/alerts');
 
 const LOCATION_CODE_TO_ID = { dharmapuri: 1, faridabad: 2 };
 
@@ -301,10 +302,15 @@ async function advanceUid(req, res) {
     const idx = allSteps.rows.findIndex((s) => s.step_number === uid.current_step);
     const nextStepDef = allSteps.rows[idx + 1];
 
-    if (nextStepDef && nextStepDef.step_number === '16' && !uid.design_id) {
+    if (nextStepDef && nextStepDef.step_number === '15' && !uid.design_id) {
       await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [
-        'Design not confirmed — required before Converting (Step 16)', uid.id,
+        'Design not confirmed — required before Step 15 (Straighten Manual)', uid.id,
       ]);
+      await createAlert(client.query.bind(client), {
+        type: 'design_missing', severity: 'warning', uidId: uid.id,
+        message: `${uid.uid_code} held — design not confirmed before Step 15`,
+        targetRole: 'supervisor', linkPage: 'uids', linkRecordId: uid.uid_code,
+      });
       return { held: true, uid: { ...uid, status: 'hold' } };
     }
 
@@ -318,6 +324,11 @@ async function advanceUid(req, res) {
 
     if (qcResult === 'Fail') {
       await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, ['QC failed at step ' + uid.current_step, uid.id]);
+      await createAlert(client.query.bind(client), {
+        type: 'qc_fail', severity: 'critical', uidId: uid.id,
+        message: `QC FAIL — ${uid.uid_code} held at step ${uid.current_step}`,
+        targetRole: 'supervisor', linkPage: 'qc', linkRecordId: uid.uid_code,
+      });
       return { held: true, qcFailed: true, uid: { ...uid, status: 'hold' } };
     }
 
