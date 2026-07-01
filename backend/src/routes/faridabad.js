@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { calculateMsBalance } = require('../utils/msBalance');
+const { alloyCutBatch, DEFAULT_SIZES } = require('../utils/alloyCut');
 
 const router = express.Router();
 router.use(authenticate, auditContext);
@@ -381,6 +382,27 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
     const idx = steps.findIndex((s) => s.step_number === item.current_step);
     const step = steps[idx];
     const isMsCutting = step && /MS Cutting/i.test(step.operation_name);
+    const isAlloyCutting = step && /alloy.*cut/i.test(step.operation_name || '');
+
+    // Alloy Steel Cutting: the operator enters each bar length; the system plans
+    // the minimum-wastage cut into standard 1250/850 pieces and records the run.
+    let alloyPlan = null;
+    if (isAlloyCutting) {
+      const { bars, sizes, kerf, alloyIntakeId } = req.body || {};
+      const lengths = (Array.isArray(bars) ? bars : []).filter((x) => Number(x) > 0);
+      if (lengths.length) {
+        const usedSizes = sizes && sizes.length ? sizes : DEFAULT_SIZES;
+        alloyPlan = alloyCutBatch(lengths, { sizes: usedSizes, kerf });
+        await client.query(
+          `INSERT INTO alloy_cutting_runs
+             (alloy_intake_id, faridabad_item_id, sizes, kerf_mm, bars, total_pieces, total_wastage_mm, totals, operator_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [alloyIntakeId || null, item.id, JSON.stringify(usedSizes), Math.max(0, Number(kerf) || 0),
+            JSON.stringify(alloyPlan.plans), alloyPlan.totals.totalPieces, alloyPlan.totals.totalWastageMm,
+            JSON.stringify(alloyPlan.totals), req.user.sub]
+        );
+      }
+    }
 
     let balance = null;
     let runId = null;
@@ -440,7 +462,7 @@ router.post('/items/:id/close', requireRole(['admin', 'manager', 'supervisor', '
       await client.query(`UPDATE faridabad_items SET status = 'done', started_at = NULL, updated_at = now() WHERE id = $1`, [item.id]);
     }
     await req.audit({ tableName: 'faridabad_items', recordId: item.id, action: 'UPDATE', after: { closedStep: item.current_step, advancedTo: next ? next.step_number : 'done', weldId } });
-    return { itemId: item.id, advancedTo: next ? next.step_number : 'done', balance, weldId };
+    return { itemId: item.id, advancedTo: next ? next.step_number : 'done', balance, weldId, alloyPlan };
   });
   return res.json({ success: true, data: result });
 });
@@ -557,6 +579,59 @@ router.post('/ms-cutting/runs', requireRole(['admin', 'manager', 'supervisor', '
 router.get('/ms-cutting/runs', async (req, res) => {
   const { rows } = await query(
     `SELECT r.*, e.full_name AS operator_name FROM ms_sheet_cutting_runs r
+     LEFT JOIN employees e ON e.id = r.operator_id ORDER BY r.id DESC LIMIT 200`
+  );
+  return res.json({ success: true, data: rows });
+});
+
+// ── Alloy-steel bar cutting (minimum-wastage plan into 1250/850 pieces) ───────
+
+/** POST /faridabad/alloy-cutting/calculate — preview the optimal cut for bars.
+ *  body: { bars: [lengthMm,...], sizes?: [1250,850], kerf?: 0 } */
+router.post('/alloy-cutting/calculate', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { bars, sizes, kerf } = req.body || {};
+  const lengths = (Array.isArray(bars) ? bars : []).filter((b) => Number(b) > 0);
+  if (!lengths.length) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'At least one positive bar length is required.' } });
+  }
+  try {
+    const result = alloyCutBatch(lengths, { sizes: sizes && sizes.length ? sizes : DEFAULT_SIZES, kerf });
+    return res.json({ success: true, data: result });
+  } catch (e) {
+    return res.status(400).json({ success: false, error: { code: 'CALC_ERROR', message: e.message } });
+  }
+});
+
+/** POST /faridabad/alloy-cutting/runs — record a cut run with its computed plan.
+ *  body: { bars: [lengthMm,...], sizes?, kerf?, alloyIntakeId?, faridabadItemId? } */
+router.post('/alloy-cutting/runs', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { bars, sizes, kerf, alloyIntakeId, faridabadItemId } = req.body || {};
+  const lengths = (Array.isArray(bars) ? bars : []).filter((b) => Number(b) > 0);
+  if (!lengths.length) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_INPUT', message: 'At least one positive bar length is required.' } });
+  }
+  const usedSizes = sizes && sizes.length ? sizes : DEFAULT_SIZES;
+  let plan;
+  try {
+    plan = alloyCutBatch(lengths, { sizes: usedSizes, kerf });
+  } catch (e) {
+    return res.status(400).json({ success: false, error: { code: 'CALC_ERROR', message: e.message } });
+  }
+  const { rows } = await query(
+    `INSERT INTO alloy_cutting_runs
+       (alloy_intake_id, faridabad_item_id, sizes, kerf_mm, bars, total_pieces, total_wastage_mm, totals, operator_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [alloyIntakeId || null, faridabadItemId || null, JSON.stringify(usedSizes), Math.max(0, Number(kerf) || 0),
+      JSON.stringify(plan.plans), plan.totals.totalPieces, plan.totals.totalWastageMm, JSON.stringify(plan.totals), req.user.sub]
+  );
+  await req.audit({ tableName: 'alloy_cutting_runs', recordId: rows[0].id, action: 'INSERT', after: { totals: plan.totals } });
+  return res.status(201).json({ success: true, data: { ...rows[0], plan } });
+});
+
+/** GET /faridabad/alloy-cutting/runs — recent alloy cut runs. */
+router.get('/alloy-cutting/runs', async (req, res) => {
+  const { rows } = await query(
+    `SELECT r.*, e.full_name AS operator_name FROM alloy_cutting_runs r
      LEFT JOIN employees e ON e.id = r.operator_id ORDER BY r.id DESC LIMIT 200`
   );
   return res.json({ success: true, data: rows });
