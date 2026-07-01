@@ -190,6 +190,10 @@ export const alertsApi = {
   dismiss: (id) => api.patch(`/alerts/${id}/dismiss`),
 };
 
+export const activityApi = {
+  list: (filters) => api.get('/activity', filters),
+};
+
 export const workstationAssignmentsApi = {
   list: (shiftId) => api.get('/workstation-assignments', { shift_id: shiftId }),
   unassigned: (shiftId, location) => api.get('/workstation-assignments/unassigned', { shift_id: shiftId, location }),

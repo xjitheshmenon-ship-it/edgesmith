@@ -201,11 +201,8 @@ function StationCard({ station, onClick }) {
 export default function ProductionFloor() {
   const { location, locationLabel } = useApp();
   const { user } = useAuth();
-  const currentUserId = jpick(user || {}, 'id', 'user_id', 'operator_id');
   const [search, setSearch] = useState('');
   const [storageFilter, setStorageFilter] = useState(null);
-  const [view, setView] = useState('all');           // 'all' | 'individual'
-  const [selectedOperator, setSelectedOperator] = useState(null); // operator_id in individual view
   const [selectedCode, setSelectedCode] = useState(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
@@ -286,34 +283,7 @@ export default function ProductionFloor() {
     });
   }, [stations, filteredUids, jobsByStation]);
 
-  // Individual view: only stations where the current user has an assigned job.
-  // Operators that currently have assigned jobs — the pickable set in Individual view.
-  const operators = useMemo(() => {
-    const m = new Map();
-    for (const j of jobs) {
-      const id = jpick(j, 'operator_id', 'operatorId');
-      if (id == null) continue;
-      const key = String(id);
-      if (!m.has(key)) m.set(key, { id: key, name: jpick(j, 'operator_name', 'operator') || `Operator ${id}` });
-    }
-    return Array.from(m.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [jobs]);
-
-  // Default the operator picker: the current user if they have jobs, else the first.
-  useEffect(() => {
-    if (view !== 'individual' || operators.length === 0) return;
-    if (selectedOperator && operators.some((o) => o.id === selectedOperator)) return;
-    const mine = currentUserId != null ? operators.find((o) => o.id === String(currentUserId)) : null;
-    setSelectedOperator((mine || operators[0]).id);
-  }, [view, operators, currentUserId, selectedOperator]);
-
-  const visibleCards = useMemo(() => {
-    if (view !== 'individual') return stationCards;
-    if (!selectedOperator) return [];
-    return stationCards.filter((s) => (s.jobs || []).some((j) => String(jpick(j, 'operator_id', 'operatorId')) === selectedOperator));
-  }, [stationCards, view, selectedOperator]);
-
-  const selectedOperatorName = operators.find((o) => o.id === selectedOperator)?.name;
+  const visibleCards = stationCards;
 
   const selectedStation = useMemo(() => stationCards.find((s) => s.code === selectedCode) || null, [stationCards, selectedCode]);
 
@@ -344,31 +314,6 @@ export default function ProductionFloor() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          {/* All / Individual view switch */}
-          <div style={{ display: 'inline-flex', border: '1px solid var(--border-input, #d6e0d2)', borderRadius: 'var(--radius-md, 9px)', overflow: 'hidden' }}>
-            {[['all', 'All'], ['individual', 'Individual']].map(([key, label]) => {
-              const on = view === key;
-              return (
-                <button key={key} type="button" onClick={() => setView(key)}
-                  style={{ padding: '7px 14px', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, letterSpacing: '0.04em', fontWeight: on ? 700 : 400,
-                    background: on ? 'var(--ink-650, #15366a)' : 'transparent', color: on ? '#fff' : 'var(--text-secondary, #5d7188)' }}>
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-          {view === 'individual' && (
-            <select
-              className="form-select"
-              style={{ height: 36, maxWidth: 200 }}
-              value={selectedOperator || ''}
-              onChange={(e) => setSelectedOperator(e.target.value || null)}
-              disabled={operators.length === 0}
-            >
-              {operators.length === 0 && <option value="">No operators assigned</option>}
-              {operators.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </select>
-          )}
           <button className="btn btn-sm" onClick={refetch} type="button">
             <Icon name="refresh" size={14} />
             Refresh
@@ -417,11 +362,7 @@ export default function ProductionFloor() {
             {loading && !data ? (
               <LoadingState />
             ) : visibleCards.length === 0 ? (
-              <EmptyState message={view === 'individual'
-                ? (operators.length === 0
-                    ? 'No operators have assigned jobs right now. Switch to “All” to see the whole floor.'
-                    : `No workstations assigned to ${selectedOperatorName || 'this operator'} right now.`)
-                : 'No workstations configured for this location.'} />
+              <EmptyState message="No workstations configured for this location." />
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
                 {visibleCards.map((s) => (
@@ -510,6 +451,31 @@ function StationDrawer({ station, nowMs, onClose }) {
           <Stat label="Queued" value={station.queued} />
           <Stat label="Operators" value={new Set(jobs.map((j) => jpick(j, 'operator_id', 'operator_name')).filter(Boolean)).size} />
         </div>
+
+        {/* Active now — who is working and the UID currently on the machine. */}
+        {active.length > 0 && (
+          <div className="card" style={{ marginTop: 16, padding: '12px 14px', boxShadow: 'none', background: 'var(--bg-muted, #f4f7f2)', borderLeft: '4px solid var(--status-success, #22a06b)' }}>
+            <SectionLabel style={{ marginBottom: 8 }}>Active now</SectionLabel>
+            {active.map((j) => {
+              const running = jstatus(j) === 'in_progress';
+              const secs = (Number(jpick(j, 'net_work_seconds', 'net_seconds')) || 0) + (running ? elapsedFrom(jpick(j, 'started_at'), nowMs) : 0);
+              return (
+                <div key={jpick(j, 'id', 'job_id') || jpick(j, 'uid_code')} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                  <Icon name="user" size={14} color="var(--text-secondary, #5d7188)" />
+                  <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+                    <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700, color: 'var(--text-primary, #15366a)' }}>{jpick(j, 'operator_name', 'operator') || 'Unassigned'}</span>
+                    <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>
+                      {jpick(j, 'uid_code', 'uid') || '— no UID —'}
+                      {jpick(j, 'step_number', 'step') != null ? ` · Step ${jpick(j, 'step_number', 'step')}` : ''}
+                      {jpick(j, 'operation_name') ? ` · ${jpick(j, 'operation_name')}` : ''}
+                    </span>
+                  </div>
+                  {running && <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--status-success-dark, #1c7a52)' }}>{fmtHMS(secs)}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <SectionLabel style={{ marginTop: 20, marginBottom: 6 }}>Active jobs</SectionLabel>
         {active.length ? active.map((j) => <JobRow key={jpick(j, 'id', 'job_id') || jpick(j, 'uid_code')} j={j} />)

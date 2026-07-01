@@ -3,7 +3,7 @@ import { usePolling } from '../hooks/usePolling';
 import { jobsApi, PAUSE_REASONS } from '../api/jobs';
 import { uidsApi } from '../api/uids';
 import { batchesApi } from '../api/batches';
-import { cyclesApi, masterApi } from '../api/resources';
+import { cyclesApi, masterApi, employeesApi } from '../api/resources';
 import { useAuth } from '../store/AuthContext';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
@@ -1192,11 +1192,49 @@ export default function MyWorkstation() {
   const canAct = isOperator || isSupervisor || isAdmin; // Manager view is read-only
   const nowMs = useNow(true);
 
-  const operatorId = pick(user || {}, 'id', 'user_id', 'operator_id');
+  const selfId = pick(user || {}, 'id', 'user_id', 'operator_id');
+
+  // Oversight roles (admin/manager/supervisor) can either see the whole floor
+  // ("All") or step into any operator's exact workstation view ("Individual").
+  const isOversight = isAdmin || isManager || isSupervisor;
+  const [view, setView] = useState('all');            // 'all' | 'individual'
+  const [selectedOperator, setSelectedOperator] = useState(null);
+  const [operators, setOperators] = useState([]);
+
+  useEffect(() => {
+    if (!isOversight) return;
+    let alive = true;
+    employeesApi.list({ role: 'operator' })
+      .then((r) => {
+        if (!alive) return;
+        const list = (r.data || [])
+          .filter((e) => (pick(e, 'role') || 'operator') === 'operator')
+          .map((e) => ({ id: String(pick(e, 'id')), name: pick(e, 'full_name', 'name', 'username') || `Operator ${pick(e, 'id')}` }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setOperators(list);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [isOversight]);
+
+  // Default the operator picker when switching into Individual view.
+  useEffect(() => {
+    if (isOversight && view === 'individual' && !selectedOperator && operators.length) {
+      setSelectedOperator(operators[0].id);
+    }
+  }, [isOversight, view, selectedOperator, operators]);
+
+  // Whose workstation view is on screen? Operators always see their own; an
+  // oversight user sees the picked operator in Individual view, or the board in All.
+  const showingOperatorView = !isOversight || view === 'individual';
+  const viewOperatorId = !isOversight ? selfId : (view === 'individual' ? selectedOperator : null);
+  const viewOperatorName = isOversight ? (operators.find((o) => o.id === selectedOperator)?.name) : null;
 
   const { data, error, loading, refetch } = usePolling(
-    () => jobsApi.list({ assignedTo: operatorId, operator: operatorId }).then((r) => r.data),
-    [operatorId]
+    () => (viewOperatorId == null
+      ? Promise.resolve([])
+      : jobsApi.list({ assignedTo: viewOperatorId, operator: viewOperatorId }).then((r) => r.data)),
+    [viewOperatorId]
   );
 
   // Normalise to a flat job array regardless of envelope shape.
@@ -1297,35 +1335,60 @@ export default function MyWorkstation() {
   // The Receiving / Work Table (RCV-01) operator generates UIDs there — show the
   // action when they're working that station (or have no jobs yet, i.e. genesis).
   const atReceiving = stations.some((s) => /rcv|receiv|work table/i.test(`${s.code} ${s.name}`));
-  const canGenerateUid = isOperator && (atReceiving || stations.length === 0);
+  const canGenerateUid = showingOperatorView && canAct && (atReceiving || (isOperator && stations.length === 0));
+
+  const subtitle = !isOversight
+    ? `${pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your assigned workstations this shift${loading ? ' · loading…' : ''}`
+    : view === 'individual'
+      ? `Operator view — ${viewOperatorName || 'select an operator'}${loading && viewOperatorId ? ' · loading…' : ''}`
+      : 'All working workstations · UIDs waiting and live operator jobs';
 
   const header = (
-    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
       <div>
         <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: T_PRIMARY }}>My Workstation</div>
-        <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>
-          {isAdmin
-            ? 'All working workstations · UIDs waiting and live operator jobs'
-            : `${pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your assigned workstations this shift`}
-          {loading && !isAdmin ? ' · loading…' : ''}
-          {(isManager && !isAdmin) ? ' · read-only' : ''}
-        </div>
+        <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>{subtitle}</div>
       </div>
-      {canGenerateUid && (
-        <button className="btn btn-primary" type="button" onClick={() => setShowGen(true)} style={{ flexShrink: 0 }}>
-          <Icon name="tag" size={15} /> Generate UID
-        </button>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        {isOversight && (
+          <>
+            <div style={{ display: 'inline-flex', border: '1px solid var(--border-input, #d6e0d2)', borderRadius: 'var(--radius-md, 9px)', overflow: 'hidden' }}>
+              {[['all', 'All'], ['individual', 'Individual']].map(([key, label]) => {
+                const on = view === key;
+                return (
+                  <button key={key} type="button" onClick={() => setView(key)}
+                    style={{ padding: '7px 14px', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, letterSpacing: '0.04em', fontWeight: on ? 700 : 400,
+                      background: on ? 'var(--ink-650, #15366a)' : 'transparent', color: on ? '#fff' : T_SECONDARY }}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {view === 'individual' && (
+              <select className="form-select" style={{ height: 36, maxWidth: 220 }}
+                value={selectedOperator || ''} onChange={(e) => setSelectedOperator(e.target.value || null)} disabled={operators.length === 0}>
+                {operators.length === 0 && <option value="">No operators</option>}
+                {operators.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            )}
+          </>
+        )}
+        {canGenerateUid && (
+          <button className="btn btn-primary" type="button" onClick={() => setShowGen(true)} style={{ flexShrink: 0 }}>
+            <Icon name="tag" size={15} /> Generate UID
+          </button>
+        )}
+      </div>
     </div>
   );
 
-  if (!isAdmin && error) {
+  if (showingOperatorView && viewOperatorId && error) {
     return (
       <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
         {header}
         <div className="card" style={{ marginTop: 20, padding: 28, textAlign: 'center' }}>
           <div style={{ fontFamily: SANS, fontSize: 14, color: 'var(--status-danger-dark, #c0392b)' }}>
-            {error.message || 'Could not load your queue.'}
+            {error.message || 'Could not load the queue.'}
           </div>
           <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={refetch}>
             <Icon name="refresh" size={16} />Retry
@@ -1335,12 +1398,12 @@ export default function MyWorkstation() {
     );
   }
 
-  if (!isAdmin && loading && !data) {
+  if (showingOperatorView && viewOperatorId && loading && !data) {
     return (
       <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
         {header}
         <div className="card" style={{ marginTop: 20, padding: 40, textAlign: 'center', fontFamily: SANS, fontSize: 13, color: T_SECONDARY }}>
-          Loading your workstations…
+          Loading workstations…
         </div>
       </div>
     );
@@ -1358,14 +1421,23 @@ export default function MyWorkstation() {
         </div>
       )}
 
-      {isAdmin ? (
+      {!showingOperatorView ? (
         <AllWorkstationsBoard />
+      ) : (isOversight && view === 'individual' && !selectedOperator) ? (
+        <div className="card" style={{ marginTop: 20, padding: 40, textAlign: 'center' }}>
+          <Icon name="monitor" size={28} color={T_MUTED} />
+          <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 10 }}>
+            Pick an operator above to see their workstation view.
+          </div>
+        </div>
       ) : stations.length === 0 ? (
         <div className="card" style={{ marginTop: 20, padding: 40, textAlign: 'center' }}>
           <Icon name="monitor" size={28} color={T_MUTED} />
           <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 16, color: T_PRIMARY, marginTop: 10 }}>No workstations assigned</div>
           <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>
-            You have no jobs allotted to you this shift. Your supervisor assigns work here.
+            {isOversight
+              ? `${viewOperatorName || 'This operator'} has no jobs allotted this shift.`
+              : 'You have no jobs allotted to you this shift. Your supervisor assigns work here.'}
           </div>
         </div>
       ) : (

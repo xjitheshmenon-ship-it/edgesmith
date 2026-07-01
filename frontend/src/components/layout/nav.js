@@ -34,6 +34,7 @@ export const NAV = [
     ['qc', 'QC', 'check', 'pendingQc'],
     ['mo', 'MO Linking', 'doc', 'openMos'],
     ['reports', 'Reports', 'chart', null],
+    ['activity', 'Activity Log', 'timer', null],
     ['service', 'Service Lookup', 'search', null],
   ]],
   ['CONFIGURATION', [
