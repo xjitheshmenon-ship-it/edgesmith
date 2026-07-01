@@ -453,7 +453,7 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
   );
 }
 
-/* ── Generate UID modal (RCV-01 / Work Table operator) ───────────────────────
+/* ── Generate UID modal (TAG-01 / Tagging Table operator) ────────────────────
    UID creation is just an operation the receiving operator performs: they take a
    cycle, a quantity and (optionally) a raw-material size, and the system mints the
    codes at step 1 (RM-Q). No admin needed — this is the genesis of every job. */
@@ -530,9 +530,9 @@ function GenerateUidModal({ onClose, onDone }) {
   }
 
   return (
-    <Modal title="Generate UID — Receiving / Work Table" onClose={busy ? () => {} : onClose} width={520}>
+    <Modal title="Generate UID — Tagging Table" onClose={busy ? () => {} : onClose} width={520}>
       <div style={{ fontFamily: SANS, fontSize: 12.5, color: T_SECONDARY, marginBottom: 16 }}>
-        Mint new UIDs for material received at this workstation. Each UID starts at step 1 (RM-Q) and enters the receiving queue.
+        Tag the cut plates at the Tagging Table — mint a UID for each. Each UID enters the cycle and flows to its next step.
       </div>
 
       <div style={{ marginBottom: 14 }}>
@@ -1411,10 +1411,10 @@ export default function MyWorkstation() {
 
   /* ── render states ── */
 
-  // The Receiving / Work Table (RCV-01) operator generates UIDs there — show the
-  // action when they're working that station (or have no jobs yet, i.e. genesis).
-  const atReceiving = stations.some((s) => /rcv|receiv|work table/i.test(`${s.code} ${s.name}`));
-  const canGenerateUid = showingOperatorView && canAct && (atReceiving || (isOperator && stations.length === 0));
+  // §1 — the Tagging Table (TAG-01) operator generates UIDs after opening the
+  // job there (genesis also allowed when an operator has no jobs yet).
+  const atTagging = stations.some((s) => /tag/i.test(`${s.code} ${s.name}`));
+  const canGenerateUid = showingOperatorView && canAct && (atTagging || (isOperator && stations.length === 0));
 
   const subtitle = !isOversight
     ? `${pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your assigned workstations this shift${loading ? ' · loading…' : ''}`
