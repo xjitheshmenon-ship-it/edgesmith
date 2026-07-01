@@ -3,7 +3,7 @@ const { query, withTransaction } = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
-const { furnaceCapacityForSize, furnaceSlotsForBar, validateGrindingCombination, bunchGrindingRunCapacity } = require('../utils/scrapCalculator');
+const { furnaceCapacityForSize, furnaceSlotsForBar, validateGrindingCombination, bunchGrindingRunCapacity, planBunchSets } = require('../utils/scrapCalculator');
 const { checkDeviation } = require('../utils/deviationChecker');
 
 const router = express.Router();
@@ -433,10 +433,18 @@ grindingRouter.post('/batches', requireRole(['admin', 'manager', 'supervisor', '
       [BUNCH_MACHINE]
     );
     const bedLength = cfg[0]?.bed_length_mm || 3000;
-    const combined = uidRows.reduce((sum, u) => sum + (Number(u.size_mm) || 0), 0);
-    if (combined > bedLength) {
-      throw Object.assign(new Error(`Combined length ${combined}mm exceeds the ${bedLength}mm bed.`), { status: 400, code: 'BED_OVERFLOW' });
+    const barsPerSet = cfg[0]?.bars_per_set || 5;
+
+    // §4.12 — bunch bars into same-length sets (side-by-side, ≤ barsPerSet each)
+    // laid end-to-end; the run fits when the sum of set lengths is within the bed.
+    const plan = planBunchSets(uidRows, barsPerSet, bedLength);
+    if (plan.tooLong) {
+      throw Object.assign(new Error(`Bar ${plan.tooLong.uid_code} (${plan.tooLong.size_mm}mm) exceeds the ${bedLength}mm bed.`), { status: 400, code: 'BAR_TOO_LONG' });
     }
+    if (!plan.valid) {
+      throw Object.assign(new Error(`These bars need ${plan.bedUsedMm}mm of bed across ${plan.sets.length} sets, but the bed is ${bedLength}mm.`), { status: 400, code: 'BED_OVERFLOW' });
+    }
+    const combined = plan.bedUsedMm;
 
     const year = new Date().getFullYear();
     const { rows: seqRows } = await client.query(`SELECT COUNT(*) AS c FROM production_batches WHERE batch_number LIKE $1`, [`PB-${year}-%`]);
@@ -455,13 +463,16 @@ grindingRouter.post('/batches', requireRole(['admin', 'manager', 'supervisor', '
     const batch = batchRows[0];
 
     let setNo = 1;
-    for (const u of uidRows) {
-      await client.query(`INSERT INTO production_batch_uids (production_batch_id, uid_id, set_number) VALUES ($1,$2,$3)`, [batch.id, u.id, setNo++]);
-      await client.query(
-        `INSERT INTO uid_step_logs (uid_id, step_number, operation_name, workstation_unit_id, operator_id, shift_id, started_at)
-         VALUES ($1,$2,'Bunch Grinding',$3,$4,$5, now())`,
-        [u.id, step, workstationUnitId || null, req.user.sub, shiftId]
-      );
+    for (const s of plan.sets) {
+      for (const u of s.bars) {
+        await client.query(`INSERT INTO production_batch_uids (production_batch_id, uid_id, set_number) VALUES ($1,$2,$3)`, [batch.id, u.id, setNo]);
+        await client.query(
+          `INSERT INTO uid_step_logs (uid_id, step_number, operation_name, workstation_unit_id, operator_id, shift_id, started_at)
+           VALUES ($1,$2,'Bunch Grinding',$3,$4,$5, now())`,
+          [u.id, step, workstationUnitId || null, req.user.sub, shiftId]
+        );
+      }
+      setNo++;
     }
 
     await req.audit({ tableName: 'production_batches', recordId: batch.id, action: 'INSERT', after: { batchNumber, combined, uidCount: uidRows.length } });
