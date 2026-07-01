@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { faridabadApi } from '../api/resources';
+import { faridabadApi, employeesApi } from '../api/resources';
 import { useAuth } from '../store/AuthContext';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill } from '../components/common/Badges';
@@ -625,6 +625,138 @@ function QueueRow({ item, idx, canAct, onStart, pending }) {
   );
 }
 
+/* ── Oversight board + drawer (mirrors Dharmapuri My Workstation "All" view) ── */
+
+function StatChip({ label, value }) {
+  return (
+    <div className="card" style={{ padding: '10px 16px', minWidth: 120 }}>
+      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 22, color: T_PRIMARY, lineHeight: 1 }}>{value}</div>
+      <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.06em', color: T_SECONDARY, marginTop: 5 }}>{String(label).toUpperCase()}</div>
+    </div>
+  );
+}
+
+function BoardCard({ group, nowMs, onClick }) {
+  const items = group.items || [];
+  const active = items.filter((it) => itemStatus(it) === 'in_progress');
+  const queued = items.filter((it) => itemStatus(it) !== 'in_progress');
+  return (
+    <div className="card" onClick={onClick} title="View workstation detail" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10, cursor: 'pointer' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <div>
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, color: T_PRIMARY }}>{group.name || group.code}</div>
+          {group.name && group.name !== group.code && <div style={{ fontFamily: MONO, fontSize: 10.5, color: T_MUTED }}>{group.code}</div>}
+        </div>
+        <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: queued.length ? T_PRIMARY : T_MUTED, background: 'var(--bg-muted, #eef2f7)', borderRadius: 20, padding: '3px 10px', whiteSpace: 'nowrap' }}>{queued.length} queued</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {active.length === 0 ? (
+          <div style={{ fontFamily: SANS, fontSize: 12, color: T_MUTED }}>No item in progress</div>
+        ) : active.map((it) => {
+          const secs = elapsedFrom(pick(it, 'started_at'), nowMs);
+          return (
+            <div key={itemId(it)} style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: SANS, fontSize: 12.5 }}>
+              <StatusPill status="in_progress" />
+              <span style={{ color: T_PRIMARY, fontWeight: 600 }}>{pick(it, 'operator_name') || 'Unassigned'}</span>
+              <span style={{ color: T_SECONDARY, fontFamily: MONO, fontSize: 11 }}>{sizeLabel(it)}</span>
+              {pick(it, 'current_step') != null && <span style={{ color: T_MUTED, fontFamily: MONO, fontSize: 11 }}>· Step {pick(it, 'current_step')}</span>}
+              <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: T_PRIMARY }}>{fmtHMS(secs)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FaridabadStationDrawer({ group, nowMs, onClose }) {
+  const items = group.items || [];
+  const active = items.filter((it) => itemStatus(it) === 'in_progress');
+  const queued = items.filter((it) => itemStatus(it) !== 'in_progress');
+  const operators = new Set(items.map((it) => pick(it, 'operator_name')).filter(Boolean)).size;
+
+  const Row = ({ it }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 0', borderBottom: '1px solid var(--border-card, #eef2f7)', fontFamily: SANS, fontSize: 12.5 }}>
+      <StatusPill status={itemStatus(it)} />
+      <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: T_PRIMARY }}>{sizeLabel(it)}</span>
+      {pick(it, 'operation_name') && <span style={{ color: T_SECONDARY }}>{pick(it, 'operation_name')}</span>}
+      {pick(it, 'current_step') != null && <span style={{ fontFamily: MONO, fontSize: 11, color: T_MUTED }}>· Step {pick(it, 'current_step')}</span>}
+      <span style={{ flex: 1 }} />
+      {itemStatus(it) === 'in_progress' && <Mono style={{ fontSize: 11, fontWeight: 700, color: T_PRIMARY }}>{fmtHMS(elapsedFrom(pick(it, 'started_at'), nowMs))}</Mono>}
+    </div>
+  );
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(15,30,50,0.35)', zIndex: 60, display: 'flex', justifyContent: 'flex-end' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(420px, 92vw)', height: '100%', background: 'var(--bg-card, #fff)', borderLeft: '1px solid var(--border-card, #e6ecf3)', boxShadow: '-8px 0 30px rgba(0,0,0,0.12)', overflowY: 'auto', padding: '20px 22px 40px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 19, color: T_PRIMARY }}>{group.name || group.code}</div>
+            {group.name && group.name !== group.code && <div style={{ fontFamily: MONO, fontSize: 11.5, color: T_SECONDARY, marginTop: 2 }}>{group.code}</div>}
+          </div>
+          <button className="btn btn-sm" type="button" onClick={onClose}><Icon name="close" size={14} /></button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+          <StatChip label="In progress" value={active.length} />
+          <StatChip label="Queued" value={queued.length} />
+          <StatChip label="Operators" value={operators} />
+        </div>
+
+        {active.length > 0 && (
+          <div className="card" style={{ marginTop: 16, padding: '12px 14px', boxShadow: 'none', background: 'var(--bg-muted, #f4f7f2)', borderLeft: '4px solid var(--status-success, #22a06b)' }}>
+            <Label style={{ marginBottom: 8 }}>Active now</Label>
+            {active.map((it) => (
+              <div key={itemId(it)} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                <Icon name="user" size={14} color={T_SECONDARY} />
+                <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.25 }}>
+                  <span style={{ fontFamily: SANS, fontSize: 13, fontWeight: 700, color: T_PRIMARY }}>{pick(it, 'operator_name') || 'Unassigned'}</span>
+                  <span style={{ fontFamily: MONO, fontSize: 11, color: T_SECONDARY }}>
+                    {sizeLabel(it)}{pick(it, 'current_step') != null ? ` · Step ${pick(it, 'current_step')}` : ''}{pick(it, 'operation_name') ? ` · ${pick(it, 'operation_name')}` : ''}
+                  </span>
+                </div>
+                <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--status-success-dark, #1c7a52)' }}>{fmtHMS(elapsedFrom(pick(it, 'started_at'), nowMs))}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <Label style={{ marginTop: 20, marginBottom: 6 }}>Active items</Label>
+        {active.length ? active.map((it) => <Row key={itemId(it)} it={it} />) : <div style={{ fontFamily: SANS, fontSize: 12, color: T_MUTED }}>No item in progress.</div>}
+        {queued.length > 0 && (
+          <>
+            <Label style={{ marginTop: 18, marginBottom: 6 }}>Queue · {queued.length}</Label>
+            {queued.map((it) => <Row key={itemId(it)} it={it} />)}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FaridabadOversightBoard({ groups, nowMs }) {
+  const [code, setCode] = useState(null);
+  const totalItems = groups.reduce((n, g) => n + (g.items?.length || 0), 0);
+  const running = groups.reduce((n, g) => n + (g.items || []).filter((it) => itemStatus(it) === 'in_progress').length, 0);
+  const selected = groups.find((g) => g.code === code) || null;
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 20 }}>
+        <StatChip label="Working stations" value={groups.length} />
+        <StatChip label="Items on floor" value={totalItems} />
+        <StatChip label="In progress" value={running} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14, marginTop: 16 }}>
+        {groups.map((g) => <BoardCard key={g.code || g.name} group={g} nowMs={nowMs} onClick={() => setCode(g.code)} />)}
+      </div>
+      {groups.length === 0 && (
+        <div className="card" style={{ marginTop: 16, padding: 40, textAlign: 'center', fontFamily: SANS, fontSize: 13, color: T_SECONDARY }}>No Faridabad workstations have work right now.</div>
+      )}
+      {selected && <FaridabadStationDrawer group={selected} nowMs={nowMs} onClose={() => setCode(null)} />}
+    </>
+  );
+}
+
 /* ── Page ────────────────────────────────────────────────────────────────── */
 
 export default function FaridabadMyWorkstation() {
@@ -638,12 +770,49 @@ export default function FaridabadMyWorkstation() {
     { interval: 20000 }
   );
 
+  // Oversight (admin/manager/supervisor): All = whole-floor board, Individual =
+  // one operator's active workstations. Operators just see the floor tabs.
+  const isOversight = isAdmin || isManager || isSupervisor;
+  const [view, setView] = useState('all');
+  const [selectedOperator, setSelectedOperator] = useState(null);
+  const [operators, setOperators] = useState([]);
+  useEffect(() => {
+    if (!isOversight) return;
+    let alive = true;
+    employeesApi.list({ role: 'operator' })
+      .then((r) => {
+        if (!alive) return;
+        setOperators((r.data || [])
+          .filter((e) => (pick(e, 'role') || 'operator') === 'operator')
+          .map((e) => ({ id: String(pick(e, 'id')), name: pick(e, 'full_name', 'name', 'username') || `Operator ${pick(e, 'id')}` }))
+          .sort((a, b) => a.name.localeCompare(b.name)));
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [isOversight]);
+  useEffect(() => {
+    if (isOversight && view === 'individual' && !selectedOperator && operators.length) setSelectedOperator(operators[0].id);
+  }, [isOversight, view, selectedOperator, operators]);
+
   // Floor groups = workstations, each with their items. Keep only those that
   // actually have items, so a tab is only shown when there is work.
-  const groups = useMemo(() => {
+  const allGroups = useMemo(() => {
     const raw = Array.isArray(data) ? data : pick(data || {}, 'data') || [];
     return (Array.isArray(raw) ? raw : []).filter((g) => Array.isArray(g.items) && g.items.length > 0);
   }, [data]);
+
+  const showBoard = isOversight && view === 'all';
+  const viewOperatorName = isOversight ? operators.find((o) => o.id === selectedOperator)?.name : null;
+
+  // Tab view groups: for Individual, only stations where the picked operator has
+  // a live item (their exact working stations); otherwise the whole floor.
+  const groups = useMemo(() => {
+    if (isOversight && view === 'individual') {
+      if (!selectedOperator) return [];
+      return allGroups.filter((g) => (g.items || []).some((it) => String(pick(it, 'operator_id')) === selectedOperator && itemStatus(it) === 'in_progress'));
+    }
+    return allGroups;
+  }, [allGroups, isOversight, view, selectedOperator]);
 
   const [activeWs, setActiveWs] = useState(null);
   useEffect(() => {
@@ -787,14 +956,42 @@ export default function FaridabadMyWorkstation() {
 
   /* ── render states ── */
 
+  const subtitle = !isOversight
+    ? `${pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your Faridabad workstations${loading ? ' · loading…' : ''}`
+    : view === 'individual'
+      ? `Operator view — ${viewOperatorName || 'select an operator'}`
+      : 'All Faridabad workstations · live items and operators';
+
   const header = (
-    <>
-      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: T_PRIMARY }}>Faridabad My Workstation</div>
-      <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>
-        {pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your Faridabad workstations{loading ? ' · loading…' : ''}
-        {(isManager && !isAdmin) ? ' · read-only' : ''}
+    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+      <div>
+        <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: T_PRIMARY }}>Faridabad My Workstation</div>
+        <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>{subtitle}</div>
       </div>
-    </>
+      {isOversight && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'inline-flex', border: '1px solid var(--border-input, #d6e0d2)', borderRadius: 'var(--radius-md, 9px)', overflow: 'hidden' }}>
+            {[['all', 'All'], ['individual', 'Individual']].map(([key, label]) => {
+              const on = view === key;
+              return (
+                <button key={key} type="button" onClick={() => setView(key)}
+                  style={{ padding: '7px 14px', border: 'none', cursor: 'pointer', fontFamily: MONO, fontSize: 11, letterSpacing: '0.04em', fontWeight: on ? 700 : 400,
+                    background: on ? 'var(--ink-650, #15366a)' : 'transparent', color: on ? '#fff' : T_SECONDARY }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {view === 'individual' && (
+            <select className="form-select" style={{ height: 36, maxWidth: 220 }}
+              value={selectedOperator || ''} onChange={(e) => setSelectedOperator(e.target.value || null)} disabled={operators.length === 0}>
+              {operators.length === 0 && <option value="">No operators</option>}
+              {operators.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+            </select>
+          )}
+        </div>
+      )}
+    </div>
   );
 
   if (error) {
@@ -845,12 +1042,21 @@ export default function FaridabadMyWorkstation() {
         </div>
       )}
 
-      {groups.length === 0 ? (
+      {showBoard ? (
+        <FaridabadOversightBoard groups={allGroups} nowMs={nowMs} />
+      ) : (isOversight && view === 'individual' && !selectedOperator) ? (
         <div className="card" style={{ marginTop: 20, padding: 40, textAlign: 'center' }}>
           <Icon name="monitor" size={28} color={T_MUTED} />
-          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 16, color: T_PRIMARY, marginTop: 10 }}>No Faridabad items assigned</div>
+          <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 10 }}>Pick an operator above to see their workstations.</div>
+        </div>
+      ) : groups.length === 0 ? (
+        <div className="card" style={{ marginTop: 20, padding: 40, textAlign: 'center' }}>
+          <Icon name="monitor" size={28} color={T_MUTED} />
+          <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 16, color: T_PRIMARY, marginTop: 10 }}>No Faridabad items</div>
           <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 4 }}>
-            There are no items on your Faridabad workstations right now.
+            {isOversight && view === 'individual'
+              ? `${viewOperatorName || 'This operator'} has no item in progress right now.`
+              : 'There are no items on your Faridabad workstations right now.'}
           </div>
         </div>
       ) : (
