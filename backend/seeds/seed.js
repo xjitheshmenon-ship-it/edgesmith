@@ -40,6 +40,7 @@ async function main() {
   await seedColorCodes();
   await seedTruckCapacityDefault();
   await seedSampleSuppliersAndContractors();
+  await seedRawMaterialIntakes();
   await seedSkillCertifications();
 
   console.log('\nSeed complete.');
@@ -418,6 +419,30 @@ async function seedSampleSuppliersAndContractors() {
     await query(`INSERT INTO contractors (name) VALUES ('Sri Rolling Mills'), ('Deccan Rollers')`);
     console.log('✓ Seeded 2 sample rolling contractors');
   }
+}
+
+// A few alloy + MS heats so the Joining/Welding step can note real material.
+// Idempotent — skips if any intake already exists (e.g. from the demo seed).
+async function seedRawMaterialIntakes() {
+  const { rows } = await query(`SELECT COUNT(*)::int AS c FROM raw_material_intakes`);
+  if (rows[0].c > 0) return;
+  const alloySup = (await query(`SELECT id FROM suppliers WHERE material_type IN ('alloy_steel','both') ORDER BY id LIMIT 1`)).rows[0];
+  const msSup = (await query(`SELECT id FROM suppliers WHERE material_type IN ('ms','both') ORDER BY id LIMIT 1`)).rows[0];
+  if (!alloySup || !msSup) return;
+  const heats = [
+    ['alloy_steel', alloySup.id, 'AL-2401', 'EN19', 1200, 12],
+    ['alloy_steel', alloySup.id, 'AL-2402', 'EN24', 1500, 15],
+    ['ms', msSup.id, 'MS-2401', null, 900, 9],
+    ['ms', msSup.id, 'MS-2402', null, 1100, 11],
+  ];
+  for (const [mt, sup, heat, grade, wt, bars] of heats) {
+    await query(
+      `INSERT INTO raw_material_intakes (material_type, supplier_id, heat_number, grade, weight_kg, bar_count, date_received)
+       VALUES ($1,$2,$3,$4,$5,$6, now())`,
+      [mt, sup, heat, grade, wt, bars]
+    );
+  }
+  console.log('✓ Seeded 4 raw material intakes (alloy + MS heats)');
 }
 
 // Skill-based certifications (code + name). One per skill, not per workstation.
