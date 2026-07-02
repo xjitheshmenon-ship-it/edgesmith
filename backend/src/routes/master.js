@@ -110,6 +110,10 @@ router.use('/sheet-sizes', simpleResource('ms_sheet_sizes', {
   fields: [{ key: 'label', column: 'label' }, { key: 'lengthMm', column: 'length_mm' }, { key: 'widthMm', column: 'width_mm' }, { key: 'heightMm', column: 'height_mm' }, { key: 'status', column: 'status' }],
 }));
 
+router.use('/sheet-heights', simpleResource('ms_sheet_heights', {
+  fields: [{ key: 'heightMm', column: 'height_mm' }, { key: 'label', column: 'label' }, { key: 'status', column: 'status' }],
+}));
+
 router.use('/concession-colors', simpleResource('concession_color_codes', {
   fields: [{ key: 'exceptionType', column: 'exception_type' }, { key: 'colorName', column: 'color_name' }, { key: 'hex', column: 'hex' }, { key: 'triggerDesc', column: 'trigger_desc' }, { key: 'status', column: 'status' }],
 }));

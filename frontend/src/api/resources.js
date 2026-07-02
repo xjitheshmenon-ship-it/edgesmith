@@ -188,6 +188,11 @@ export const masterApi = {
   updateSheetSize: (id, p) => api.patch(`/master/sheet-sizes/${id}`, p),
   archiveSheetSize: (id) => api.delete(`/master/sheet-sizes/${id}`),
 
+  sheetHeights: () => api.get('/master/sheet-heights'),
+  createSheetHeight: (p) => api.post('/master/sheet-heights', p),
+  updateSheetHeight: (id, p) => api.patch(`/master/sheet-heights/${id}`, p),
+  archiveSheetHeight: (id) => api.delete(`/master/sheet-heights/${id}`),
+
   dimensions: (category) => api.get('/master/dimensions', category ? { category } : undefined),
   createDimension: (p) => api.post('/master/dimensions', p),
   updateDimension: (id, p) => api.patch(`/master/dimensions/${id}`, p),
