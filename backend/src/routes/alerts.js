@@ -45,7 +45,7 @@ router.get('/', async (req, res) => {
 
 /** PATCH /api/v1/alerts/:id/dismiss */
 router.patch('/:id/dismiss', async (req, res) => {
-  const { rows } = await query(`UPDATE alerts SET status = 'dismissed', dismissed_at = now() WHERE id = $1 RETURNING *`, [req.params.id]);
+  const { rows } = await query(`UPDATE alerts SET status = 'dismissed', dismissed_at = now(), acknowledged_by = $2 WHERE id = $1 RETURNING *`, [req.params.id, req.user.sub]);
   if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'ALERT_NOT_FOUND', message: 'Alert not found.' } });
   return res.json({ success: true, data: rows[0] });
 });
