@@ -19,18 +19,25 @@ router.get('/', async (req, res) => {
   const params = [];
   let p = 1;
 
-  conditions.push(`(a.target_employee_id = $${p} OR a.target_employee_id IS NULL)`);
-  params.push(req.user.sub);
-  p++;
-
-  conditions.push(`(a.target_role IS NULL OR a.target_role = $${p})`);
-  params.push(req.user.role);
-  p++;
-
-  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
-    conditions.push(`(a.location_id = $${p} OR a.location_id IS NULL)`);
-    params.push(req.user.location_id);
+  // Director is a read-only oversight role: it sees every active alert across
+  // all roles and both locations (Final Instruction F.3 — "Director sees all
+  // alerts read-only"), so it skips the per-role/per-employee/location
+  // narrowing that scopes every other role. Its writes (dismiss) are blocked
+  // at the authenticate() choke point, so read-all is safe.
+  if (req.user.role !== 'director') {
+    conditions.push(`(a.target_employee_id = $${p} OR a.target_employee_id IS NULL)`);
+    params.push(req.user.sub);
     p++;
+
+    conditions.push(`(a.target_role IS NULL OR a.target_role = $${p})`);
+    params.push(req.user.role);
+    p++;
+
+    if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+      conditions.push(`(a.location_id = $${p} OR a.location_id IS NULL)`);
+      params.push(req.user.location_id);
+      p++;
+    }
   }
 
   const { rows } = await query(
