@@ -116,12 +116,55 @@ function UidRow({ uid }) {
 }
 
 /* A single workstation card. */
+const STAFFING_LABEL = { 1: 'Peer assist', 2: 'Swap pool', 3: 'Crew' };
+
+/* Crew bar: assigned vs minimum operators (furnace / swap-pool stations). */
+function CrewBar({ assigned, min }) {
+  const met = assigned >= min;
+  const c = met ? '#22a06b' : '#e5484d';
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontFamily: MONO, fontSize: 10, color: 'var(--text-secondary, #5d7188)', marginBottom: 3 }}>
+        <span>Crew</span><span style={{ color: c }}>{assigned}/{min}</span>
+      </div>
+      <div style={{ display: 'flex', gap: 3 }}>
+        {Array.from({ length: min }).map((_, i) => (
+          <div key={i} style={{ flex: 1, height: 5, borderRadius: 3, background: i < assigned ? c : 'var(--bg-muted-2, #e6ede2)' }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function StationCard({ station, onClick }) {
-  const { code, name, running, queued, runningUids, queuedUids, jobs = [] } = station;
+  const { code, name, running, queued, runningUids, queuedUids, jobs = [], category, staffingModel, minOperators, assignedOperators, shiftIssued, noDirect } = station;
   const isIdle = running === 0 && queued === 0;
   const status = stationStatus(running, queued);
   const operators = jobs.map((j) => jpick(j, 'operator_name', 'operator')).filter(Boolean);
   const clickable = { cursor: 'pointer' };
+  const isFurnace = category === 'heat_treatment';
+  const showCrew = !noDirect && (isFurnace || staffingModel === 2 || minOperators > 1);
+
+  // §7 — a furnace under its minimum crew reads "SHIFT NOT ISSUED" and blocks
+  // batch/job assignment. Surface this even when the station is otherwise idle.
+  if (isFurnace && !shiftIssued) {
+    return (
+      <div className="card" onClick={onClick} title="View workstation detail"
+        style={{ padding: '16px 18px', border: '1.5px solid #e5484d', background: 'rgba(229,72,77,0.05)', display: 'flex', flexDirection: 'column', ...clickable }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary, #15366a)' }}>{code}</div>
+            <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)', marginTop: 1 }}>{name}</div>
+          </div>
+          <span className="badge" style={{ background: 'rgba(229,72,77,0.14)', color: '#e5484d', fontFamily: MONO, fontSize: 9.5 }}>SHIFT NOT ISSUED</span>
+        </div>
+        <CrewBar assigned={assignedOperators} min={minOperators} />
+        <div style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--status-danger-dark, #c0392b)', marginTop: 8 }}>
+          Assign {minOperators} operators (+ Supervisor) in Work Assignment before a furnace batch can run.
+        </div>
+      </div>
+    );
+  }
 
   // Idle tiles: smaller, greyed out, no queue info (per spec).
   if (isIdle) {
@@ -157,6 +200,10 @@ function StationCard({ station, onClick }) {
       <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-secondary, #5d7188)', marginTop: 5 }}>
         {running} in progress{queued ? ` · ${queued} queued` : ''}
       </div>
+      {showCrew && <CrewBar assigned={assignedOperators} min={minOperators} />}
+      {staffingModel === 2 && (
+        <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-muted, #9bb4d4)', marginTop: 5 }}>{STAFFING_LABEL[staffingModel]}</div>
+      )}
       {operators.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, fontFamily: SANS, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>
           <Icon name="user" size={11} />
@@ -279,6 +326,13 @@ export default function ProductionFloor() {
         runningUids,
         queuedUids,
         jobs: jobsByStation.get(s.code) || [],
+        category: s.category,
+        staffingModel: s.staffing_model ?? null,
+        minOperators: Number(s.min_operators) || 1,
+        assignedOperators: Number(s.assigned_operators) || 0,
+        crewMet: s.crew_met !== false,
+        shiftIssued: s.shift_issued !== false,
+        noDirect: !!s.no_direct_assignment,
       };
     });
   }, [stations, filteredUids, jobsByStation]);
