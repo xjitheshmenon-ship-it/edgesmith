@@ -1522,10 +1522,12 @@ export default function MyWorkstation() {
 
   /* ── render states ── */
 
-  // §1 — the Tagging Table (TAG-01) operator generates UIDs after opening the
-  // job there (genesis also allowed when an operator has no jobs yet).
-  const atTagging = stations.some((s) => /tag/i.test(`${s.code} ${s.name}`));
-  const canGenerateUid = showingOperatorView && canAct && (atTagging || (isOperator && stations.length === 0));
+  // §1 — UIDs are minted only at the Tagging Table (TAG-01), the genesis of every
+  // job. Band Saw Cutting (BSW-01) creates no UIDs — it just cuts the block into
+  // plates. So the tag action is available only while the Tagging Table tab is the
+  // active workstation, not whenever the operator merely has TAG-01 assigned.
+  const activeIsTagging = !!station && /tag/i.test(`${station.code} ${station.name || ''}`);
+  const canGenerateUid = showingOperatorView && canAct && activeIsTagging;
 
   const subtitle = !isOversight
     ? `${pick(user || {}, 'name', 'full_name', 'username') || 'Operator'} · your assigned workstations this shift${loading ? ' · loading…' : ''}`
