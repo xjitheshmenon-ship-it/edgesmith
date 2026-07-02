@@ -96,6 +96,14 @@ export const qcApi = {
   annealingCandidates: () => api.get('/qc/annealing/candidates'),
   annealingDispatch: (payload) => api.post('/qc/annealing/dispatch', payload),
   annealingReturn: (id) => api.post(`/qc/annealing/${id}/return`),
+  // Live dashboard
+  activity: (filter) => api.get('/qc/activity', filter ? { filter } : undefined),
+  summary: () => api.get('/qc/summary'),
+  concessions: (status) => api.get('/qc/concessions', status ? { status } : undefined),
+  decideConcession: (id, decision, note) => api.post(`/qc/concessions/${id}/decide`, { decision, note }),
+  overrides: () => api.get('/qc/overrides'),
+  createOverride: (uidStepLogId, newResult, reason) => api.post('/qc/overrides', { uidStepLogId, newResult, reason }),
+  sendInstruction: (payload) => api.post('/qc/instructions', payload),
 };
 
 export const reportsApi = {
