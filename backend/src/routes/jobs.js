@@ -213,6 +213,56 @@ router.post('/:id/return', requireRole(['admin', 'manager', 'supervisor', 'opera
 });
 
 /**
+ * POST /api/v1/jobs/:id/hold  — §6: Supervisor/Admin only, mandatory reason.
+ * Works for any job (Dharmapuri UID, Faridabad weld, furnace). A UID job also
+ * places its UID on hold so downstream steps (Converting) stay blocked.
+ */
+router.post('/:id/hold', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const reason = ((req.body && req.body.reason) || '').trim();
+  if (!reason) {
+    return res.status(400).json({ success: false, error: { code: 'REASON_REQUIRED', message: 'A reason is required to place a job on hold.' } });
+  }
+  const result = await withTransaction(async (client) => {
+    const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const job = jobRows[0];
+    if (!job) throw Object.assign(new Error('Job not found'), { status: 404, code: 'JOB_NOT_FOUND' });
+    if (job.status === 'closed') throw Object.assign(new Error('A closed job cannot be held.'), { status: 409, code: 'ALREADY_CLOSED' });
+    await client.query(`UPDATE jobs SET status = 'hold', hold_reason = $2, hold_by = $3, held_at = now() WHERE id = $1`, [job.id, reason, req.user.sub]);
+    if (job.uid_id) {
+      await client.query(`UPDATE uids SET status = 'hold', hold_reason = $2 WHERE id = $1`, [job.uid_id, reason]);
+    }
+    await createAlert(client.query.bind(client), {
+      type: 'hold', severity: 'warning', uidId: job.uid_id || null,
+      message: `Job placed on hold — ${reason}`, targetRole: 'supervisor', linkPage: 'jobs', linkRecordId: String(job.id),
+    });
+    return { ...job, status: 'hold', hold_reason: reason };
+  });
+  await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: { status: 'hold', reason } });
+  return res.json({ success: true, data: result });
+});
+
+/** POST /api/v1/jobs/:id/release — §6: Supervisor/Admin only, mandatory reason. */
+router.post('/:id/release', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const reason = ((req.body && req.body.reason) || '').trim();
+  if (!reason) {
+    return res.status(400).json({ success: false, error: { code: 'REASON_REQUIRED', message: 'A reason is required to release a job from hold.' } });
+  }
+  const result = await withTransaction(async (client) => {
+    const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const job = jobRows[0];
+    if (!job) throw Object.assign(new Error('Job not found'), { status: 404, code: 'JOB_NOT_FOUND' });
+    if (job.status !== 'hold') throw Object.assign(new Error('This job is not on hold.'), { status: 409, code: 'NOT_ON_HOLD' });
+    await client.query(`UPDATE jobs SET status = 'queued', hold_reason = NULL, hold_by = NULL, held_at = NULL WHERE id = $1`, [job.id]);
+    if (job.uid_id) {
+      await client.query(`UPDATE uids SET status = 'active', hold_reason = NULL WHERE id = $1 AND status = 'hold'`, [job.uid_id]);
+    }
+    return { ...job, status: 'queued' };
+  });
+  await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: { status: 'queued', released: true, reason } });
+  return res.json({ success: true, data: result });
+});
+
+/**
  * POST /api/v1/jobs/:id/pause
  * body: { reason, notes? } — reason is mandatory, must be one of PAUSE_REASONS.
  */
@@ -375,12 +425,49 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
       const q = client.query.bind(client);
       let dimClass = null;
       let dimBounds = null;
-      const dim = concessionDimension(qcType);
-      if (dim && qcValue != null && String(qcValue).trim() !== '') {
-        dimBounds = await fgBounds(q, dim);
-        dimClass = classifyDimension(qcValue, dimBounds);
-        if (dimClass === 'reject' || dimClass === 'concession') qcResult = 'Fail';
-        else if (dimClass === 'pass' && !qcResult) qcResult = 'Pass';
+      let dim = null;
+      let dimMeasured = null;
+      let confFail = false;
+
+      // §23 — Final Inspection (Step 26) reads BOTH width and thickness plus the
+      // Design/Cycle/HT confirmations. Worst outcome wins: any reject → reject;
+      // else a failed confirmation → fail; else any below-minimum → concession
+      // (both dimensions out ⇒ Black box).
+      const wRaw = b.width_mm ?? b.widthMm;
+      const tRaw = b.thickness_mm ?? b.thicknessMm ?? thickness;
+      const isFinal = uid.current_step === '26';
+      if (isFinal && (wRaw != null || tRaw != null)) {
+        confFail = [b.design_confirmed, b.cycle_confirmed, b.ht_confirmed].includes('N');
+        const wB = await fgBounds(q, 'width');
+        const tB = await fgBounds(q, 'thickness');
+        const wC = wRaw != null && String(wRaw).trim() !== '' ? classifyDimension(wRaw, wB) : null;
+        const tC = tRaw != null && String(tRaw).trim() !== '' ? classifyDimension(tRaw, tB) : null;
+        qcType = 'Final Inspection';
+        qcValue = `W:${wRaw ?? '—'} T:${tRaw ?? '—'} HRC:${b.hrc_value ?? b.hrc ?? '—'}`;
+        if (wC === 'reject' || tC === 'reject') {
+          dimClass = 'reject'; dim = wC === 'reject' ? 'width' : 'thickness';
+          dimBounds = dim === 'width' ? wB : tB; dimMeasured = Number(dim === 'width' ? wRaw : tRaw); qcResult = 'Fail';
+        } else if (confFail) {
+          qcResult = 'Fail';
+        } else if (wC === 'concession' && tC === 'concession') {
+          dimClass = 'concession'; dim = 'both'; dimBounds = wB; dimMeasured = Number(wRaw); qcResult = 'Fail';
+        } else if (wC === 'concession') {
+          dimClass = 'concession'; dim = 'width'; dimBounds = wB; dimMeasured = Number(wRaw); qcResult = 'Fail';
+        } else if (tC === 'concession') {
+          dimClass = 'concession'; dim = 'thickness'; dimBounds = tB; dimMeasured = Number(tRaw); qcResult = 'Fail';
+        } else if (!qcResult) {
+          qcResult = 'Pass';
+        }
+      } else {
+        // Single-dimension steps (Bunch/Angle Grinding width, OP10/Surface Grind thickness).
+        dim = concessionDimension(qcType);
+        if (dim && qcValue != null && String(qcValue).trim() !== '') {
+          dimBounds = await fgBounds(q, dim);
+          dimClass = classifyDimension(qcValue, dimBounds);
+          dimMeasured = Number(qcValue);
+          if (dimClass === 'reject' || dimClass === 'concession') qcResult = 'Fail';
+          else if (dimClass === 'pass' && !qcResult) qcResult = 'Pass';
+        }
       }
 
       // Design lock: a UID cannot proceed past Step 15 (Straighten Manual) without
@@ -407,7 +494,7 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
         // §20 — a below-minimum dimension raises a concession request (Manager/Admin
         // decide) rather than a plain fail; the piece is held meanwhile.
         if (dimClass === 'concession') {
-          const measured = Number(qcValue);
+          const measured = dimMeasured != null && Number.isFinite(dimMeasured) ? dimMeasured : Number(qcValue);
           const colorId = await concessionColorFor(q, dim);
           await client.query(
             `INSERT INTO concession_requests
@@ -426,14 +513,15 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
         }
         // §19 — above maximum is a hard reject: return for further grinding (no concession).
         if (dimClass === 'reject') {
-          await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`${dim} ${qcValue}mm above tolerance — return for further grinding`, uid.id]);
+          const measured = dimMeasured != null && Number.isFinite(dimMeasured) ? dimMeasured : Number(qcValue);
+          await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`${dim} ${measured}mm above tolerance — return for further grinding`, uid.id]);
           await createAlert(q, {
             type: 'qc_reject', severity: 'critical', uidId: uid.id,
-            message: `REJECT — ${uid.uid_code} ${dim} ${qcValue}mm above maximum, return for grinding`,
+            message: `REJECT — ${uid.uid_code} ${dim} ${measured}mm above maximum, return for grinding`,
             targetRole: 'supervisor', linkPage: 'qc', linkRecordId: uid.uid_code,
           });
           await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
-          return { type: 'reject', uidCode: uid.uid_code, dimension: dim, value: Number(qcValue) };
+          return { type: 'reject', uidCode: uid.uid_code, dimension: dim, value: measured };
         }
         await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, ['QC failed at step ' + uid.current_step, uid.id]);
         await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);

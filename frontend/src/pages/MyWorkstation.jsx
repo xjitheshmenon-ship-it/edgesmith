@@ -348,20 +348,16 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
       payload.actual_soak_time = soak.trim();
     }
     if (isFinal) {
-      // §23 — Final Inspection: confirmations gate the result; below-min width
-      // still routes as a concession (backend re-evaluates against tolerances).
-      const confPass = designOk === 'Y' && cycleOk === 'Y' && htOk === 'Y';
-      payload.notes = `FINAL — W:${width.trim()} T:${thickness.trim()} HRC:${hrc.trim()} · Design:${designOk} Cycle:${cycleOk} HT:${htOk}${notes.trim() ? ' · ' + notes.trim() : ''}`;
-      if (!confPass) {
-        payload.qc_check = 'Final Inspection';
-        payload.qc_result = 'Fail';
-        payload.measured_value = `W${width.trim()} T${thickness.trim()}`;
-      } else {
-        // Let the backend evaluate width against tolerance (pass / concession / reject).
-        payload.qc_check = 'Width (mm)';
-        payload.measured_value = width.trim();
-        payload.qc_result = widthHint ? (widthHint.status === 'pass' ? 'Pass' : 'Fail') : 'Pass';
-      }
+      // §23 — Final Inspection: the backend evaluates BOTH width and thickness
+      // against tolerance and gates on the confirmations (worst outcome wins).
+      payload.qc_check = 'Final Inspection';
+      payload.width_mm = width.trim();
+      payload.thickness_mm = thickness.trim();
+      payload.hrc_value = hrc.trim();
+      payload.design_confirmed = designOk;
+      payload.cycle_confirmed = cycleOk;
+      payload.ht_confirmed = htOk;
+      payload.notes = `FINAL — Design:${designOk} Cycle:${cycleOk} HT:${htOk}${notes.trim() ? ' · ' + notes.trim() : ''}`;
     } else if (isWidth) {
       payload.qc_check = 'Width (mm)';
       payload.measured_value = width.trim();
@@ -667,7 +663,7 @@ function GenerateUidModal({ onClose, onDone }) {
 
 /* ── Active job card ─────────────────────────────────────────────────────── */
 
-function ActiveJobCard({ job, nowMs, canAct, onStart, onPause, onResume, onClose, pendingAction }) {
+function ActiveJobCard({ job, nowMs, canAct, canHold, onStart, onPause, onResume, onClose, onHold, pendingAction }) {
   const timers = computeTimers(job, nowMs);
   const status = timers.status;
   const running = status === 'in_progress' || status === 'running' || status === 'active';
@@ -765,6 +761,12 @@ function ActiveJobCard({ job, nowMs, canAct, onStart, onPause, onResume, onClose
         ) : (
           <button className="btn btn-primary" style={{ height: 56, flex: 1, justifyContent: 'center', fontSize: 14 }} disabled={busy} onClick={onStart}>
             <Icon name="play" size={20} />{pendingAction === 'start' ? 'Starting…' : 'Start job'}
+          </button>
+        )}
+        {/* §8 — Supervisors/Admins can HOLD an in-progress or paused job. */}
+        {canAct && canHold && (running || paused) && (
+          <button className="btn" style={{ height: 56, minWidth: 110, justifyContent: 'center', fontSize: 14, borderColor: '#e5484d', color: '#e5484d' }} disabled={busy} onClick={onHold}>
+            <Icon name="lock" size={18} />{pendingAction === 'hold' ? 'Holding…' : 'Hold'}
           </button>
         )}
       </div>
@@ -1492,6 +1494,11 @@ export default function MyWorkstation() {
 
   const handleStart = (job) => runAction(job, 'start', () => jobsApi.start(jobId(job)));
   const handleResume = (job) => runAction(job, 'resume', () => jobsApi.resume(jobId(job)));
+  const handleHold = (job) => {
+    const reason = window.prompt('Reason for placing this job on hold:');
+    if (!reason || !reason.trim()) return;
+    return runAction(job, 'hold', () => jobsApi.hold(jobId(job), reason.trim()));
+  };
 
   const handlePauseConfirm = (job) => (reason, notes) =>
     runAction(job, 'pause', () => jobsApi.pause(jobId(job), reason, notes)).then(() => setPauseFor(null));
@@ -1686,10 +1693,12 @@ export default function MyWorkstation() {
                       job={activeJob}
                       nowMs={nowMs}
                       canAct={canAct}
+                      canHold={isSupervisor || isAdmin}
                       pendingAction={pendingFor(activeJob)}
                       onStart={() => handleStart(activeJob)}
                       onResume={() => handleResume(activeJob)}
                       onPause={() => setPauseFor(activeJob)}
+                      onHold={() => handleHold(activeJob)}
                       onClose={() => setCloseFor(activeJob)}
                     />
                   ) : (
