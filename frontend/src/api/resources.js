@@ -179,6 +179,16 @@ export const masterApi = {
   updateSheetSize: (id, p) => api.patch(`/master/sheet-sizes/${id}`, p),
   archiveSheetSize: (id) => api.delete(`/master/sheet-sizes/${id}`),
 
+  dimensions: (category) => api.get('/master/dimensions', category ? { category } : undefined),
+  createDimension: (p) => api.post('/master/dimensions', p),
+  updateDimension: (id, p) => api.patch(`/master/dimensions/${id}`, p),
+  archiveDimension: (id) => api.delete(`/master/dimensions/${id}`),
+
+  concessionColors: () => api.get('/master/concession-colors'),
+  createConcessionColor: (p) => api.post('/master/concession-colors', p),
+  updateConcessionColor: (id, p) => api.patch(`/master/concession-colors/${id}`, p),
+  archiveConcessionColor: (id) => api.delete(`/master/concession-colors/${id}`),
+
   conversionPatterns: () => api.get('/master/conversion-patterns'),
   createConversionPattern: (p) => api.post('/master/conversion-patterns', p),
   updateConversionPattern: (id, p) => api.patch(`/master/conversion-patterns/${id}`, p),

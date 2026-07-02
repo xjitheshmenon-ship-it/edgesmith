@@ -110,6 +110,62 @@ router.use('/sheet-sizes', simpleResource('ms_sheet_sizes', {
   fields: [{ key: 'label', column: 'label' }, { key: 'lengthMm', column: 'length_mm' }, { key: 'widthMm', column: 'width_mm' }, { key: 'heightMm', column: 'height_mm' }, { key: 'status', column: 'status' }],
 }));
 
+router.use('/concession-colors', simpleResource('concession_color_codes', {
+  fields: [{ key: 'exceptionType', column: 'exception_type' }, { key: 'colorName', column: 'color_name' }, { key: 'hex', column: 'hex' }, { key: 'triggerDesc', column: 'trigger_desc' }, { key: 'status', column: 'status' }],
+}));
+
+// Dimensional standards (block/job/WIP/knife/post-rolling sizes with L×W×T +
+// optional FG tolerances). One table, filtered by ?category= so each Master
+// List sub-section shows its own rows.
+const DIMENSION_FIELDS = [
+  { key: 'category', column: 'category' },
+  { key: 'name', column: 'name' },
+  { key: 'lengthMm', column: 'length_mm' },
+  { key: 'widthMm', column: 'width_mm' },
+  { key: 'thicknessMm', column: 'thickness_mm' },
+  { key: 'widthTolMin', column: 'width_tol_min' },
+  { key: 'widthTolMax', column: 'width_tol_max' },
+  { key: 'thicknessTolMin', column: 'thickness_tol_min' },
+  { key: 'thicknessTolMax', column: 'thickness_tol_max' },
+  { key: 'notes', column: 'notes' },
+  { key: 'status', column: 'status' },
+];
+router.get('/dimensions', async (req, res) => {
+  const { category } = req.query;
+  const params = [];
+  let where = '';
+  if (category) { params.push(category); where = 'WHERE category = $1'; }
+  const { rows } = await query(`SELECT * FROM dimension_standards ${where} ORDER BY id`, params);
+  return res.json({ success: true, data: rows });
+});
+router.post('/dimensions', requireRole(['admin']), async (req, res) => {
+  const cols = DIMENSION_FIELDS.filter((f) => req.body[f.key] !== undefined && req.body[f.key] !== '');
+  if (!req.body.category || !req.body.name) return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'category and name are required.' } });
+  const colNames = cols.map((f) => f.column).join(', ');
+  const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+  const values = cols.map((f) => req.body[f.key]);
+  const { rows } = await query(`INSERT INTO dimension_standards (${colNames}) VALUES (${placeholders}) RETURNING *`, values);
+  await req.audit({ tableName: 'dimension_standards', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
+  return res.status(201).json({ success: true, data: rows[0] });
+});
+router.patch('/dimensions/:id', requireRole(['admin']), async (req, res) => {
+  const cols = DIMENSION_FIELDS.filter((f) => req.body[f.key] !== undefined);
+  if (!cols.length) return res.status(400).json({ success: false, error: { code: 'NO_FIELDS', message: 'No fields provided.' } });
+  const sets = cols.map((f, i) => `${f.column} = $${i + 1}`).join(', ');
+  const values = cols.map((f) => (req.body[f.key] === '' ? null : req.body[f.key]));
+  values.push(req.params.id);
+  const { rows } = await query(`UPDATE dimension_standards SET ${sets} WHERE id = $${values.length} RETURNING *`, values);
+  if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Record not found.' } });
+  await req.audit({ tableName: 'dimension_standards', recordId: req.params.id, action: 'UPDATE', after: rows[0] });
+  return res.json({ success: true, data: rows[0] });
+});
+router.delete('/dimensions/:id', requireRole(['admin']), async (req, res) => {
+  const { rows } = await query(`UPDATE dimension_standards SET status = 'archived' WHERE id = $1 RETURNING *`, [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Record not found.' } });
+  await req.audit({ tableName: 'dimension_standards', recordId: req.params.id, action: 'UPDATE', after: { status: 'archived' } });
+  return res.json({ success: true, data: rows[0] });
+});
+
 router.use('/conversion-patterns', simpleResource('conversion_patterns', {
   fields: [{ key: 'name', column: 'name' }, { key: 'inputLengthMm', column: 'input_length_mm' }, { key: 'childLengthsMm', column: 'child_lengths_mm' }, { key: 'kerfMm', column: 'kerf_mm' }, { key: 'status', column: 'status' }],
 }));
