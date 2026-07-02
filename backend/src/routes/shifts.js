@@ -16,7 +16,10 @@ router.use(authenticate, auditContext, enforceLocationScope);
  * on-demand fallback so the page never shows nothing).
  */
 router.get('/current', async (req, res) => {
-  const locationCode = req.user.role === 'admin' || req.user.role === 'manager'
+  // Admin/Manager/Director are cross-location and honour the ?location= toggle;
+  // everyone else is pinned to their own location.
+  const crossLocation = ['admin', 'manager', 'director'].includes(req.user.role);
+  const locationCode = crossLocation
     ? (req.query.location || 'dharmapuri')
     : (req.user.location_id === 1 ? 'dharmapuri' : 'faridabad');
 
@@ -73,7 +76,7 @@ router.get('/', async (req, res) => {
   if (location && location !== 'both') {
     conditions.push(`l.code = $${p++}`);
     params.push(location);
-  } else if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+  } else if (!['admin', 'manager', 'director'].includes(req.user.role)) {
     conditions.push(`l.id = $${p++}`);
     params.push(req.user.location_id);
   }
