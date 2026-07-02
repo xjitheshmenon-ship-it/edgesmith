@@ -51,7 +51,6 @@ function SuccessBanner({ message }) {
 const TH = { padding: '6px 12px 9px 0', textAlign: 'left', fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted, #9bb4d4)', whiteSpace: 'nowrap' };
 const TD = { padding: '9px 12px 9px 0', fontFamily: SANS, fontSize: 12.5, color: 'var(--text-primary, #15366a)', verticalAlign: 'top' };
 
-const MATERIAL_ROLE_LABELS = { raw_material: 'Raw material', job: 'Job', final_product: 'Final product' };
 
 function Table({ columns, rows, renderRow, empty, keyOf }) {
   if (!rows.length) return <Empty>{empty}</Empty>;
@@ -298,35 +297,6 @@ const TABS = [
       ...v,
       validCycleTypes: v.validCycleTypes ? v.validCycleTypes.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
     }),
-  },
-  {
-    key: 'sizes',
-    label: 'Sizes',
-    icon: 'list',
-    fetch: () => masterApi.sizes().then((r) => r.data),
-    create: (p) => masterApi.createSize(p),
-    update: (id, p) => masterApi.updateSize(id, p),
-    archive: (id) => masterApi.archiveSize(id),
-    columns: ['Size (mm)', 'Description', 'Role', 'Status', ''],
-    renderRow: (row, ctx) => (
-      <>
-        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['sizeMm', 'size_mm', 'size', 'mm'])}</td>
-        <td style={TD}>{pick(row, ['description', 'desc', 'label'])}</td>
-        <td style={TD}>{MATERIAL_ROLE_LABELS[pick(row, ['materialRole', 'material_role'])] || '—'}</td>
-        <td style={TD}>{StatusOf(row)}</td>
-        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
-      </>
-    ),
-    fields: [
-      { name: 'sizeMm', label: 'Size (mm)', required: true, type: 'number', placeholder: 'e.g. 12' },
-      { name: 'description', label: 'Description', full: true },
-      { name: 'materialRole', label: 'Material role', type: 'select', options: [
-        { value: 'raw_material', label: 'Raw material' },
-        { value: 'job', label: 'Job (work-in-process)' },
-        { value: 'final_product', label: 'Final product' },
-      ] },
-    ],
-    transform: (v) => ({ ...v, sizeMm: v.sizeMm !== '' && v.sizeMm != null ? Number(v.sizeMm) : undefined }),
   },
   {
     key: 'barProfiles',
@@ -688,28 +658,6 @@ const TABS = [
     ],
     transform: (v) => ({ maxLengthMm: v.maxLengthMm !== '' ? Number(v.maxLengthMm) : undefined, barsPerSet: v.barsPerSet !== '' ? Number(v.barsPerSet) : undefined, bedLengthMm: v.bedLengthMm !== '' ? Number(v.bedLengthMm) : undefined }),
   },
-  // ── WORKSTATIONS — units ──
-  {
-    key: 'workstationUnits', label: 'Workstation Units', icon: 'monitor', group: 'WORKSTATIONS',
-    fetch: () => masterApi.workstationUnits().then((r) => r.data),
-    create: (p) => masterApi.createWorkstationUnit(p), update: (id, p) => masterApi.updateWorkstationUnit(id, p), archive: (id) => masterApi.archiveWorkstationUnit(id),
-    columns: ['Unit code', 'Unit name', 'Type', 'Status', ''],
-    renderRow: (row, ctx) => (
-      <>
-        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['unitCode', 'unit_code'])}</td>
-        <td style={TD}>{pick(row, ['unitName', 'unit_name'])}</td>
-        <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['workstationTypeId', 'workstation_type_id'])}</td>
-        <td style={TD}>{StatusOf(row)}</td>
-        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
-      </>
-    ),
-    fields: [
-      { name: 'workstationTypeId', label: 'Workstation type ID', required: true, type: 'number' },
-      { name: 'unitCode', label: 'Unit code', required: true, placeholder: 'SG-DLT-1' },
-      { name: 'unitName', label: 'Unit name' },
-    ],
-    transform: (v) => ({ ...v, workstationTypeId: v.workstationTypeId !== '' ? Number(v.workstationTypeId) : undefined }),
-  },
   // ── USERS & ACCESS — shift configuration (custom panel, not generic CRUD) ──
   { key: 'shiftConfig', label: 'Shift Configuration', icon: 'calendar', group: 'USERS & ACCESS', custom: true },
 ];
@@ -717,7 +665,7 @@ const TABS = [
 /* Which nav group each tab belongs to, and the display order of groups. */
 const GROUP_ORDER = ['MEASUREMENTS', 'MATERIALS', 'WORKSTATIONS', 'PRODUCTION', 'USERS & ACCESS'];
 const GROUP_BY_KEY = {
-  sizes: 'MEASUREMENTS', barProfiles: 'MEASUREMENTS', barLengths: 'MEASUREMENTS', sheetSizes: 'MEASUREMENTS',
+  barProfiles: 'MEASUREMENTS', barLengths: 'MEASUREMENTS', sheetSizes: 'MEASUREMENTS',
   grades: 'MATERIALS', suppliers: 'MATERIALS', contractors: 'MATERIALS',
   workstations: 'WORKSTATIONS', storage: 'WORKSTATIONS',
   products: 'PRODUCTION', designs: 'PRODUCTION', patterns: 'PRODUCTION',
