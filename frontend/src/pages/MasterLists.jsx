@@ -176,13 +176,14 @@ const TABS = [
       { name: 'code', label: 'Code', required: true, placeholder: 'WS-CODE' },
       { name: 'name', label: 'Name', required: true, placeholder: 'Workstation name' },
       { name: 'category', label: 'Category', placeholder: 'e.g. furnace, grinding' },
-      { name: 'location', label: 'Location', type: 'select', options: [...LOCATION_OPTS, { value: 'both', label: 'Both' }] },
+      { name: 'locationId', label: 'Location', type: 'select', options: [{ value: 1, label: 'Dharmapuri' }, { value: 2, label: 'Faridabad' }, { value: '', label: 'Both' }] },
       { name: 'requiredSkillCode', label: 'Required badge', placeholder: 'e.g. GRIND', hint: 'skill badge code an operator must hold' },
       { name: 'minOperators', label: 'Minimum operators', type: 'number', placeholder: '1', hint: 'floor before the workstation is READY' },
       { name: 'maxOperators', label: 'Maximum operators', type: 'number', placeholder: 'optional', hint: 'optional ceiling — warns when exceeded' },
     ],
     transform: (v) => ({
       ...v,
+      locationId: v.locationId !== '' && v.locationId != null ? Number(v.locationId) : undefined,
       minOperators: v.minOperators !== '' && v.minOperators != null ? Number(v.minOperators) : undefined,
       maxOperators: v.maxOperators !== '' && v.maxOperators != null ? Number(v.maxOperators) : undefined,
     }),
@@ -806,7 +807,7 @@ function TabPanel({ tab, canWrite }) {
       <div className="card" style={{ padding: '18px 20px', position: 'sticky', top: 16 }}>
         <SectionTitle>New {tab.label.replace(/s$/, '')}</SectionTitle>
         {!canWrite ? (
-          <Empty>Creating reference data requires an admin or manager role.</Empty>
+          <Empty>Master Lists are managed by Admin. Your role has view-only access.</Empty>
         ) : (
           <form onSubmit={submit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {tab.fields.map((f) => (
@@ -830,8 +831,11 @@ function TabPanel({ tab, canWrite }) {
 /* ───────────────────────── page ───────────────────────── */
 
 export default function MasterLists() {
-  const { isAdmin, isManager } = useAuth();
-  const canWrite = isAdmin || isManager;
+  const { isAdmin } = useAuth();
+  // Master Lists are Admin-managed (the backend enforces admin on every write);
+  // Managers see the page read-only. Showing edit controls to managers only led
+  // to confusing 403s on Save.
+  const canWrite = isAdmin;
   const [active, setActive] = useState(TABS[0].key);
   const tab = TABS.find((t) => t.key === active) || TABS[0];
 
