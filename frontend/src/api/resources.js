@@ -99,6 +99,8 @@ export const reportsApi = {
   traceability: (filters) => api.get('/reports/traceability', filters),
   shift: (filters) => api.get('/reports/shift', filters),
   capacity: () => api.get('/reports/capacity'),
+  employeePerformance: (filters) => api.get('/reports/employeePerformance', filters),
+  employeePerformanceDetail: (id, filters) => api.get(`/reports/employeePerformance/${id}`, filters),
 };
 
 export const serviceApi = {

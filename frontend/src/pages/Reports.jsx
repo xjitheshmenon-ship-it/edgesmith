@@ -33,6 +33,7 @@ const REPORTS = [
   { id: 'traceability', name: 'Material Traceability', icon: 'search', dateAware: true, desc: 'UIDs made from a heat number / supplier / batch.' },
   { id: 'shift', name: 'Shift Performance', icon: 'people', dateAware: true, desc: 'Output and staffing by shift.' },
   { id: 'capacity', name: 'Capacity Utilisation', icon: 'monitor', dateAware: false, desc: 'Workstation load vs available capacity.' },
+  { id: 'employeePerformance', name: 'Employee Performance', icon: 'people', dateAware: true, desc: 'Operator & supervisor performance over time.' },
 ];
 
 /* ── small presentational helpers ─────────────────────────────────────── */
@@ -483,7 +484,8 @@ export default function Reports() {
           ) : error ? (
             <ErrorState error={error} onRetry={fetchReport} />
           ) : (
-            <ReportBody reportId={activeId} data={data} traceValue={traceValue} />
+            <ReportBody reportId={activeId} data={data} traceValue={traceValue}
+              dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} location={location} />
           )}
         </div>
       </div>
@@ -501,6 +503,29 @@ export default function Reports() {
 
 function buildExport(reportId, data, traceValue) {
   switch (reportId) {
+    case 'employeePerformance': {
+      const ops = asArray(pick(data, 'operators'), 'operators').map((o) => ({
+        role: 'Operator', name: o.name, code: o.employeeCode, shifts: o.shifts, jobs: o.jobsClosed,
+        avg_net_seconds: o.avgNetSeconds, hold_rate: `${(o.holdRate * 100).toFixed(1)}%`, pauses: o.pauses,
+        workstations: o.workstations, best_station: o.bestStation || '', trend: o.trend,
+      }));
+      const sups = asArray(pick(data, 'supervisors'), 'supervisors').map((s) => ({
+        role: 'Supervisor', name: s.name, code: s.employeeCode, shifts: s.shifts,
+        handovers: `${s.handoversSubmitted}/${s.shifts}`, overrides: s.overrides, holds_resolved: s.holdsResolved,
+        alerts_ack: s.alertsAcknowledged, avg_ack_seconds: s.avgAckSeconds ?? '',
+      }));
+      const rows = [...ops, ...sups];
+      return rows.length ? {
+        columns: [
+          { key: 'role', label: 'Role' }, { key: 'name', label: 'Name' }, { key: 'code', label: 'Code' },
+          { key: 'shifts', label: 'Shifts' }, { key: 'jobs', label: 'Jobs' }, { key: 'avg_net_seconds', label: 'Avg Net (s)' },
+          { key: 'hold_rate', label: 'Hold Rate' }, { key: 'pauses', label: 'Pauses' }, { key: 'workstations', label: 'Workstations' },
+          { key: 'best_station', label: 'Best Station' }, { key: 'trend', label: 'Trend' },
+          { key: 'handovers', label: 'Handovers' }, { key: 'overrides', label: 'Overrides' }, { key: 'holds_resolved', label: 'Holds Resolved' },
+          { key: 'alerts_ack', label: 'Alerts Ack' }, { key: 'avg_ack_seconds', label: 'Avg Ack (s)' },
+        ], rows,
+      } : null;
+    }
     case 'production': {
       const stations = asArray(pick(data, 'workstations', 'stations'), 'workstations', 'stations');
       const trend = asArray(pick(data, 'trend', 'daily', 'series'), 'trend', 'daily');
@@ -800,7 +825,7 @@ function ExportButtons({ report, exportData, location, locationLabel, dateFrom, 
 
 /* ── per-report rendering ───────────────────────────────────────────────── */
 
-function ReportBody({ reportId, data, traceValue }) {
+function ReportBody({ reportId, data, traceValue, dateFrom, dateTo, setDateFrom, setDateTo, location }) {
   switch (reportId) {
     case 'production':
       return <ProductionReport data={data} />;
@@ -820,6 +845,8 @@ function ReportBody({ reportId, data, traceValue }) {
       return <ShiftReport data={data} />;
     case 'capacity':
       return <CapacityReport data={data} />;
+    case 'employeePerformance':
+      return <EmployeePerformanceReport data={data} dateFrom={dateFrom} dateTo={dateTo} setDateFrom={setDateFrom} setDateTo={setDateTo} location={location} />;
     default:
       return <EmptyState message="Select a report." />;
   }
@@ -1397,6 +1424,342 @@ function LoadingState() {
         ))}
       </div>
       <div className="card" style={{ padding: 18, height: 160, opacity: 0.5 }} />
+    </div>
+  );
+}
+
+/* ── Report 10 — Employee Performance ───────────────────────────────────── */
+
+function fmtSecs(s) {
+  if (s == null || s === 0 || Number.isNaN(Number(s))) return '—';
+  const t = Math.round(Number(s));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = t % 60;
+  const p2 = (n) => String(n).padStart(2, '0');
+  return `${p2(h)}:${p2(m)}:${p2(sec)}`;
+}
+function fmtDur(s) {
+  if (s == null || Number.isNaN(Number(s))) return '—';
+  const t = Math.round(Number(s)); const m = Math.floor(t / 60), sec = t % 60;
+  return `${m}m ${String(sec).padStart(2, '0')}s`;
+}
+function pct(x) { return `${(Number(x) * 100).toFixed(1)}%`; }
+function TrendGlyph({ t }) {
+  const map = { up: ['↑', 'var(--status-success, #22a06b)'], down: ['↓', 'var(--status-danger, #e5484d)'], flat: ['→', 'var(--text-muted, #9bb4d4)'] };
+  const [g, c] = map[t] || map.flat;
+  return <span style={{ color: c, fontWeight: 700 }}>{g}</span>;
+}
+const EP_TH = { padding: '7px 12px 8px 0', textAlign: 'left', fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted, #9bb4d4)', whiteSpace: 'nowrap' };
+const EP_TD = { padding: '9px 12px 9px 0', fontFamily: SANS, fontSize: 12.5, color: 'var(--text-primary, #15366a)', whiteSpace: 'nowrap' };
+
+function isoDay(d) { return d.toISOString().slice(0, 10); }
+
+function EmployeePerformanceReport({ data, dateFrom, dateTo, setDateFrom, setDateTo, location }) {
+  const [view, setView] = useState('operators'); // operators | supervisors | all
+  const [selected, setSelected] = useState(null); // { id, role }
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const operators = asArray(data?.operators, 'operators');
+  const supervisors = asArray(data?.supervisors, 'supervisors');
+  const selfOnly = data?.role === 'operator';
+  // "monthly" layout when the range spans more than ~8 days
+  const spanDays = (() => { try { return (new Date(dateTo) - new Date(dateFrom)) / 86400000; } catch { return 0; } })();
+  const monthly = spanDays > 8;
+
+  const setPeriod = (kind) => {
+    const now = new Date();
+    if (kind === 'today') { const d = isoDay(now); setDateFrom(d); setDateTo(d); }
+    else if (kind === 'week') { const s = new Date(now); s.setDate(s.getDate() - 6); setDateFrom(isoDay(s)); setDateTo(isoDay(now)); }
+    else if (kind === 'month') { const s = new Date(now.getFullYear(), now.getMonth(), 1); setDateFrom(isoDay(s)); setDateTo(isoDay(now)); }
+  };
+
+  useEffect(() => {
+    if (!selected) { setDetail(null); return; }
+    let live = true;
+    setDetailLoading(true);
+    reportsApi.employeePerformanceDetail(selected.id, { location, date_from: dateFrom, date_to: dateTo })
+      .then((r) => { if (live) setDetail(r.data); })
+      .catch(() => { if (live) setDetail(null); })
+      .finally(() => { if (live) setDetailLoading(false); });
+    return () => { live = false; };
+  }, [selected, dateFrom, dateTo, location]);
+
+  const showOps = view !== 'supervisors';
+  const showSups = view !== 'operators' && !selfOnly;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* controls */}
+      <div className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        {!selfOnly && (
+          <div style={{ display: 'flex', gap: 4 }}>
+            {[['operators', 'Operators'], ['supervisors', 'Supervisors'], ['all', 'All']].map(([v, l]) => (
+              <button key={v} type="button" onClick={() => { setView(v); setSelected(null); }} className="btn btn-sm" style={{ height: 30, fontSize: 11.5, background: view === v ? 'var(--ink-650, #15366a)' : 'var(--bg-card, #fff)', color: view === v ? 'var(--text-onink, #eaf4e4)' : 'var(--text-secondary, #5d7188)', border: view === v ? 'none' : '1px solid var(--border-input, #d6e0d2)' }}>{l}</button>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[['today', 'Today'], ['week', 'This Week'], ['month', 'This Month']].map(([k, l]) => (
+            <button key={k} type="button" onClick={() => setPeriod(k)} className="btn btn-sm" style={{ height: 30, fontSize: 11.5 }}>{l}</button>
+          ))}
+        </div>
+        <span style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-muted, #9bb4d4)' }}>{dateFrom} → {dateTo}</span>
+      </div>
+
+      {/* detail drill-in */}
+      {selected ? (
+        <div>
+          <button className="btn btn-sm" type="button" onClick={() => setSelected(null)} style={{ marginBottom: 12 }}><Icon name="chevronLeft" size={13} />Back to list</button>
+          {detailLoading ? <LoadingState /> : detail ? (detail.role === 'supervisor' ? <SupervisorDetail d={detail} /> : <OperatorDetail d={detail} />) : <EmptyState message="No detail available." />}
+        </div>
+      ) : (
+        <>
+          {showOps && (
+            operators.length === 0 ? <EmptyState message="No operator activity in this period." /> : (
+              <Panel title={`Operator performance${selfOnly ? ' · self' : ''}`}>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr>
+                      {!selfOnly && <th style={EP_TH}>#</th>}
+                      <th style={EP_TH}>Operator</th><th style={EP_TH}>Shifts</th>
+                      {monthly ? (<><th style={EP_TH}>Total Jobs</th><th style={EP_TH}>Stations</th><th style={EP_TH}>Best Station</th><th style={EP_TH}>Hold Rate</th><th style={EP_TH}>Trend</th></>)
+                        : (<><th style={EP_TH}>Jobs Closed</th><th style={EP_TH}>Avg Net Time</th><th style={EP_TH}>Hold Rate</th><th style={EP_TH}>Pauses</th></>)}
+                    </tr></thead>
+                    <tbody>
+                      {operators.map((o, i) => (
+                        <tr key={o.id} onClick={() => setSelected({ id: o.id, role: 'operator' })} style={{ borderTop: '1px solid #eef2ea', cursor: 'pointer' }}>
+                          {!selfOnly && <td style={{ ...EP_TD, fontFamily: MONO, color: 'var(--text-muted, #9bb4d4)' }}>{i + 1}</td>}
+                          <td style={{ ...EP_TD, fontWeight: 700 }} title={o.employeeCode}>{o.name}</td>
+                          <td style={{ ...EP_TD, fontFamily: MONO }}>{o.shifts}</td>
+                          {monthly ? (<>
+                            <td style={{ ...EP_TD, fontFamily: MONO }}>{o.jobsClosed}</td>
+                            <td style={{ ...EP_TD, fontFamily: MONO }}>{o.workstations}</td>
+                            <td style={{ ...EP_TD, fontFamily: MONO }}>{o.bestStation || '—'}</td>
+                            <td style={{ ...EP_TD, fontFamily: MONO }}>{pct(o.holdRate)}</td>
+                            <td style={EP_TD}><TrendGlyph t={o.trend} /></td>
+                          </>) : (<>
+                            <td style={{ ...EP_TD, fontFamily: MONO, fontWeight: 700 }}>{o.jobsClosed}</td>
+                            <td style={{ ...EP_TD, fontFamily: MONO }}>{fmtSecs(o.avgNetSeconds)}</td>
+                            <td style={{ ...EP_TD, fontFamily: MONO, color: o.holdRate > 0.1 ? 'var(--status-warning, #d97a2b)' : undefined }}>{pct(o.holdRate)}</td>
+                            <td style={{ ...EP_TD, fontFamily: MONO }}>{o.pauses}</td>
+                          </>)}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            )
+          )}
+
+          {showSups && (
+            supervisors.length === 0 ? (showOps ? null : <EmptyState message="No supervisor activity in this period." />) : (
+              <Panel title="Supervisor performance">
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead><tr>
+                      <th style={EP_TH}>#</th><th style={EP_TH}>Supervisor</th><th style={EP_TH}>Shifts</th><th style={EP_TH}>Handovers</th><th style={EP_TH}>Overrides</th><th style={EP_TH}>Holds Resolved</th><th style={EP_TH}>Alerts Ack</th><th style={EP_TH}>Avg Ack</th>
+                    </tr></thead>
+                    <tbody>
+                      {supervisors.map((s, i) => (
+                        <tr key={s.id} onClick={() => setSelected({ id: s.id, role: 'supervisor' })} style={{ borderTop: '1px solid #eef2ea', cursor: 'pointer' }}>
+                          <td style={{ ...EP_TD, fontFamily: MONO, color: 'var(--text-muted, #9bb4d4)' }}>{i + 1}</td>
+                          <td style={{ ...EP_TD, fontWeight: 700 }} title={s.employeeCode}>{s.name}</td>
+                          <td style={{ ...EP_TD, fontFamily: MONO }}>{s.shifts}</td>
+                          <td style={{ ...EP_TD, fontFamily: MONO }}>{s.handoversSubmitted}/{s.shifts} {s.handoversOnTime >= s.shifts ? '✓' : '⚠'}</td>
+                          <td style={{ ...EP_TD, fontFamily: MONO, color: s.overrides > 4 ? 'var(--status-warning, #d97a2b)' : undefined }}>{s.overrides}</td>
+                          <td style={{ ...EP_TD, fontFamily: MONO }}>{s.holdsResolved}</td>
+                          <td style={{ ...EP_TD, fontFamily: MONO }}>{s.alertsAcknowledged}</td>
+                          <td style={{ ...EP_TD, fontFamily: MONO }}>{fmtSecs(s.avgAckSeconds)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--text-muted, #9bb4d4)', marginTop: 8 }}>
+                  Escalation tracking and alert-ack history are not yet captured for historical data — these fields populate as the app runs over time.
+                </div>
+              </Panel>
+            )
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function OperatorDetail({ d }) {
+  const maxDaily = Math.max(1, ...asArray(d.daily, 'daily').map((x) => num(x.jobs)));
+  const maxWs = Math.max(1, ...asArray(d.perWorkstation, 'perWorkstation').map((x) => num(x.jobs)));
+  const pauses = d.pauses || { total: 0, byReason: [] };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 18, color: 'var(--text-primary, #15366a)' }}>
+        {d.employee.name} <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>· {d.employee.employeeCode} · OPERATOR</span>
+      </div>
+
+      {d.daily?.length ? (
+        <Panel title="Jobs per day">
+          <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            {d.daily.map((x) => {
+              const intensity = num(x.jobs) / maxDaily;
+              return (
+                <div key={String(x.date)} title={`${String(x.date).slice(0, 10)} · ${x.jobs} jobs`} style={{ textAlign: 'center' }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 5, background: `rgba(34,160,107,${0.15 + intensity * 0.85})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: MONO, fontSize: 10, color: intensity > 0.5 ? '#fff' : 'var(--text-primary, #15366a)' }}>{x.jobs}</div>
+                  <div style={{ fontFamily: MONO, fontSize: 8.5, color: 'var(--text-muted, #9bb4d4)', marginTop: 2 }}>{String(x.date).slice(8, 10)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      ) : null}
+
+      {d.perWorkstation?.length ? (
+        <Panel title="Per-workstation performance">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {d.perWorkstation.map((w) => (
+              <div key={w.code}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <span style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 700, color: 'var(--text-primary, #15366a)' }}>{w.code} <span style={{ fontFamily: SANS, fontWeight: 400, color: 'var(--text-secondary, #5d7188)' }}>{w.name}</span></span>
+                  <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>{w.jobs} jobs</span>
+                </div>
+                <Bar label="" value={w.jobs} max={maxWs} color="var(--cycle-eat, #2d6fb5)" valueLabel={`avg ${fmtSecs(w.avgNetSeconds)} · hold ${pct(w.holdRate)} · ${w.pauses} pauses`} />
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+
+      {d.perStep?.length ? (
+        <Panel title="Step-level performance">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr><th style={EP_TH}>Step</th><th style={EP_TH}>Operation</th><th style={EP_TH}>Jobs</th><th style={EP_TH}>Avg Net</th><th style={EP_TH}>vs Avg</th><th style={EP_TH}>QC</th></tr></thead>
+              <tbody>
+                {d.perStep.map((s) => {
+                  const delta = (s.shiftAvgSeconds || 0) - (s.avgNetSeconds || 0); // positive = faster than avg
+                  return (
+                    <tr key={s.step} style={{ borderTop: '1px solid #eef2ea' }}>
+                      <td style={{ ...EP_TD, fontFamily: MONO }}>{s.step}</td>
+                      <td style={EP_TD}>{s.operation || '—'}</td>
+                      <td style={{ ...EP_TD, fontFamily: MONO }}>{s.jobs}</td>
+                      <td style={{ ...EP_TD, fontFamily: MONO }}>{fmtSecs(s.avgNetSeconds)}</td>
+                      <td style={{ ...EP_TD, fontFamily: MONO, color: delta > 5 ? 'var(--status-success, #22a06b)' : delta < -5 ? 'var(--status-danger, #e5484d)' : 'var(--text-muted, #9bb4d4)' }}>{delta > 5 ? '↑ faster' : delta < -5 ? '↓ slower' : '→'}</td>
+                      <td style={{ ...EP_TD, fontFamily: MONO }}>{s.qcTotal ? `${s.qcPass}/${s.qcTotal}` : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      ) : null}
+
+      {pauses.total > 0 ? (
+        <Panel title={`Pause breakdown · ${pauses.total} total`}>
+          {pauses.byReason.map((r) => (
+            <Bar key={r.reason} label={r.reason} value={r.count} max={Math.max(1, ...pauses.byReason.map((x) => x.count))} color="var(--status-warning, #d97a2b)" valueLabel={`${r.count} · avg ${fmtDur(r.avgSeconds)}`} />
+          ))}
+          {pauses.longest ? <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)', marginTop: 8 }}>Longest: {fmtDur(pauses.longest.seconds)} ({pauses.longest.reason}{pauses.longest.station ? ` · ${pauses.longest.station}` : ''})</div> : null}
+        </Panel>
+      ) : null}
+
+      {d.incidents?.length ? (
+        <Panel title="Hold / QC-fail incidents">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr><th style={EP_TH}>Date</th><th style={EP_TH}>UID</th><th style={EP_TH}>Step</th><th style={EP_TH}>Reason</th></tr></thead>
+              <tbody>
+                {d.incidents.map((x, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid #eef2ea' }}>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{String(x.date).slice(0, 10)}</td>
+                    <td style={{ ...EP_TD, fontFamily: MONO, fontWeight: 700 }}>{x.uidCode}</td>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{x.step}</td>
+                    <td style={EP_TD}>{x.reason}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      ) : null}
+    </div>
+  );
+}
+
+function SupervisorDetail({ d }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 18, color: 'var(--text-primary, #15366a)' }}>
+        {d.employee.name} <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>· {d.employee.employeeCode} · SUPERVISOR</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 12 }}>
+        <Metric label="Shifts worked" value={d.shiftsWorked} />
+        <Metric label="On-time handovers" value={`${d.onTimeHandovers}/${d.shiftsWorked}`} />
+        <Metric label="Overrides" value={asArray(d.overrides, 'overrides').length} />
+        <Metric label="Alerts acknowledged" value={d.alerts?.acknowledged ?? 0} />
+      </div>
+
+      {d.shifts?.length ? (
+        <Panel title="Shift record">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr><th style={EP_TH}>Date</th><th style={EP_TH}>Shift</th><th style={EP_TH}>Started</th><th style={EP_TH}>Ended</th><th style={EP_TH}>Handover</th><th style={EP_TH}>Operators</th></tr></thead>
+              <tbody>
+                {d.shifts.map((s) => (
+                  <tr key={s.id} style={{ borderTop: '1px solid #eef2ea' }}>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{String(s.shift_date).slice(0, 10)}</td>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{s.shift_number}</td>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{s.started_at ? new Date(s.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{s.ended_at ? new Date(s.ended_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                    <td style={EP_TD}>{s.submitted_at ? 'Submitted ✓' : '⚠ none'}</td>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{s.operator_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      ) : null}
+
+      {asArray(d.overrides, 'overrides').length ? (
+        <Panel title="Override actions">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr><th style={EP_TH}>Date</th><th style={EP_TH}>Type</th><th style={EP_TH}>Target</th><th style={EP_TH}>Reason</th></tr></thead>
+              <tbody>
+                {d.overrides.map((o, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid #eef2ea' }}>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{String(o.date).slice(0, 10)}</td>
+                    <td style={EP_TD}>{o.type}</td>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{o.target}</td>
+                    <td style={EP_TD}>{o.reason || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      ) : null}
+
+      {asArray(d.holds, 'holds').length ? (
+        <Panel title="Holds released">
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead><tr><th style={EP_TH}>Date</th><th style={EP_TH}>UID</th><th style={EP_TH}>Reason</th></tr></thead>
+              <tbody>
+                {d.holds.map((h, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid #eef2ea' }}>
+                    <td style={{ ...EP_TD, fontFamily: MONO }}>{String(h.date).slice(0, 10)}</td>
+                    <td style={{ ...EP_TD, fontFamily: MONO, fontWeight: 700 }}>{h.uidCode || '—'}</td>
+                    <td style={EP_TD}>{h.reason || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Panel>
+      ) : null}
     </div>
   );
 }
