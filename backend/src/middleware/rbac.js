@@ -3,17 +3,23 @@
  * since permissions are not strictly nested — each route declares exact roles).
  *   admin > manager > supervisor > operator > service / shopfloor
  */
-const ALL_ROLES = ['admin', 'manager', 'supervisor', 'operator', 'service', 'shopfloor'];
+const ALL_ROLES = ['admin', 'manager', 'supervisor', 'operator', 'service', 'shopfloor', 'director'];
 
 /**
  * requireRole(['admin','manager']) — blocks the request unless req.user.role
  * is in the allowed list. Must run after authenticate().
+ *
+ * Director is a read-only oversight role: it is permitted through any read
+ * (GET/HEAD) route regardless of the route's declared roles, so it can view
+ * every page. Its writes are blocked centrally in authenticate(), so there is
+ * no risk in letting it past requireRole here.
  */
 function requireRole(allowedRoles) {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({ success: false, error: { code: 'NO_TOKEN', message: 'Authentication required.' } });
     }
+    if (req.user.role === 'director' && (req.method === 'GET' || req.method === 'HEAD')) return next();
     if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({
         success: false,
@@ -47,7 +53,9 @@ const LOCATION_CODE_TO_ID = { dharmapuri: 1, faridabad: 2 };
 
 function enforceLocationScope(req, res, next) {
   const role = req.user.role;
-  if (role === 'admin') return next(); // §10 — Admin is the only cross-location role
+  // Admin acts across locations; Director reads across locations (read-only
+  // everywhere per the Final Instruction) — both bypass location scoping.
+  if (role === 'admin' || role === 'director') return next();
 
   // manager/supervisor/operator/service/shopfloor are locked to their location_id.
   // The request may name a location as a code ('dharmapuri') or an id (1); a
@@ -80,7 +88,7 @@ function requireLocationAccess(locationId) {
       return res.status(401).json({ success: false, error: { code: 'NO_TOKEN', message: 'Authentication required.' } });
     }
     const role = req.user.role;
-    if (role === 'admin') return next(); // §10 — only Admin is cross-location
+    if (role === 'admin' || role === 'director') return next(); // cross-location (Admin acts, Director reads)
     if (String(req.user.location_id) === String(locationId)) return next();
     return res.status(403).json({
       success: false,
@@ -100,7 +108,9 @@ function requireLocationAccess(locationId) {
  */
 function resolveLocation(req, locationCodeToId) {
   const role = req.user.role;
-  if (role !== 'admin') { // §10 — only Admin sees across / toggles location
+  // Admin and Director both see across locations and honour the ?location=
+  // toggle; everyone else is forced to their own location_id.
+  if (role !== 'admin' && role !== 'director') {
     return { mode: 'one', locationId: req.user.location_id };
   }
   const q = (req.query.location || 'both').toLowerCase();

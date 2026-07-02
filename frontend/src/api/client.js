@@ -29,6 +29,13 @@ function getAuthToken() {
   try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
 }
 
+// The backend blocks every write by a Director (read-only role). We mirror that
+// on the client so a Director gets an instant, friendly message instead of a
+// round-trip 403 — set by AuthContext whenever the signed-in user changes.
+let readOnlyMode = false;
+export function setReadOnly(on) { readOnlyMode = !!on; }
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
 class ApiError extends Error {
   constructor(code, message, status, details) {
     super(message);
@@ -39,6 +46,11 @@ class ApiError extends Error {
 }
 
 async function request(method, path, { body, params } = {}) {
+  // Read-only (Director) short-circuit — never block auth lifecycle calls.
+  if (readOnlyMode && MUTATING_METHODS.has(method) && !path.startsWith('/auth/')) {
+    throw new ApiError('READ_ONLY_ROLE', 'Director is a read-only role — this action is not available.', 403);
+  }
+
   let url = `${API_BASE}${path}`;
   if (params) {
     const qs = new URLSearchParams(

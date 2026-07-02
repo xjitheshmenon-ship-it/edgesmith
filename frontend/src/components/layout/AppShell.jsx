@@ -7,6 +7,7 @@ import { usePolling } from '../../hooks/usePolling';
 import { alertsApi } from '../../api/resources';
 import { uidsApi } from '../../api/uids';
 import { useApp } from '../../store/AppContext';
+import { useAuth } from '../../store/AuthContext';
 
 const MONO = "'IBM Plex Mono', monospace";
 const FACTORY_STYLE = {
@@ -32,6 +33,28 @@ function FactoryBanner() {
       </span>
       <span style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: '0.04em', color: 'var(--text-secondary, #5d7188)' }}>
         — the factory toggle scopes all Overview pages to this factory
+      </span>
+    </div>
+  );
+}
+
+/* Persistent reminder that the signed-in Director account is read-only: it can
+   view every page and both factories, but every write is blocked server-side. */
+function ReadOnlyBanner() {
+  const { isDirector } = useAuth();
+  if (!isDirector) return null;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 9, flexShrink: 0,
+      padding: '6px 20px', borderBottom: '1px solid #7c5cff33',
+      borderLeft: '4px solid #7c5cff', background: '#7c5cff14',
+    }}>
+      <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#7c5cff', boxShadow: '0 0 0 3px #7c5cff22' }} />
+      <span style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '0.1em', color: '#6a48e0', fontWeight: 700 }}>
+        READ-ONLY · DIRECTOR
+      </span>
+      <span style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: '0.04em', color: 'var(--text-secondary, #5d7188)' }}>
+        — full visibility across both factories; actions are disabled
       </span>
     </div>
   );
@@ -91,6 +114,7 @@ export default function AppShell() {
       <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
         <Sidebar counts={counts} />
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
+          <ReadOnlyBanner />
           <FactoryBanner />
           <main style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', minWidth: 0 }}>
             <Outlet />

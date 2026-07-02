@@ -41,6 +41,7 @@ export const NAV = [
  * useAuth role flags) — this controls what's visible in the sidebar at all. */
 export const SECTIONS_BY_ROLE = {
   admin: ['OVERVIEW', 'OPERATIONS', 'CONFIGURATION'],
+  director: ['OVERVIEW', 'OPERATIONS', 'CONFIGURATION'], // read-only everywhere — sees all pages, cannot write
   manager: ['OVERVIEW', 'OPERATIONS', 'CONFIGURATION'],
   supervisor: ['OVERVIEW', 'OPERATIONS'],
   operator: ['OVERVIEW', 'OPERATIONS'], // filtered to My Workstation/QC below (QC now lives in OPERATIONS)

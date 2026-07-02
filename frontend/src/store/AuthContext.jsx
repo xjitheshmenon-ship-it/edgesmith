@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { authApi } from '../api/auth';
-import { ApiError, setAuthToken } from '../api/client';
+import { ApiError, setAuthToken, setReadOnly } from '../api/client';
 
 const AuthContext = createContext(null);
 
@@ -20,9 +20,13 @@ export function AuthProvider({ children }) {
 
   const persistUser = useCallback((u) => {
     setUser(u);
+    setReadOnly(u?.role === 'director'); // Director cannot write anything (mirrors backend)
     if (u) localStorage.setItem(STORAGE_KEY, JSON.stringify(u));
     else localStorage.removeItem(STORAGE_KEY);
   }, []);
+
+  // Restore the read-only flag on a hard refresh, before any API call fires.
+  useEffect(() => { setReadOnly(user?.role === 'director'); }, [user]);
 
   const login = useCallback(
     async (username, password) => {
@@ -84,7 +88,9 @@ export function AuthProvider({ children }) {
     isOperator: user?.role === 'operator',
     isService: user?.role === 'service',
     isShopfloor: user?.role === 'shopfloor',
-    canSwitchLocation: user?.role === 'admin', // §10 — only Admin may switch location
+    isDirector: user?.role === 'director', // read-only oversight role — sees everything, writes nothing
+    canSwitchLocation: user?.role === 'admin' || user?.role === 'director', // cross-location view
+    isReadOnly: user?.role === 'director',
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
