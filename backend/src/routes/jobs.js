@@ -6,6 +6,7 @@ const { auditContext } = require('../middleware/audit');
 const { currentShiftNumber } = require('../config/shifts');
 const { operatorMissingSkill } = require('../utils/skillGate');
 const { createAlert } = require('../utils/alerts');
+const { concessionDimension, fgBounds, concessionColorFor, classifyDimension } = require('../utils/tolerance');
 
 const router = express.Router();
 // §10.7 — UID (Dharmapuri) jobs are off-limits to Faridabad-scoped users.
@@ -368,6 +369,20 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
       const idx = allSteps.findIndex((s) => s.step_number === uid.current_step);
       const nextStepDef = allSteps[idx + 1];
 
+      // §19/§20 — evaluate a dimensional QC reading (width/thickness) against the
+      // finished-good tolerances: below minimum → concession request; above
+      // maximum → reject (return for grinding). This drives the close result.
+      const q = client.query.bind(client);
+      let dimClass = null;
+      let dimBounds = null;
+      const dim = concessionDimension(qcType);
+      if (dim && qcValue != null && String(qcValue).trim() !== '') {
+        dimBounds = await fgBounds(q, dim);
+        dimClass = classifyDimension(qcValue, dimBounds);
+        if (dimClass === 'reject' || dimClass === 'concession') qcResult = 'Fail';
+        else if (dimClass === 'pass' && !qcResult) qcResult = 'Pass';
+      }
+
       // Design lock: a UID cannot proceed past Step 15 (Straighten Manual) without
       // a confirmed design. The hold is placed the moment it reaches Step 15, which
       // also blocks Converting (Step 16) downstream.
@@ -389,6 +404,37 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
       }
 
       if (qcResult === 'Fail') {
+        // §20 — a below-minimum dimension raises a concession request (Manager/Admin
+        // decide) rather than a plain fail; the piece is held meanwhile.
+        if (dimClass === 'concession') {
+          const measured = Number(qcValue);
+          const colorId = await concessionColorFor(q, dim);
+          await client.query(
+            `INSERT INTO concession_requests
+               (uid_id, uid_code, uid_step_log_id, step_number, operation_name, dimension, measured_value, min_value, concession_color_id, raised_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [uid.id, uid.uid_code, log ? log.id : null, uid.current_step, (currentStepDef && currentStepDef.operation_name) || qcType, dim, measured, dimBounds ? dimBounds.min : null, colorId, req.user.sub]
+          );
+          await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`Concession pending — ${dim} ${measured}mm below ${dimBounds ? dimBounds.min : '?'}mm`, uid.id]);
+          await createAlert(q, {
+            type: 'concession_request', severity: 'warning', uidId: uid.id,
+            message: `CONCESSION REQUEST — ${uid.uid_code} ${dim} ${measured}mm (min ${dimBounds ? dimBounds.min : '?'}mm) awaiting approval`,
+            targetRole: 'manager', linkPage: 'qc', linkRecordId: uid.uid_code,
+          });
+          await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
+          return { type: 'concession', uidCode: uid.uid_code, dimension: dim, value: measured };
+        }
+        // §19 — above maximum is a hard reject: return for further grinding (no concession).
+        if (dimClass === 'reject') {
+          await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`${dim} ${qcValue}mm above tolerance — return for further grinding`, uid.id]);
+          await createAlert(q, {
+            type: 'qc_reject', severity: 'critical', uidId: uid.id,
+            message: `REJECT — ${uid.uid_code} ${dim} ${qcValue}mm above maximum, return for grinding`,
+            targetRole: 'supervisor', linkPage: 'qc', linkRecordId: uid.uid_code,
+          });
+          await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
+          return { type: 'reject', uidCode: uid.uid_code, dimension: dim, value: Number(qcValue) };
+        }
         await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, ['QC failed at step ' + uid.current_step, uid.id]);
         await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
         return { type: 'qc_failed', uidCode: uid.uid_code };

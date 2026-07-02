@@ -26,10 +26,27 @@ const T_MUTED = 'var(--text-muted, #9bb4d4)';
 
 /* Tempering steps require actual temperature + soak time on close. */
 const TEMPERING_STEPS = [9, 10, 14, 23];
-/* Surface Grind steps — thickness is measured here with a VCL gauge at the same
-   workstation (no trip to an inspection table), captured on close. */
-const SURFACE_GRIND_STEPS = [12, 20];
+/* §23 — contextual QC measurement steps.
+   Width (mm):     Bunch Grinding (4), Angle Grinding (22)
+   Thickness (mm): OP10 Rough Mill (5), Surface Grind 1 (12), Surface Grind 2 (20)
+   Final Inspection (26): width + thickness + HRC + Design/Cycle/HT confirmations */
+const WIDTH_STEPS = [4, 22];
+const THICKNESS_STEPS = [5, 12, 20];
+const SURFACE_GRIND_STEPS = THICKNESS_STEPS; // legacy alias
+const FINAL_STEP = 26;
 const TOTAL_STEPS = 27;
+
+/* Finished-good tolerances for the live pass/concession/reject hint (§19).
+   Backend re-evaluates authoritatively against Master Lists on close. */
+const TOL = { width: { min: 180, max: 182 }, thickness: { min: 16, max: 16.5 } };
+function toleranceHint(dimension, value) {
+  const v = Number(value);
+  const t = TOL[dimension];
+  if (!t || !Number.isFinite(v) || value === '' || value == null) return null;
+  if (v < t.min) return { status: 'concession', label: `Below ${t.min}mm — concession (Manager/Admin approval)` };
+  if (v > t.max) return { status: 'reject', label: `Above ${t.max}mm — reject, return for grinding` };
+  return { status: 'pass', label: `In range (${t.min}–${t.max}mm)` };
+}
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
 
@@ -257,50 +274,106 @@ function PauseModal({ job, onCancel, onConfirm, busy }) {
 
 const QC_OPTIONS = ['No QC check for this step', 'Hardness (HRC)', 'Width (mm)', 'Straightness', 'Visual'];
 
+/* Small tolerance-hint chip shown live under a width/thickness field. */
+function ToleranceChip({ hint }) {
+  if (!hint) return null;
+  const c = hint.status === 'pass' ? '#22a06b' : hint.status === 'concession' ? '#d97a2b' : '#e5484d';
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6, fontFamily: SANS, fontSize: 11.5, color: c }}>
+      <span style={{ width: 8, height: 8, borderRadius: 4, background: c }} />{hint.label}
+    </div>
+  );
+}
+
+function YesNo({ label, value, onChange }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '7px 0' }}>
+      <span style={{ fontFamily: SANS, fontSize: 13, color: T_PRIMARY }}>{label}</span>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {['Y', 'N'].map((v) => {
+          const sel = value === v;
+          const c = v === 'Y' ? '#22a06b' : '#e5484d';
+          return (
+            <button key={v} type="button" onClick={() => onChange(v)} className="btn btn-sm"
+              style={{ width: 46, justifyContent: 'center', border: '1.5px solid ' + (sel ? c : 'var(--border-input, #d6e0d2)'), background: sel ? c + '22' : 'var(--bg-card, #fff)', color: sel ? c : T_SECONDARY, fontWeight: 700 }}>{v}</button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
   const step = Number(jobStep(job)) || 0;
   const isTempering = TEMPERING_STEPS.includes(step);
-  const isQcStep = step === 26;
-  const isSurfaceGrind = SURFACE_GRIND_STEPS.includes(step);
+  const isWidth = WIDTH_STEPS.includes(step);
+  const isThickness = THICKNESS_STEPS.includes(step);
+  const isFinal = step === FINAL_STEP;
+  const isMeasureStep = isWidth || isThickness || isFinal;
 
-  const [qc, setQc] = useState(isQcStep ? 'Visual' : 'No QC check for this step');
+  const [qc, setQc] = useState('No QC check for this step');
   const [measured, setMeasured] = useState('');
   const [result, setResult] = useState('Pass');
   const [notes, setNotes] = useState('');
   const [temp, setTemp] = useState('');
   const [soak, setSoak] = useState('');
-  const [thickness, setThickness] = useState(''); // VCL thickness reading (surface grind)
+  const [width, setWidth] = useState('');
+  const [thickness, setThickness] = useState('');
+  const [hrc, setHrc] = useState('');
+  const [designOk, setDesignOk] = useState('Y');
+  const [cycleOk, setCycleOk] = useState('Y');
+  const [htOk, setHtOk] = useState('Y');
 
   const hasQc = qc !== 'No QC check for this step';
   const nextStep = step ? step + 1 : null;
 
-  // Required readings on close:
-  //  - QC step 26 cannot close without Pass/Fail (result is always set here, fine)
-  //  - QC check selected → measured value required
-  //  - tempering step → actual temperature + soak time required
-  //  - surface grind → VCL thickness reading required
+  const widthHint = toleranceHint('width', width);
+  const thicknessHint = toleranceHint('thickness', thickness);
+
   const valid =
     (!hasQc || measured.trim()) &&
-    (!isQcStep || result) &&
     (!isTempering || (temp.trim() && soak.trim())) &&
-    (!isSurfaceGrind || thickness.trim());
+    (!isWidth || width.trim()) &&
+    (!isThickness || thickness.trim()) &&
+    (!isFinal || (width.trim() && thickness.trim() && hrc.trim()));
 
   const pauses = pick(job, 'pause_count', 'pauses', 'pause_cycles');
   const totalElapsed = pick(job, 'total_elapsed_seconds', 'elapsed_seconds');
 
   function submit() {
-    const payload = {
-      qc_check: hasQc ? qc : null,
-      qc_result: hasQc || isQcStep || isSurfaceGrind ? result : null,
-      measured_value: hasQc ? measured.trim() : null,
-      notes: notes.trim() || null,
-    };
+    const payload = { notes: notes.trim() || null };
     if (isTempering) {
       payload.actual_temperature = temp.trim();
       payload.actual_soak_time = soak.trim();
     }
-    if (isSurfaceGrind) {
+    if (isFinal) {
+      // §23 — Final Inspection: confirmations gate the result; below-min width
+      // still routes as a concession (backend re-evaluates against tolerances).
+      const confPass = designOk === 'Y' && cycleOk === 'Y' && htOk === 'Y';
+      payload.notes = `FINAL — W:${width.trim()} T:${thickness.trim()} HRC:${hrc.trim()} · Design:${designOk} Cycle:${cycleOk} HT:${htOk}${notes.trim() ? ' · ' + notes.trim() : ''}`;
+      if (!confPass) {
+        payload.qc_check = 'Final Inspection';
+        payload.qc_result = 'Fail';
+        payload.measured_value = `W${width.trim()} T${thickness.trim()}`;
+      } else {
+        // Let the backend evaluate width against tolerance (pass / concession / reject).
+        payload.qc_check = 'Width (mm)';
+        payload.measured_value = width.trim();
+        payload.qc_result = widthHint ? (widthHint.status === 'pass' ? 'Pass' : 'Fail') : 'Pass';
+      }
+    } else if (isWidth) {
+      payload.qc_check = 'Width (mm)';
+      payload.measured_value = width.trim();
+      payload.qc_result = widthHint ? (widthHint.status === 'pass' ? 'Pass' : 'Fail') : 'Pass';
+    } else if (isThickness) {
+      payload.qc_check = 'Thickness (mm)';
+      payload.measured_value = thickness.trim();
       payload.thicknessMm = thickness.trim();
+      payload.qc_result = thicknessHint ? (thicknessHint.status === 'pass' ? 'Pass' : 'Fail') : 'Pass';
+    } else if (hasQc) {
+      payload.qc_check = qc;
+      payload.measured_value = measured.trim();
+      payload.qc_result = result;
     }
     onConfirm(payload);
   }
@@ -342,103 +415,99 @@ function CloseModal({ job, timers, onCancel, onConfirm, busy }) {
         </div>
       )}
 
-      {isSurfaceGrind && (
+      {/* §23 — Width measurement (Bunch/Angle Grinding) */}
+      {isWidth && !isFinal && (
         <div style={{ marginBottom: 18 }}>
-          <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY, marginBottom: 4 }}>Thickness inspection (VCL) — required</div>
+          <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY, marginBottom: 6 }}>Quality check — Width</div>
+          <label className="form-label">Measured width (mm)</label>
+          <input className="form-input" value={width} onChange={(e) => setWidth(e.target.value)} inputMode="decimal" autoFocus placeholder="target 180mm · pass 180–182mm" />
+          <ToleranceChip hint={widthHint} />
+        </div>
+      )}
+
+      {/* §23 — Thickness measurement (OP10, Surface Grind 1 & 2) */}
+      {isThickness && !isFinal && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY, marginBottom: 6 }}>Quality check — Thickness</div>
           <div style={{ fontFamily: SANS, fontSize: 12, color: T_SECONDARY, marginBottom: 8 }}>
-            Measure thickness with the VCL gauge at this workstation — no trip to the inspection table.
+            {[12, 20].includes(step) ? 'Measure with the VCL gauge at this workstation — no trip to the inspection table.' : 'Record thickness at this milling step.'}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'end' }}>
+          <label className="form-label">Measured thickness (mm)</label>
+          <input className="form-input" value={thickness} onChange={(e) => setThickness(e.target.value)} inputMode="decimal" autoFocus placeholder="target 16mm · pass 16–16.5mm" />
+          <ToleranceChip hint={thicknessHint} />
+        </div>
+      )}
+
+      {/* §23 — Final Inspection (HRC-01): full dimensional + confirmations */}
+      {isFinal && (
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY, marginBottom: 6 }}>Final Inspection — all fields required</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <label className="form-label">Thickness (mm)</label>
-              <input className="form-input" value={thickness} onChange={(e) => setThickness(e.target.value)} inputMode="decimal" autoFocus />
+              <label className="form-label">Width (mm)</label>
+              <input className="form-input" value={width} onChange={(e) => setWidth(e.target.value)} inputMode="decimal" placeholder="180–182" />
+              <ToleranceChip hint={widthHint} />
             </div>
             <div>
+              <label className="form-label">Thickness (mm)</label>
+              <input className="form-input" value={thickness} onChange={(e) => setThickness(e.target.value)} inputMode="decimal" placeholder="16–16.5" />
+              <ToleranceChip hint={thicknessHint} />
+            </div>
+          </div>
+          <div style={{ marginTop: 12, maxWidth: 200 }}>
+            <label className="form-label">HRC measured</label>
+            <input className="form-input" value={hrc} onChange={(e) => setHrc(e.target.value)} inputMode="decimal" placeholder="target 60–64" />
+          </div>
+          <div style={{ marginTop: 12, borderTop: '1px solid var(--border-card, #e3ebde)', paddingTop: 6 }}>
+            <YesNo label="Design confirmed" value={designOk} onChange={setDesignOk} />
+            <YesNo label="Cycle confirmed" value={cycleOk} onChange={setCycleOk} />
+            <YesNo label="Heat-treatment parameters met" value={htOk} onChange={setHtOk} />
+          </div>
+        </div>
+      )}
+
+      {/* Generic QC prompt only for non-measurement, non-tempering steps */}
+      {!isMeasureStep && !isTempering && (
+        <>
+          <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY, marginBottom: 8 }}>QC check required at this step?</div>
+          {QC_OPTIONS.map((o) => (
+            <RadioRow key={o} name="qc-check" value={o} current={qc} onChange={setQc}>{o}</RadioRow>
+          ))}
+          {hasQc && (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ marginBottom: 12 }}>
+                <label className="form-label">Measured value</label>
+                <input className="form-input" value={measured} onChange={(e) => setMeasured(e.target.value)} />
+              </div>
               <label className="form-label">Result</label>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
                 {['Pass', 'Fail', 'Borderline'].map((r) => {
                   const sel = result === r;
                   const c = r === 'Pass' ? '#22a06b' : r === 'Fail' ? '#e5484d' : '#f0a020';
                   return (
-                    <button
-                      key={r}
-                      type="button"
-                      onClick={() => setResult(r)}
-                      className="btn"
-                      style={{ height: 44, flex: 1, justifyContent: 'center', border: '1.5px solid ' + (sel ? c : 'var(--border-input, #d6e0d2)'), background: sel ? c + '22' : 'var(--bg-card, #fff)', color: sel ? c : T_SECONDARY, fontWeight: 700 }}
-                    >
-                      {r}
-                    </button>
+                    <button key={r} type="button" onClick={() => setResult(r)} className="btn"
+                      style={{ height: 44, flex: 1, justifyContent: 'center', border: '1.5px solid ' + (sel ? c : 'var(--border-input, #d6e0d2)'), background: sel ? c + '22' : 'var(--bg-card, #fff)', color: sel ? c : T_SECONDARY, fontWeight: 700 }}>{r}</button>
                   );
                 })}
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {!isSurfaceGrind && (
-        <div style={{ fontFamily: SANS, fontWeight: 700, fontSize: 13, color: T_PRIMARY, marginBottom: 8 }}>
-          {isQcStep ? 'QC inspection result — required' : 'QC check required at this step?'}
-        </div>
-      )}
-      {!isQcStep && !isSurfaceGrind &&
-        QC_OPTIONS.map((o) => (
-          <RadioRow key={o} name="qc-check" value={o} current={qc} onChange={setQc}>
-            {o}
-          </RadioRow>
-        ))}
-
-      {(hasQc || isQcStep) && (
-        <div style={{ marginTop: 6 }}>
-          {!isQcStep && (
-            <div style={{ marginBottom: 12 }}>
-              <label className="form-label">Measured value</label>
-              <input className="form-input" value={measured} onChange={(e) => setMeasured(e.target.value)} />
-            </div>
           )}
-          <label className="form-label">Result</label>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
-            {['Pass', 'Fail', 'Borderline'].map((r) => {
-              const sel = result === r;
-              const c = r === 'Pass' ? '#22a06b' : r === 'Fail' ? '#e5484d' : '#f0a020';
-              return (
-                <button
-                  key={r}
-                  onClick={() => setResult(r)}
-                  className="btn"
-                  style={{
-                    height: 44,
-                    flex: 1,
-                    justifyContent: 'center',
-                    border: '1.5px solid ' + (sel ? c : 'var(--border-input, #d6e0d2)'),
-                    background: sel ? c + '22' : 'var(--bg-card, #fff)',
-                    color: sel ? c : T_SECONDARY,
-                    fontWeight: 700,
-                  }}
-                >
-                  {r}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        </>
       )}
 
       <div style={{ marginTop: 14 }}>
         <label className="form-label">Notes (optional)</label>
-        <textarea
-          className="form-input"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={2}
-          style={{ height: 'auto', padding: 11, resize: 'vertical' }}
-        />
+        <textarea className="form-input" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} style={{ height: 'auto', padding: 11, resize: 'vertical' }} />
       </div>
 
-      {result === 'Fail' && (hasQc || isQcStep || isSurfaceGrind) && (
-        <div style={{ marginTop: 12, padding: '10px 13px', borderRadius: 9, background: 'var(--bg-soft-amber, #fdf6ef)', color: 'var(--status-danger-dark, #c0392b)', fontFamily: SANS, fontSize: 12 }}>
-          A Fail result places the UID on hold automatically and alerts the supervisor.
+      {(widthHint?.status === 'concession' || thicknessHint?.status === 'concession') && (
+        <div style={{ marginTop: 12, padding: '10px 13px', borderRadius: 9, background: 'var(--bg-soft-amber, #fdf6ef)', color: '#8a5a1a', fontFamily: SANS, fontSize: 12 }}>
+          Below minimum — closing raises a concession request for Manager/Admin approval; the piece is held meanwhile.
+        </div>
+      )}
+      {(widthHint?.status === 'reject' || thicknessHint?.status === 'reject') && (
+        <div style={{ marginTop: 12, padding: '10px 13px', borderRadius: 9, background: 'rgba(229,72,77,0.08)', color: 'var(--status-danger-dark, #c0392b)', fontFamily: SANS, fontSize: 12 }}>
+          Above maximum — reject: the piece is returned for further grinding (no concession).
         </div>
       )}
 
