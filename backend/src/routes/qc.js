@@ -361,4 +361,88 @@ router.post('/batches/:batchId/evaluate', requireRole(['admin', 'manager', 'supe
   return res.json({ success: true, data: out });
 });
 
+// ── Annealing dispatch (very-low HRC → external anneal → re-enter at HT70) ────
+
+/** GET /api/v1/qc/annealing?status= — list annealing dispatches. */
+router.get('/annealing', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const { status } = req.query;
+  const params = [];
+  let where = '';
+  if (status && status !== 'all') { params.push(status); where = 'WHERE ad.status = $1'; }
+  const { rows } = await query(
+    `SELECT ad.*, u.uid_code, u.status AS uid_status, c.name AS contractor_name
+     FROM annealing_dispatches ad JOIN uids u ON u.id = ad.uid_id
+     LEFT JOIN contractors c ON c.id = ad.contractor_id
+     ${where} ORDER BY ad.status = 'dispatched' DESC, ad.dispatched_at DESC`, params
+  );
+  return res.json({ success: true, data: rows });
+});
+
+/** GET /api/v1/qc/annealing/candidates — UIDs held for annealing, not yet dispatched. */
+router.get('/annealing/candidates', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const { rows } = await query(
+    `SELECT u.id, u.uid_code, u.hold_reason FROM uids u
+     WHERE u.status = 'hold' AND u.hold_reason ILIKE '%anneal%'
+       AND NOT EXISTS (SELECT 1 FROM annealing_dispatches ad WHERE ad.uid_id = u.id AND ad.status = 'dispatched')
+     ORDER BY u.uid_code`
+  );
+  return res.json({ success: true, data: rows });
+});
+
+/** POST /api/v1/qc/annealing/dispatch — send a very-low piece for annealing.
+ *  body: { uidCode, contractorId?, expectedReturnDate?, notes? } */
+router.post('/annealing/dispatch', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const { uidCode, contractorId, expectedReturnDate, notes } = req.body || {};
+  if (!uidCode) return res.status(400).json({ success: false, error: { code: 'MISSING_UID', message: 'uidCode is required.' } });
+
+  const out = await withTransaction(async (client) => {
+    const { rows: uRows } = await client.query(`SELECT id, uid_code, status FROM uids WHERE uid_code = $1 FOR UPDATE`, [uidCode]);
+    const uid = uRows[0];
+    if (!uid) throw Object.assign(new Error('UID not found'), { status: 404, code: 'UID_NOT_FOUND' });
+
+    const year = new Date().getFullYear();
+    const { rows: seq } = await client.query(`SELECT COUNT(*)::int AS c FROM annealing_dispatches WHERE reference LIKE $1`, [`DHR-ANN-${year}-%`]);
+    const reference = `DHR-ANN-${year}-${String(seq[0].c + 1).padStart(3, '0')}`;
+
+    // Keep the piece on hold while it is away.
+    await client.query(`UPDATE uids SET status = 'hold', hold_reason = 'At third-party annealing contractor' WHERE id = $1`, [uid.id]);
+    const { rows } = await client.query(
+      `INSERT INTO annealing_dispatches (reference, uid_id, contractor_id, expected_return_date, notes, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [reference, uid.id, contractorId || null, expectedReturnDate || null, notes || null, req.user.sub]
+    );
+    await createAlert(client.query.bind(client), { type: 'annealing', severity: 'warning', uidId: uid.id, message: `${uid.uid_code} dispatched for annealing (${reference})`, targetRole: 'manager', linkPage: 'qc', linkRecordId: String(uid.id) });
+    return rows[0];
+  });
+  await req.audit({ tableName: 'annealing_dispatches', recordId: out.id, action: 'INSERT', after: out });
+  return res.status(201).json({ success: true, data: out });
+});
+
+/** POST /api/v1/qc/annealing/:id/return — piece back; re-enter the cycle at HT70. */
+router.post('/annealing/:id/return', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const out = await withTransaction(async (client) => {
+    const { rows: dRows } = await client.query(`SELECT * FROM annealing_dispatches WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const dispatch = dRows[0];
+    if (!dispatch) throw Object.assign(new Error('Annealing dispatch not found'), { status: 404, code: 'DISPATCH_NOT_FOUND' });
+    if (dispatch.status === 'returned') throw Object.assign(new Error('Already returned'), { status: 409, code: 'ALREADY_RETURNED' });
+
+    const { rows: uRows } = await client.query(`SELECT id, uid_code, cycle_version_id FROM uids WHERE id = $1`, [dispatch.uid_id]);
+    const uid = uRows[0];
+    // Re-enter the cycle from Hardening (HT70) — first step run at the HT70 workstation.
+    const { rows: hardStep } = await client.query(
+      `SELECT cs.step_number, cs.source_storage_id FROM cycle_steps cs
+       JOIN workstation_types wt ON wt.id = cs.workstation_type_id
+       WHERE cs.cycle_version_id = $1 AND wt.code = 'HT70' ORDER BY cs.sequence_order LIMIT 1`, [uid.cycle_version_id]
+    );
+    const step = hardStep[0];
+    await client.query(`UPDATE uids SET status = 'active', current_step = $1, current_storage_id = $2, hold_reason = NULL WHERE id = $3`,
+      [step ? step.step_number : null, step ? step.source_storage_id : null, uid.id]);
+    const { rows: rows } = await client.query(`UPDATE annealing_dispatches SET status = 'returned', returned_at = CURRENT_DATE WHERE id = $1 RETURNING *`, [dispatch.id]);
+    await createAlert(client.query.bind(client), { type: 'annealing', severity: 'info', uidId: uid.id, message: `${uid.uid_code} returned from annealing — re-entering at Hardening (HT70)`, targetRole: 'supervisor', linkPage: 'qc', linkRecordId: String(uid.id) });
+    return { dispatch: rows[0], reenterStep: step ? step.step_number : null };
+  });
+  await req.audit({ tableName: 'annealing_dispatches', recordId: out.dispatch.id, action: 'UPDATE', after: out.dispatch });
+  return res.json({ success: true, data: out });
+});
+
 module.exports = router;

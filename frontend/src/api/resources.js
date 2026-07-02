@@ -91,6 +91,11 @@ export const qcApi = {
   batchHrcStatus: (batchId) => api.get(`/qc/batches/${batchId}/hrc-status`),
   batchHrcSample: (batchId) => api.post(`/qc/batches/${batchId}/hrc-sample`),
   batchHrcEvaluate: (batchId) => api.post(`/qc/batches/${batchId}/evaluate`),
+  // Annealing dispatch (very-low HRC → external anneal → re-enter at HT70)
+  annealingList: (status) => api.get('/qc/annealing', status ? { status } : undefined),
+  annealingCandidates: () => api.get('/qc/annealing/candidates'),
+  annealingDispatch: (payload) => api.post('/qc/annealing/dispatch', payload),
+  annealingReturn: (id) => api.post(`/qc/annealing/${id}/return`),
 };
 
 export const reportsApi = {

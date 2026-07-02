@@ -290,6 +290,77 @@ function BatchHrcPanel() {
   );
 }
 
+/* Annealing dispatch — very-low HRC pieces sent to a third-party annealing
+   contractor (two-leg), returning to re-enter the cycle at Hardening (HT70). */
+function AnnealingPanel() {
+  const { data: cand, refetch: refetchCand } = usePolling(() => qcApi.annealingCandidates().then((r) => r.data).catch(() => []), [], { interval: 30000 });
+  const { data: list, refetch: refetchList } = usePolling(() => qcApi.annealingList('dispatched').then((r) => r.data).catch(() => []), [], { interval: 30000 });
+  const candidates = Array.isArray(cand) ? cand : [];
+  const outbound = Array.isArray(list) ? list : [];
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [expForm, setExpForm] = useState({}); // uidCode -> expected date
+
+  if (!candidates.length && !outbound.length) return null; // nothing to show
+
+  async function dispatch(uidCode) {
+    setBusy(true); setErr(null);
+    try { await qcApi.annealingDispatch({ uidCode, expectedReturnDate: expForm[uidCode] || undefined }); refetchCand(); refetchList(); }
+    catch (e) { setErr(e.message || 'Dispatch failed.'); } finally { setBusy(false); }
+  }
+  async function ret(id) {
+    setBusy(true); setErr(null);
+    try { await qcApi.annealingReturn(id); refetchList(); refetchCand(); }
+    catch (e) { setErr(e.message || 'Return failed.'); } finally { setBusy(false); }
+  }
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', marginTop: 16, borderLeft: '4px solid #7a4fc0' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Icon name="truck" size={15} color="#7a4fc0" />
+        <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, color: 'var(--text-primary, #15366a)' }}>Annealing Dispatch</span>
+      </div>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)', marginBottom: 12 }}>
+        Critically-soft (very-low HRC) pieces go to a third-party annealing contractor. On return they re-enter the cycle from Hardening (HT70).
+      </div>
+      {err ? <ErrorBanner message={err} /> : null}
+
+      {candidates.length ? (
+        <>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, #9bb4d4)', marginBottom: 6 }}>Awaiting dispatch · {candidates.length}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
+            {candidates.map((u) => (
+              <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid var(--border-card, #e3ebde)', borderRadius: 9, padding: '9px 12px', flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: 'var(--text-primary, #15366a)' }}>{u.uid_code}</span>
+                <div style={{ flex: 1 }} />
+                <input className="form-input" style={{ height: 34, width: 150 }} type="date" value={expForm[u.uid_code] || ''} onChange={(e) => setExpForm((s) => ({ ...s, [u.uid_code]: e.target.value }))} title="Expected return date" />
+                <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => dispatch(u.uid_code)}>Dispatch to annealing</button>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+
+      {outbound.length ? (
+        <>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-muted, #9bb4d4)', marginBottom: 6 }}>At contractor · {outbound.length}</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {outbound.map((d) => (
+              <div key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid var(--border-card, #e3ebde)', borderRadius: 9, padding: '9px 12px', flexWrap: 'wrap' }}>
+                <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: 'var(--text-primary, #15366a)' }}>{d.uid_code}</span>
+                <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary)' }}>{d.reference}</span>
+                <span style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--text-secondary)' }}>sent {String(d.dispatched_at).slice(0, 10)}{d.expected_return_date ? ` · due ${String(d.expected_return_date).slice(0, 10)}` : ''}{d.contractor_name ? ` · ${d.contractor_name}` : ''}</span>
+                <div style={{ flex: 1 }} />
+                <button className="btn btn-sm" disabled={busy} onClick={() => ret(d.id)}>Mark returned → HT70</button>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export default function QC() {
   const { user, isSupervisor, isManager, isAdmin } = useAuth();
 
@@ -406,6 +477,7 @@ export default function QC() {
 
       <HrcSamplesPanel />
       {(isSupervisor || isManager || isAdmin) ? <BatchHrcPanel /> : null}
+      {(isSupervisor || isManager || isAdmin) ? <AnnealingPanel /> : null}
 
       <div
         style={{
