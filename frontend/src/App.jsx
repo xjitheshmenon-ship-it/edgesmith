@@ -13,6 +13,7 @@ import MyWorkstation from './pages/MyWorkstation';
 import BatchManagement from './pages/BatchManagement';
 import QC from './pages/QC';
 import RawMaterialIntake from './pages/RawMaterialIntake';
+import ReceivingIntake from './pages/ReceivingIntake';
 import JoiningOperation from './pages/JoiningOperation';
 import ContractorDispatch from './pages/ContractorDispatch';
 import FaridabadBatchManagement from './pages/FaridabadBatchManagement';
@@ -53,12 +54,11 @@ function FactoryBatch() {
   const { location } = useApp();
   return location === 'faridabad' ? <FaridabadBatchManagement /> : <BatchManagement />;
 }
-/* "Material arriving" is one view per factory: Faridabad logs raw-material
-   intake from suppliers, Dharmapuri logs blocks received from Faridabad. A
-   single nav entry follows the shared factory toggle. */
+/* Receiving & Intake is one unified, tabbed page that reshapes by the factory
+   toggle: Faridabad shows the Alloy Steel + MS Sheet intake tabs, Dharmapuri
+   shows Receiving Events. (See ReceivingIntake.jsx.) */
 function FactoryReceiving() {
-  const { location } = useApp();
-  return location === 'faridabad' ? <RawMaterialIntake /> : <Receiving />;
+  return <ReceivingIntake />;
 }
 
 const PAGES = {

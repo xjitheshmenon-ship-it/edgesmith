@@ -41,7 +41,7 @@ export const receivingApi = {
   expected: () => api.get('/receiving/expected'),
   detail: (id) => api.get(`/receiving/${id}`),
   create: (payload) => api.post('/receiving', payload),
-  confirmMismatch: (id) => api.patch(`/receiving/${id}/confirm-mismatch`),
+  confirmMismatch: (id, note) => api.patch(`/receiving/${id}/confirm-mismatch`, { note }),
 };
 
 export const shiftsApi = {
@@ -161,6 +161,21 @@ export const masterApi = {
   createGradeCycleMap: (p) => api.post('/master/grade-cycle-map', p),
   updateGradeCycleMap: (id, p) => api.patch(`/master/grade-cycle-map/${id}`, p),
   archiveGradeCycleMap: (id) => api.delete(`/master/grade-cycle-map/${id}`),
+
+  barProfiles: () => api.get('/master/bar-profiles'),
+  createBarProfile: (p) => api.post('/master/bar-profiles', p),
+  updateBarProfile: (id, p) => api.patch(`/master/bar-profiles/${id}`, p),
+  archiveBarProfile: (id) => api.delete(`/master/bar-profiles/${id}`),
+
+  barLengths: () => api.get('/master/bar-lengths'),
+  createBarLength: (p) => api.post('/master/bar-lengths', p),
+  updateBarLength: (id, p) => api.patch(`/master/bar-lengths/${id}`, p),
+  archiveBarLength: (id) => api.delete(`/master/bar-lengths/${id}`),
+
+  sheetSizes: () => api.get('/master/sheet-sizes'),
+  createSheetSize: (p) => api.post('/master/sheet-sizes', p),
+  updateSheetSize: (id, p) => api.patch(`/master/sheet-sizes/${id}`, p),
+  archiveSheetSize: (id) => api.delete(`/master/sheet-sizes/${id}`),
 
   conversionPatterns: () => api.get('/master/conversion-patterns'),
   createConversionPattern: (p) => api.post('/master/conversion-patterns', p),

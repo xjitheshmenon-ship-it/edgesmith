@@ -7,6 +7,7 @@ const { calculateMsBalance } = require('../utils/msBalance');
 const { alloyCutBatch, DEFAULT_SIZES } = require('../utils/alloyCut');
 const { operatorMissingSkill } = require('../utils/skillGate');
 const { createAlert } = require('../utils/alerts');
+const { computeEntries } = require('../utils/intakeWeight');
 
 const router = express.Router();
 // §10.7 — Faridabad data is off-limits to Dharmapuri-scoped users (admin/manager exempt).
@@ -48,17 +49,40 @@ router.post('/intakes', requireRole(['admin', 'manager', 'supervisor', 'operator
   const materialType = b.materialType;
   const heatNumber = b.heatNumber;
   const grade = b.grade ?? b.steelGrade ?? null;
-  const weightKg = b.weightKg;
-  const barCount = b.barCount;
-  const lengthMm = b.lengthMm != null && b.lengthMm !== '' ? Number(b.lengthMm) : null;
-  const widthMm = b.widthMm != null && b.widthMm !== '' ? Number(b.widthMm) : null;
   const dimensionsMm = b.dimensionsMm ?? b.dimensions ?? null;
   const dateReceived = b.dateReceived;
   const poReference = b.poReference ?? null;
   const notes = b.notes ?? null;
+  const profileId = b.profileId != null && b.profileId !== '' ? Number(b.profileId) : null;
+
+  // New structured intake: an array of bar/sheet entries (multiple lengths or
+  // sheet sizes in one delivery). When present, weight + count are derived
+  // server-side from the entries. Falls back to the legacy scalar shape so the
+  // older form and API callers keep working.
+  const structured = Array.isArray(b.entries) && b.entries.length > 0;
+  let entries = null;
+  let weightKg = b.weightKg;
+  let barCount = b.barCount;
+  let lengthMm = b.lengthMm != null && b.lengthMm !== '' ? Number(b.lengthMm) : null;
+  let widthMm = b.widthMm != null && b.widthMm !== '' ? Number(b.widthMm) : null;
+  let thicknessMm = b.thicknessMm != null && b.thicknessMm !== '' ? Number(b.thicknessMm) : null;
+
+  if (structured) {
+    const computed = computeEntries(b.entries);
+    if (!computed.entries.length) {
+      return res.status(400).json({ success: false, error: { code: 'NO_ENTRIES', message: 'At least one entry with a quantity greater than zero is required.' } });
+    }
+    entries = computed.entries;
+    weightKg = computed.totalWeightKg;
+    barCount = computed.totalCount;
+    // Carry the first entry's geometry onto the aggregate columns for legacy readers.
+    lengthMm = entries[0].length_mm ?? lengthMm;
+    widthMm = entries[0].width_mm ?? widthMm;
+    thicknessMm = entries[0].thickness_mm ?? thicknessMm;
+  }
 
   if (!materialType || !heatNumber || !weightKg || !barCount || !dateReceived) {
-    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'materialType, supplier, heatNumber, weightKg, barCount, dateReceived are required.' } });
+    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'materialType, supplier, heatNumber, entries (or weightKg + barCount), dateReceived are required.' } });
   }
 
   // Resolve the supplier: an explicit id, or a name (created if it doesn't exist yet).
@@ -92,9 +116,9 @@ router.post('/intakes', requireRole(['admin', 'manager', 'supervisor', 'operator
 
   const { rows } = await query(
     `INSERT INTO raw_material_intakes
-       (material_type, supplier_id, heat_number, grade, cycle_type_id, weight_kg, bar_count, length_mm, width_mm, dimensions_mm, date_received, po_reference, notes, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
-    [materialType, supplierId, heatNumber, grade || null, cycleTypeId, weightKg, barCount, lengthMm, widthMm, dimensionsMm || null, dateReceived, poReference || null, notes || null, req.user.sub]
+       (material_type, supplier_id, heat_number, grade, cycle_type_id, weight_kg, bar_count, length_mm, width_mm, thickness_mm, profile_id, entries, dimensions_mm, date_received, po_reference, notes, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+    [materialType, supplierId, heatNumber, grade || null, cycleTypeId, weightKg, barCount, lengthMm, widthMm, thicknessMm, profileId, entries ? JSON.stringify(entries) : null, dimensionsMm || null, dateReceived, poReference || null, notes || null, req.user.sub]
   );
 
   await req.audit({ tableName: 'raw_material_intakes', recordId: rows[0].id, action: 'INSERT', after: rows[0] });

@@ -38,6 +38,7 @@ async function main() {
   await seedTemperingParameters();
   await seedGrindingRules(wsIds);
   await seedColorCodes();
+  await seedGradeCycleMap();
   await seedTruckCapacityDefault();
   await seedSampleSuppliersAndContractors();
   await seedRawMaterialIntakes();
@@ -428,6 +429,21 @@ async function seedColorCodes() {
     count++;
   }
   console.log(`✓ Seeded ${count} color codes`);
+}
+
+// Alloy grade → cycle-type mapping. Drives the Grade dropdown + cycle-type
+// auto-derive on the Alloy Steel Intake form. Idempotent (grade is UNIQUE).
+async function seedGradeCycleMap() {
+  const map = [['EN8', 'EAT'], ['EN19', 'EAT'], ['EN24', 'SWAN'], ['SAE 1018', 'OVEN'], ['SAE 8620', 'SWAN']];
+  let count = 0;
+  for (const [grade, cycle] of map) {
+    const { rowCount } = await query(
+      `INSERT INTO alloy_grade_cycle_map (alloy_grade, cycle_type_code) VALUES ($1,$2)
+       ON CONFLICT (alloy_grade) DO NOTHING`, [grade, cycle]
+    );
+    count += rowCount;
+  }
+  console.log(`✓ Seeded ${count} alloy grade → cycle mappings`);
 }
 
 async function seedTruckCapacityDefault() {

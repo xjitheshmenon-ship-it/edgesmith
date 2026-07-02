@@ -97,6 +97,19 @@ router.use('/grade-cycle-map', simpleResource('alloy_grade_cycle_map', {
   fields: [{ key: 'alloyGrade', column: 'alloy_grade' }, { key: 'cycleTypeCode', column: 'cycle_type_code' }, { key: 'status', column: 'status' }],
 }));
 
+// Receiving & Intake reference data (dedicated dimensional master lists).
+router.use('/bar-profiles', simpleResource('alloy_bar_profiles', {
+  fields: [{ key: 'label', column: 'label' }, { key: 'widthMm', column: 'width_mm' }, { key: 'thicknessMm', column: 'thickness_mm' }, { key: 'status', column: 'status' }],
+}));
+
+router.use('/bar-lengths', simpleResource('alloy_bar_lengths', {
+  fields: [{ key: 'lengthMm', column: 'length_mm' }, { key: 'label', column: 'label' }, { key: 'status', column: 'status' }],
+}));
+
+router.use('/sheet-sizes', simpleResource('ms_sheet_sizes', {
+  fields: [{ key: 'label', column: 'label' }, { key: 'lengthMm', column: 'length_mm' }, { key: 'widthMm', column: 'width_mm' }, { key: 'heightMm', column: 'height_mm' }, { key: 'status', column: 'status' }],
+}));
+
 router.use('/conversion-patterns', simpleResource('conversion_patterns', {
   fields: [{ key: 'name', column: 'name' }, { key: 'inputLengthMm', column: 'input_length_mm' }, { key: 'childLengthsMm', column: 'child_lengths_mm' }, { key: 'kerfMm', column: 'kerf_mm' }, { key: 'status', column: 'status' }],
 }));
