@@ -528,7 +528,49 @@ async function main() {
       );
     }
 
-    console.log(`✓ Demo data created: ${operators.length + 4} extra employees, 3 MOs, Faridabad chain (3 dispatches), ${allUidIds.length} UIDs, step+QC logs, 1 furnace + 1 production batch, today's shift with jobs, and 4 alerts.`);
+    // ── QC dashboard: a pending concession, an override, an admin instruction ──
+    const fgWidthMin = (await q(`SELECT width_tol_min FROM dimension_standards WHERE category='fg_knife' AND width_tol_min IS NOT NULL LIMIT 1`)).rows[0]?.width_tol_min || 180;
+    const blueColor = (await q(`SELECT id FROM concession_color_codes WHERE lower(exception_type) LIKE '%width%' LIMIT 1`)).rows[0]?.id || null;
+    const concUid = qcUids[1] || qcUids[0] || null;
+    if (concUid) {
+      const concCode = (await q(`SELECT uid_code FROM uids WHERE id=$1`, [concUid])).rows[0]?.uid_code || null;
+      const concLog = (await q(
+        `INSERT INTO uid_step_logs (uid_id, step_number, operation_name, operator_id, shift_id, started_at, closed_at, qc_check_type, qc_value, qc_result)
+         VALUES ($1,'12','Surface Grind 1',$2,$3, now() - interval '20 minutes', now() - interval '18 minutes','Width (mm)','178','Fail') RETURNING id`,
+        [concUid, primaryOp, shiftId]
+      )).rows[0].id;
+      await q(
+        `INSERT INTO concession_requests (uid_id, uid_code, uid_step_log_id, step_number, operation_name, dimension, measured_value, min_value, concession_color_id, raised_by)
+         VALUES ($1,$2,$3,'12','Surface Grind 1','width',178,$4,$5,$6)`,
+        [concUid, concCode, concLog, fgWidthMin, blueColor, primaryOp]
+      );
+      await q(`UPDATE uids SET status='hold', hold_reason=$1 WHERE id=$2`, [`Concession pending — width 178mm below ${fgWidthMin}mm`, concUid]);
+    }
+
+    // An override: a final-inspection fail forced to Pass, with a permanent reason.
+    const ovrUid = qcUids[0] || null;
+    if (ovrUid) {
+      const ovrCode = (await q(`SELECT uid_code FROM uids WHERE id=$1`, [ovrUid])).rows[0]?.uid_code || null;
+      const ovrLog = (await q(
+        `INSERT INTO uid_step_logs (uid_id, step_number, operation_name, operator_id, shift_id, started_at, closed_at, qc_check_type, qc_value, qc_result)
+         VALUES ($1,'26','QC Inspection',$2,$3, now() - interval '40 minutes', now() - interval '38 minutes','Width (mm)','181','Pass') RETURNING id`,
+        [ovrUid, primaryOp, shiftId]
+      )).rows[0].id;
+      await q(
+        `INSERT INTO qc_overrides (uid_step_log_id, uid_id, uid_code, step_number, original_result, new_result, reason, overridden_by)
+         VALUES ($1,$2,$3,'26','Fail','Pass',$4,1)`,
+        [ovrLog, ovrUid, ovrCode, 'Customer confirmed acceptance of sub-180mm width for this specific order — MO-2024-089']
+      );
+    }
+
+    // An admin instruction awaiting Supervisor acknowledgement.
+    await q(
+      `INSERT INTO alerts (alert_type, severity, location_id, message, target_role, link_page, status)
+       VALUES ('admin_instruction','info',$1,$2,'supervisor','qc','active')`,
+      [dhr, 'Re final inspection: pull 5 more pieces for thickness check before approving any concession this shift.']
+    );
+
+    console.log(`✓ Demo data created: ${operators.length + 4} extra employees, 3 MOs, Faridabad chain (3 dispatches), ${allUidIds.length} UIDs, step+QC logs, 1 furnace + 1 production batch, today's shift with jobs, QC concession/override/instruction, and alerts.`);
   });
 
   // Fresh DB: operators exist now — spread jobs across every workstation and

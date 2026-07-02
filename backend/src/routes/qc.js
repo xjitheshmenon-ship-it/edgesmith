@@ -13,6 +13,37 @@ router.use(authenticate, auditContext);
 // QC-relevant steps per the instructions: 7 (post-quench), 12 (surface grind check), 26 (final QC inspection)
 const QC_STEPS = ['7', '12', '26'];
 
+// Which finished-good dimension a check reads, so a below-minimum measurement can
+// raise the right concession (and pick the matching box colour).
+function concessionDimension(checkType) {
+  const t = String(checkType || '').toLowerCase();
+  if (t.includes('width')) return 'width';
+  if (t.includes('thick')) return 'thickness';
+  return null;
+}
+
+// Look up the finished-good tolerance floor for a dimension from dimension_standards
+// (category fg_knife). Returns the min mm, or null if no standard is configured.
+async function fgMinFor(q, dimension) {
+  const col = dimension === 'width' ? 'width_tol_min' : 'thickness_tol_min';
+  const { rows } = await q(
+    `SELECT ${col} AS min_val FROM dimension_standards
+     WHERE category = 'fg_knife' AND status = 'active' AND ${col} IS NOT NULL
+     ORDER BY id LIMIT 1`
+  );
+  return rows[0] && rows[0].min_val != null ? Number(rows[0].min_val) : null;
+}
+
+// Pick the concession colour-code that matches a dimension (Blue=width, Red=thickness).
+async function concessionColorFor(q, dimension) {
+  const like = dimension === 'width' ? '%width%' : '%thick%';
+  const { rows } = await q(
+    `SELECT id FROM concession_color_codes WHERE lower(exception_type) LIKE $1 AND status = 'active' ORDER BY id LIMIT 1`,
+    [like]
+  );
+  return rows[0] ? rows[0].id : null;
+}
+
 /** GET /api/v1/qc/pending */
 router.get('/pending', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
   const { rows } = await query(
@@ -84,27 +115,58 @@ router.post('/sign-off', requireRole(['admin', 'manager', 'supervisor']), async 
  */
 router.post('/log', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
   const { uidCode, checkType, value, result } = req.body;
-  const { rows: uidRows } = await query(`SELECT * FROM uids WHERE uid_code = $1`, [uidCode]);
-  if (!uidRows[0]) return res.status(404).json({ success: false, error: { code: 'UID_NOT_FOUND', message: `UID ${uidCode} not found.` } });
-  const uid = uidRows[0];
 
-  await query(
-    `UPDATE uid_step_logs SET qc_check_type = $1, qc_value = $2, qc_result = $3
-     WHERE uid_id = $4 AND step_number = $5 AND closed_at IS NULL`,
-    [checkType, value, result, uid.id, uid.current_step]
-  );
+  const out = await withTransaction(async (client) => {
+    const q = client.query.bind(client);
+    const { rows: uidRows } = await q(`SELECT * FROM uids WHERE uid_code = $1 FOR UPDATE`, [uidCode]);
+    if (!uidRows[0]) throw Object.assign(new Error(`UID ${uidCode} not found.`), { status: 404, code: 'UID_NOT_FOUND' });
+    const uid = uidRows[0];
 
-  if (result === 'Fail') {
-    await query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`QC failed: ${checkType}`, uid.id]);
-    await createAlert(query, {
-      type: 'qc_fail', severity: 'critical', uidId: uid.id,
-      message: `QC FAIL (${checkType}) — ${uid.uid_code} held at step ${uid.current_step}`,
-      targetRole: 'supervisor', linkPage: 'qc', linkRecordId: uid.uid_code,
-    });
-  }
+    const { rows: logRows } = await q(
+      `UPDATE uid_step_logs SET qc_check_type = $1, qc_value = $2, qc_result = $3
+       WHERE uid_id = $4 AND step_number = $5 AND closed_at IS NULL
+       RETURNING id, operation_name`,
+      [checkType, value, result, uid.id, uid.current_step]
+    );
+    const stepLog = logRows[0] || {};
 
-  await req.audit({ tableName: 'uid_step_logs', recordId: uidCode, action: 'UPDATE', after: { checkType, value, result } });
-  return res.json({ success: true, data: { uidCode, checkType, value, result } });
+    let concession = null;
+    if (result === 'Fail') {
+      // A below-finished-good-minimum dimension is a concession candidate: hold the
+      // piece and raise a concession request for a Manager/Admin decision, rather
+      // than a plain fail. Anything else is a straight QC fail.
+      const dim = concessionDimension(checkType);
+      const measured = Number(value);
+      const min = dim && Number.isFinite(measured) ? await fgMinFor(q, dim) : null;
+      if (dim && min != null && Number.isFinite(measured) && measured < min) {
+        const colorId = await concessionColorFor(q, dim);
+        const { rows: cRows } = await q(
+          `INSERT INTO concession_requests
+             (uid_id, uid_code, uid_step_log_id, step_number, operation_name, dimension, measured_value, min_value, concession_color_id, raised_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+          [uid.id, uid.uid_code, stepLog.id || null, uid.current_step, stepLog.operation_name || checkType, dim, measured, min, colorId, req.user.sub]
+        );
+        concession = cRows[0];
+        await q(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`Concession pending — ${dim} ${measured}mm below ${min}mm`, uid.id]);
+        await createAlert(q, {
+          type: 'concession_request', severity: 'warning', uidId: uid.id,
+          message: `CONCESSION REQUEST — ${uid.uid_code} ${dim} ${measured}mm (min ${min}mm) awaiting approval`,
+          targetRole: 'manager', linkPage: 'qc', linkRecordId: uid.uid_code,
+        });
+      } else {
+        await q(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`QC failed: ${checkType}`, uid.id]);
+        await createAlert(q, {
+          type: 'qc_fail', severity: 'critical', uidId: uid.id,
+          message: `QC FAIL (${checkType}) — ${uid.uid_code} held at step ${uid.current_step}`,
+          targetRole: 'supervisor', linkPage: 'qc', linkRecordId: uid.uid_code,
+        });
+      }
+    }
+    return { uidCode, checkType, value, result, concession };
+  });
+
+  await req.audit({ tableName: 'uid_step_logs', recordId: uidCode, action: 'UPDATE', after: { checkType, value, result, concession: out.concession ? out.concession.id : null } });
+  return res.json({ success: true, data: out });
 });
 
 /**
@@ -443,6 +505,277 @@ router.post('/annealing/:id/return', requireRole(['admin', 'manager', 'superviso
   });
   await req.audit({ tableName: 'annealing_dispatches', recordId: out.dispatch.id, action: 'UPDATE', after: out.dispatch });
   return res.json({ success: true, data: out });
+});
+
+// ── QC DASHBOARD ─────────────────────────────────────────────────────────────
+// Everything below is the read-only live dashboard plus the three admin/manager
+// capabilities it exposes: override a result, decide a concession, and send a
+// Supervisor an instruction.
+
+const DASH_ROLES = ['admin', 'manager', 'supervisor'];
+
+/**
+ * GET /api/v1/qc/activity — live QC event feed (newest first).
+ * Merges recorded step-log QC results, HRC sample readings, concession requests
+ * and overrides into one stream. ?filter = all|operator|inspector|failed|pending|overridden
+ */
+router.get('/activity', requireRole(DASH_ROLES), async (req, res) => {
+  const filter = String(req.query.filter || 'all').toLowerCase();
+  const limit = Math.min(Number(req.query.limit) || 80, 200);
+
+  // 1. Dimensional / visual QC recorded on step logs.
+  const { rows: stepEvents } = await query(
+    `SELECT sl.id, sl.uid_id, u.uid_code, sl.step_number, sl.operation_name,
+            sl.qc_check_type, sl.qc_value, sl.qc_result, sl.notes,
+            COALESCE(sl.closed_at, sl.started_at) AS at,
+            e.full_name AS operator_name, wu.unit_code,
+            (SELECT o.new_result FROM qc_overrides o WHERE o.uid_step_log_id = sl.id ORDER BY o.created_at DESC LIMIT 1) AS override_result
+     FROM uid_step_logs sl
+     JOIN uids u ON u.id = sl.uid_id
+     LEFT JOIN employees e ON e.id = sl.operator_id
+     LEFT JOIN workstation_units wu ON wu.id = sl.workstation_unit_id
+     WHERE sl.qc_result IS NOT NULL
+     ORDER BY COALESCE(sl.closed_at, sl.started_at) DESC
+     LIMIT $1`, [limit]
+  );
+
+  // 2. HRC sample readings (inspector-level).
+  const { rows: hrcEvents } = await query(
+    `SELECT s.id, s.uid_id, u.uid_code, s.source_step_number AS step_number,
+            s.hrc_value, s.status, s.inspected_at, e.full_name AS inspector_name
+     FROM hrc_inspection_samples s
+     JOIN uids u ON u.id = s.uid_id
+     LEFT JOIN employees e ON e.id = s.inspected_by
+     WHERE s.hrc_value IS NOT NULL
+     ORDER BY s.inspected_at DESC NULLS LAST
+     LIMIT $1`, [limit]
+  );
+
+  // 3. Concession requests.
+  const { rows: concEvents } = await query(
+    `SELECT c.*, cc.color_name FROM concession_requests c
+     LEFT JOIN concession_color_codes cc ON cc.id = c.concession_color_id
+     ORDER BY c.created_at DESC LIMIT $1`, [limit]
+  );
+
+  // 4. Overrides.
+  const { rows: overrideEvents } = await query(
+    `SELECT o.*, e.full_name AS by_name FROM qc_overrides o
+     LEFT JOIN employees e ON e.id = o.overridden_by
+     ORDER BY o.created_at DESC LIMIT $1`, [limit]
+  );
+
+  const events = [];
+  for (const s of stepEvents) {
+    const level = String(s.qc_check_type || '').toLowerCase().includes('hrc') || s.step_number === '26' ? 'inspector' : 'operator';
+    events.push({
+      kind: 'qc_result', level, id: `sl-${s.id}`, stepLogId: s.id, uidCode: s.uid_code, uidId: s.uid_id,
+      step: s.step_number, operation: s.operation_name, checkType: s.qc_check_type, value: s.qc_value,
+      result: s.override_result || s.qc_result, originalResult: s.override_result ? s.qc_result : null,
+      overridden: !!s.override_result, notes: s.notes, operator: s.operator_name, unit: s.unit_code, at: s.at,
+    });
+  }
+  for (const h of hrcEvents) {
+    events.push({
+      kind: 'hrc', level: 'inspector', id: `hrc-${h.id}`, uidCode: h.uid_code, uidId: h.uid_id, step: h.step_number,
+      checkType: 'HRC', value: h.hrc_value, result: h.status === 'pass' ? 'Pass' : h.status === 'fail' ? 'Fail' : 'Borderline',
+      operator: h.inspector_name, at: h.inspected_at,
+    });
+  }
+  for (const c of concEvents) {
+    events.push({
+      kind: 'concession', level: 'operator', id: `conc-${c.id}`, concessionId: c.id, uidCode: c.uid_code, uidId: c.uid_id,
+      step: c.step_number, operation: c.operation_name, checkType: `${c.dimension} concession`, value: c.measured_value,
+      min: c.min_value, colorName: c.color_name, status: c.status,
+      result: c.status === 'approved' ? 'Concession' : c.status === 'rejected' ? 'Fail' : 'Pending', at: c.created_at,
+    });
+  }
+  for (const o of overrideEvents) {
+    events.push({
+      kind: 'override', level: 'operator', id: `ovr-${o.id}`, uidCode: o.uid_code, uidId: o.uid_id, step: o.step_number,
+      checkType: 'Override', originalResult: o.original_result, result: o.new_result, reason: o.reason,
+      operator: o.by_name, overridden: true, at: o.created_at,
+    });
+  }
+
+  events.sort((a, b) => new Date(b.at || 0) - new Date(a.at || 0));
+
+  let filtered = events;
+  if (filter === 'operator') filtered = events.filter((e) => e.level === 'operator' && e.kind !== 'override');
+  else if (filter === 'inspector') filtered = events.filter((e) => e.level === 'inspector');
+  else if (filter === 'failed') filtered = events.filter((e) => e.result === 'Fail');
+  else if (filter === 'pending') filtered = events.filter((e) => e.result === 'Pending');
+  else if (filter === 'overridden') filtered = events.filter((e) => e.overridden || e.kind === 'override');
+
+  return res.json({ success: true, data: filtered.slice(0, limit) });
+});
+
+/** GET /api/v1/qc/summary — shift counters + pending/hold tallies. */
+router.get('/summary', requireRole(DASH_ROLES), async (req, res) => {
+  const { rows: resultRows } = await query(
+    `SELECT qc_result AS result, COUNT(*)::int AS n
+     FROM uid_step_logs
+     WHERE qc_result IS NOT NULL AND COALESCE(closed_at, started_at) >= date_trunc('day', now())
+     GROUP BY qc_result`
+  );
+  const results = { Pass: 0, Fail: 0, Borderline: 0 };
+  for (const r of resultRows) if (r.result in results) results[r.result] = r.n;
+
+  const { rows: concRows } = await query(`SELECT status, COUNT(*)::int AS n FROM concession_requests GROUP BY status`);
+  const concessions = { pending: 0, approved: 0, rejected: 0 };
+  for (const c of concRows) if (c.status in concessions) concessions[c.status] = c.n;
+
+  const { rows: pendingRows } = await query(
+    `SELECT COUNT(*)::int AS n FROM uids WHERE current_step = ANY($1) AND status = 'active'`, [QC_STEPS]
+  );
+  const { rows: hrcPending } = await query(`SELECT COUNT(*)::int AS n FROM hrc_inspection_samples WHERE status = 'pending'`);
+  const { rows: holdRows } = await query(
+    `SELECT COUNT(*)::int AS n,
+            COUNT(*) FILTER (WHERE hold_reason ILIKE '%hrc%' OR hold_reason ILIKE '%anneal%')::int AS hrc_holds,
+            COUNT(*) FILTER (WHERE hold_reason ILIKE '%concession%')::int AS concession_holds
+     FROM uids WHERE status = 'hold'`
+  );
+  const { rows: batchRows } = await query(
+    `SELECT id, batch_number, recall_status, recall_reason FROM furnace_batches WHERE recall_status IS NOT NULL ORDER BY id DESC LIMIT 10`
+  );
+
+  return res.json({
+    success: true,
+    data: {
+      results, concessions,
+      pendingInspection: pendingRows[0].n,
+      hrcSamplesPending: hrcPending[0].n,
+      holds: { total: holdRows[0].n, hrc: holdRows[0].hrc_holds, concession: holdRows[0].concession_holds },
+      batchFlags: batchRows,
+    },
+  });
+});
+
+/** GET /api/v1/qc/concessions — concession requests (?status=pending|all). */
+router.get('/concessions', requireRole(DASH_ROLES), async (req, res) => {
+  const status = req.query.status;
+  const params = [];
+  let where = '';
+  if (status && status !== 'all') { where = 'WHERE c.status = $1'; params.push(status); }
+  const { rows } = await query(
+    `SELECT c.*, cc.color_name, cc.hex, raiser.full_name AS raised_by_name, decider.full_name AS decided_by_name
+     FROM concession_requests c
+     LEFT JOIN concession_color_codes cc ON cc.id = c.concession_color_id
+     LEFT JOIN employees raiser ON raiser.id = c.raised_by
+     LEFT JOIN employees decider ON decider.id = c.decided_by
+     ${where}
+     ORDER BY CASE c.status WHEN 'pending' THEN 0 ELSE 1 END, c.created_at DESC`,
+    params
+  );
+  return res.json({ success: true, data: rows });
+});
+
+/** POST /api/v1/qc/concessions/:id/decide — approve or reject. body: { decision, note? } */
+router.post('/concessions/:id/decide', requireRole(['admin', 'manager']), async (req, res) => {
+  const decision = String(req.body.decision || '').toLowerCase();
+  const note = req.body.note || null;
+  if (!['approve', 'reject'].includes(decision)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_DECISION', message: "decision must be 'approve' or 'reject'." } });
+  }
+
+  const out = await withTransaction(async (client) => {
+    const q = client.query.bind(client);
+    const { rows } = await q(`SELECT * FROM concession_requests WHERE id = $1 FOR UPDATE`, [req.params.id]);
+    const cr = rows[0];
+    if (!cr) throw Object.assign(new Error('Concession request not found.'), { status: 404, code: 'NOT_FOUND' });
+    if (cr.status !== 'pending') throw Object.assign(new Error('This concession has already been decided.'), { status: 409, code: 'ALREADY_DECIDED' });
+
+    const status = decision === 'approve' ? 'approved' : 'rejected';
+    const { rows: updated } = await q(
+      `UPDATE concession_requests SET status = $1, decided_by = $2, decided_at = now(), decision_note = $3 WHERE id = $4 RETURNING *`,
+      [status, req.user.sub, note, cr.id]
+    );
+
+    if (decision === 'approve') {
+      // Accepted under concession — release the piece back into production; the
+      // physical box is marked in the concession colour.
+      await q(`UPDATE uids SET status = 'active', hold_reason = NULL WHERE id = $1`, [cr.uid_id]);
+    }
+    // On reject the piece stays on hold — no change to the UID.
+    return updated[0];
+  });
+
+  await req.audit({ tableName: 'concession_requests', recordId: req.params.id, action: 'UPDATE', after: out });
+  return res.json({ success: true, data: out });
+});
+
+/** GET /api/v1/qc/overrides — override history (for the OVERRIDDEN filter view). */
+router.get('/overrides', requireRole(DASH_ROLES), async (req, res) => {
+  const { rows } = await query(
+    `SELECT o.*, e.full_name AS by_name FROM qc_overrides o
+     LEFT JOIN employees e ON e.id = o.overridden_by
+     ORDER BY o.created_at DESC LIMIT 200`
+  );
+  return res.json({ success: true, data: rows });
+});
+
+/** POST /api/v1/qc/overrides — admin overrides a QC result. body: { uidStepLogId, newResult, reason } */
+router.post('/overrides', requireRole(['admin']), async (req, res) => {
+  const { uidStepLogId, newResult, reason } = req.body || {};
+  if (!['Pass', 'Fail', 'Borderline'].includes(newResult)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_RESULT', message: "newResult must be Pass, Fail or Borderline." } });
+  }
+  if (!reason || String(reason).trim().length < 20) {
+    return res.status(400).json({ success: false, error: { code: 'REASON_REQUIRED', message: 'A reason of at least 20 characters is required.' } });
+  }
+
+  const out = await withTransaction(async (client) => {
+    const q = client.query.bind(client);
+    const { rows: slRows } = await q(
+      `SELECT sl.*, u.uid_code, u.status AS uid_status FROM uid_step_logs sl JOIN uids u ON u.id = sl.uid_id WHERE sl.id = $1 FOR UPDATE`,
+      [uidStepLogId]
+    );
+    const sl = slRows[0];
+    if (!sl) throw Object.assign(new Error('Step log not found.'), { status: 404, code: 'NOT_FOUND' });
+
+    const { rows: ovr } = await q(
+      `INSERT INTO qc_overrides (uid_step_log_id, uid_id, uid_code, step_number, original_result, new_result, reason, overridden_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [sl.id, sl.uid_id, sl.uid_code, sl.step_number, sl.qc_result, newResult, String(reason).trim(), req.user.sub]
+    );
+    await q(`UPDATE uid_step_logs SET qc_result = $1 WHERE id = $2`, [newResult, sl.id]);
+
+    // Overriding a fail to a pass releases a QC hold; overriding a pass to a fail holds it.
+    if (newResult === 'Pass' && sl.uid_status === 'hold') {
+      await q(`UPDATE uids SET status = 'active', hold_reason = NULL WHERE id = $1`, [sl.uid_id]);
+    } else if (newResult === 'Fail' && sl.uid_status === 'active') {
+      await q(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`QC override to Fail at step ${sl.step_number}`, sl.uid_id]);
+    }
+    return ovr[0];
+  });
+
+  await req.audit({ tableName: 'qc_overrides', recordId: out.id, action: 'INSERT', after: { ...out, override: true } });
+  return res.status(201).json({ success: true, data: out });
+});
+
+/** POST /api/v1/qc/instructions — admin sends the Supervisor an instruction (delivered as an alert). */
+router.post('/instructions', requireRole(['admin']), async (req, res) => {
+  const b = req.body || {};
+  const message = String(b.message || '').trim();
+  if (!message) return res.status(400).json({ success: false, error: { code: 'MESSAGE_REQUIRED', message: 'An instruction message is required.' } });
+  const regarding = b.regarding ? String(b.regarding).trim() : null;
+  const uidCode = b.uidCode ? String(b.uidCode).trim() : null;
+  const targetEmployeeId = b.targetEmployeeId ? Number(b.targetEmployeeId) : null;
+
+  let uidId = null;
+  if (uidCode) {
+    const { rows } = await query(`SELECT id FROM uids WHERE uid_code = $1`, [uidCode]);
+    uidId = rows[0] ? rows[0].id : null;
+  }
+
+  const fullMessage = regarding ? `Re ${regarding}: ${message}` : message;
+  const { rows } = await query(
+    `INSERT INTO alerts (alert_type, severity, uid_id, message, target_role, target_employee_id, link_page, link_record_id)
+     VALUES ('admin_instruction','info',$1,$2,'supervisor',$3,'qc',$4) RETURNING *`,
+    [uidId, fullMessage, targetEmployeeId, uidCode]
+  );
+  await req.audit({ tableName: 'alerts', recordId: rows[0].id, action: 'INSERT', after: rows[0] });
+  return res.status(201).json({ success: true, data: rows[0] });
 });
 
 module.exports = router;
