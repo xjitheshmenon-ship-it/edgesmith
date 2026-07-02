@@ -192,8 +192,32 @@ async function bulkCreateUids(req, res) {
     if (!verRows[0]) throw Object.assign(new Error('No current cycle version'), { status: 409, code: 'NO_CYCLE_VERSION' });
     const cycleVersionId = verRows[0].id;
 
-    const { rows: rmqRows } = await client.query(`SELECT id FROM storage_locations WHERE code = 'RM-Q' LIMIT 1`);
-    const rmqStorageId = rmqRows[0] ? rmqRows[0].id : null;
+    // §1 — a UID is born at the Tagging Table (TAG-01): Band Saw Cutting and
+    // Tagging are pre-UID (the block is cut into plates, then tagged). So a newly
+    // minted UID enters the cycle at the step AFTER tagging, sitting in the
+    // tagging step's destination storage — it never appears in the Band Saw or
+    // Tagging queues. Falls back to step 1 / RM-Q for a cycle with no TAG step.
+    const { rows: tagRows } = await client.query(
+      `SELECT cs.step_number, cs.dest_storage_id, cs.sequence_order
+       FROM cycle_steps cs JOIN workstation_types wt ON wt.id = cs.workstation_type_id
+       WHERE cs.cycle_version_id = $1 AND wt.code = 'TAG-01' AND cs.operation_name NOT ILIKE '%child%'
+       ORDER BY cs.sequence_order LIMIT 1`,
+      [cycleVersionId]
+    );
+    let genesisStep = '1';
+    let genesisStorageId = null;
+    if (tagRows[0]) {
+      const { rows: nextRows } = await client.query(
+        `SELECT step_number FROM cycle_steps WHERE cycle_version_id = $1 AND sequence_order > $2 ORDER BY sequence_order LIMIT 1`,
+        [cycleVersionId, tagRows[0].sequence_order]
+      );
+      genesisStep = nextRows[0] ? nextRows[0].step_number : tagRows[0].step_number;
+      genesisStorageId = tagRows[0].dest_storage_id;
+    }
+    if (genesisStorageId == null) {
+      const { rows: rmqRows } = await client.query(`SELECT id FROM storage_locations WHERE code = 'RM-Q' LIMIT 1`);
+      genesisStorageId = rmqRows[0] ? rmqRows[0].id : null;
+    }
 
     const created = [];
     for (const code of codes) {
@@ -202,8 +226,8 @@ async function bulkCreateUids(req, res) {
         `INSERT INTO uids (uid_code, cycle_version_id, current_step, current_storage_id,
                             size_id, design_id, mo_id, priority, status, receiving_event_id,
                             dispatch_batch_id, created_by)
-         VALUES ($1,$2,'1',$3,$4,$5,$6,$7,'active',$8,$9,$10) RETURNING uid_code`,
-        [code, cycleVersionId, rmqStorageId, sizeId || null, designId || null, moId || null,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',$9,$10,$11) RETURNING uid_code`,
+        [code, cycleVersionId, genesisStep, genesisStorageId, sizeId || null, designId || null, moId || null,
           priority || 'Normal', receivingEventId || null, dispatchBatchId || null, req.user.sub]
       );
       created.push(rows[0].uid_code);
