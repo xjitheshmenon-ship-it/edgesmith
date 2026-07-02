@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { usePolling } from '../hooks/usePolling';
 import { mosApi, masterApi } from '../api/resources';
 import { uidsApi } from '../api/uids';
@@ -537,10 +538,13 @@ export default function MoLinking() {
     return () => { alive = false; };
   }, []);
 
-  const [selectedId, setSelectedId] = useState(null);
+  // Deep-link: other pages navigate here with ?mo=<number> to pre-open an MO
+  // (Appendix F.1 — "Click MO reference → Manufacturing Orders → MO detail").
+  const [params] = useSearchParams();
+  const [selectedId, setSelectedId] = useState(params.get('mo') || null);
 
   const mos = Array.isArray(data) ? data : data?.items || [];
-  const selectedMo = mos.find((m) => String(moId(m)) === String(selectedId)) || null;
+  const selectedMo = mos.find((m) => String(moId(m)) === String(selectedId) || String(moNumber(m)) === String(selectedId)) || null;
 
   return (
     <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>

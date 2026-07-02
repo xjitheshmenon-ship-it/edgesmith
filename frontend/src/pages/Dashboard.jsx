@@ -331,7 +331,7 @@ export default function Dashboard() {
           label="On hold"
           value={metrics.onHold}
           color="var(--status-danger, #e5484d)"
-          to="/floor?status=hold"
+          to="/uid?status=hold"
           loading={firstLoad}
         />
         <MetricCard
