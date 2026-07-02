@@ -6,6 +6,8 @@ import { useAuth } from '../store/AuthContext';
 import { uidsApi } from '../api/uids';
 import { jobsApi } from '../api/jobs';
 import { swapApi } from '../api/swap';
+import { queueApi } from '../api/queue';
+import { employeesApi } from '../api/resources';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
 
@@ -181,8 +183,9 @@ function SwapPanel({ swap, onGenerate, onOverride }) {
   );
 }
 
-function StationCard({ station, onClick, onSwapGenerate, onSwapOverride }) {
+function StationCard({ station, onClick, onSwapGenerate, onSwapOverride, onViewQueue }) {
   const { code, name, running, queued, runningUids, queuedUids, jobs = [], category, staffingModel, minOperators, assignedOperators, shiftIssued, noDirect, swap } = station;
+  const queueCount = (Number(running) || 0) + (Number(queued) || 0);
   const isIdle = running === 0 && queued === 0;
   const status = stationStatus(running, queued);
   const operators = jobs.map((j) => jpick(j, 'operator_name', 'operator')).filter(Boolean);
@@ -263,6 +266,11 @@ function StationCard({ station, onClick, onSwapGenerate, onSwapOverride }) {
       </div>
       {showCrew && <CrewBar assigned={assignedOperators} min={minOperators} />}
       {staffingModel === 2 && <SwapPanel swap={swap} onGenerate={onSwapGenerate} onOverride={onSwapOverride} />}
+      {onViewQueue && (
+        <button className="btn btn-sm" style={{ marginTop: 8, justifyContent: 'center' }} onClick={(e) => { e.stopPropagation(); onViewQueue({ code, name }); }}>
+          <Icon name="list" size={13} /> View queue ({queueCount})
+        </button>
+      )}
       {operators.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, fontFamily: SANS, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>
           <Icon name="user" size={11} />
@@ -304,12 +312,185 @@ function StationCard({ station, onClick, onSwapGenerate, onSwapOverride }) {
 
 /* ── page ─────────────────────────────────────────────────────────────── */
 
+function fmtWait(sec) {
+  const s = Math.max(0, Math.round(sec || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
+const NEXT_PRIORITY_UP = { Low: 'Normal', Normal: 'High', High: 'High' };
+const NEXT_PRIORITY_DOWN = { High: 'Normal', Normal: 'Low', Low: 'Low' };
+
+/* §Queue Management — right-side drawer over Production Floor: the UIDs waiting
+   at a workstation with priority / wait / source, reprioritise, hold, assign, and
+   furnace-batch group actions. */
+function QueueDrawer({ workstation, operators, canModify, onClose, onChanged }) {
+  const { data, loading, refetch } = usePolling(
+    () => queueApi.get(workstation.code).then((r) => r.data).catch(() => ({ items: [] })),
+    [workstation.code], { interval: 15000 }
+  );
+  const items = useMemo(() => (data?.items || []), [data]);
+  const [filter, setFilter] = useState('all');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [assignFor, setAssignFor] = useState(null); // uid_code being assigned
+
+  const run = async (fn) => {
+    setBusy(true); setErr(null);
+    try { await fn(); await refetch(); onChanged && onChanged(); }
+    catch (e) { setErr(e?.message || 'Action failed.'); }
+    finally { setBusy(false); }
+  };
+  const changePriority = (row, dir) => {
+    const next = (dir === 'up' ? NEXT_PRIORITY_UP : NEXT_PRIORITY_DOWN)[row.priority] || 'Normal';
+    if (next === row.priority) return;
+    run(() => queueApi.setPriority([row.uid_code], next));
+  };
+  const holdRow = (row) => {
+    const reason = window.prompt(`Hold ${row.uid_code} — reason:`);
+    if (!reason || !reason.trim()) return;
+    run(() => queueApi.hold([row.uid_code], reason.trim()));
+  };
+  const assignRow = (uidCode, operatorId) => run(() => queueApi.assign(uidCode, Number(operatorId))).then(() => setAssignFor(null));
+  const prioritiseBatch = (ref, codes) => run(() => queueApi.setPriority(codes, 'High'));
+  const holdBatch = (ref, codes) => {
+    const reason = window.prompt(`Hold all of ${ref} — reason:`);
+    if (!reason || !reason.trim()) return;
+    run(() => queueApi.hold(codes, reason.trim()));
+  };
+
+  const active = items.filter((i) => i.status === 'active');
+  const filtered = items.filter((i) => {
+    if (filter === 'high') return i.priority === 'High' && i.status === 'active';
+    if (filter === 'batch') return !!i.batch_ref && i.status === 'active';
+    if (filter === 'hold') return i.status === 'hold';
+    return i.status === 'active'; // 'all' = active queue
+  });
+
+  // Group by batch reference (batch arrivals cluster), non-batch rows loose.
+  const batchGroups = {};
+  const loose = [];
+  for (const it of filtered) {
+    if (it.batch_ref) { (batchGroups[it.batch_ref] = batchGroups[it.batch_ref] || []).push(it); }
+    else loose.push(it);
+  }
+
+  const FILTERS = [['all', 'All'], ['high', 'High priority'], ['batch', 'Batch arrivals'], ['hold', 'On hold']];
+
+  const Row = (it) => (
+    <div key={it.uid_code} style={{ border: '1px solid var(--border-card, #e3ebde)', borderRadius: 9, padding: '9px 11px', marginBottom: 7, background: it.status === 'hold' ? 'rgba(229,72,77,0.04)' : '#fff' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ width: 22, height: 22, borderRadius: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: '#fff', background: it.priority === 'High' ? '#e5484d' : '#9bb4d4' }}>{it.position}</span>
+        <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: 'var(--text-primary, #15366a)' }}>{it.uid_code}</span>
+        {it.size_mm ? <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>{it.size_mm}mm</span> : null}
+        {it.cycle_code ? <CycleBadge cycle={it.cycle_code} /> : null}
+        <PriorityBadge priority={it.priority} />
+        {it.status === 'hold' ? <span className="badge" style={{ background: 'rgba(229,72,77,0.14)', color: '#e5484d' }}>on hold</span> : null}
+      </div>
+      <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--text-secondary, #5d7188)', marginTop: 4 }}>
+        Wait: <span style={{ fontFamily: MONO }}>{fmtWait(it.wait_seconds)}</span>{it.source_step ? ` · From step ${it.source_step}${it.source_operation ? ` (${it.source_operation})` : ''}` : ''}
+      </div>
+      {canModify && it.status === 'active' && (
+        <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn-sm" style={{ padding: '3px 7px' }} disabled={busy} title="Raise priority" onClick={() => changePriority(it, 'up')}><Icon name="chevronRight" size={12} /> ↑</button>
+          <button className="btn btn-sm" style={{ padding: '3px 7px' }} disabled={busy} title="Lower priority" onClick={() => changePriority(it, 'down')}>↓</button>
+          <button className="btn btn-sm" style={{ padding: '3px 9px' }} disabled={busy} onClick={() => holdRow(it)}>Hold</button>
+          {assignFor === it.uid_code ? (
+            <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+              <select className="form-select" style={{ height: 30, fontSize: 12 }} disabled={busy} defaultValue="" onChange={(e) => e.target.value && assignRow(it.uid_code, e.target.value)}>
+                <option value="">Operator…</option>
+                {operators.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+              <button className="btn btn-sm" style={{ padding: '3px 7px' }} onClick={() => setAssignFor(null)}>✕</button>
+            </span>
+          ) : (
+            <button className="btn btn-sm btn-primary" style={{ padding: '3px 9px' }} disabled={busy} onClick={() => setAssignFor(it.uid_code)}>Assign →</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div onMouseDown={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(12,24,44,0.38)', zIndex: 200, display: 'flex', justifyContent: 'flex-end' }}>
+      <style>{'@keyframes slideInRight{from{transform:translateX(100%)}to{transform:translateX(0)}}'}</style>
+      <div onMouseDown={(e) => e.stopPropagation()} className="card" style={{ width: 520, maxWidth: '95vw', height: '100%', borderRadius: 0, padding: 0, display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-modal)', animation: 'slideInRight 250ms ease-out' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-card, #e3ebde)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 17, color: 'var(--text-primary, #15366a)' }}>{workstation.code} Queue</span>
+            <button className="btn btn-sm" onClick={onClose} style={{ width: 30, padding: 0, justifyContent: 'center' }}><Icon name="close" size={15} /></button>
+          </div>
+          <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)', marginTop: 2 }}>
+            {workstation.name} · {active.length} UID{active.length === 1 ? '' : 's'} waiting{loading && !data ? ' · loading…' : ''}
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 12, flexWrap: 'wrap' }}>
+            {FILTERS.map(([k, label]) => (
+              <button key={k} className="btn btn-sm" onClick={() => setFilter(k)}
+                style={{ background: filter === k ? 'var(--text-primary, #15366a)' : '#fff', color: filter === k ? '#fff' : 'var(--text-secondary, #5d7188)', border: filter === k ? 'none' : '1px solid var(--border-input, #d6e0d2)', fontWeight: filter === k ? 700 : 500 }}>{label}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '14px 20px' }}>
+          {err ? <div style={{ fontFamily: SANS, fontSize: 12.5, color: '#e5484d', marginBottom: 10 }}>{err}</div> : null}
+          {filtered.length === 0 ? (
+            <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--text-secondary, #5d7188)', textAlign: 'center', padding: '30px 0' }}>
+              {filter === 'hold' ? 'No held UIDs.' : 'Queue is clear — nothing waiting.'}
+            </div>
+          ) : (
+            <>
+              {Object.entries(batchGroups).map(([ref, group]) => {
+                const codes = group.map((g) => g.uid_code);
+                return (
+                  <div key={ref} style={{ marginBottom: 14 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px dashed var(--border-card, #e3ebde)', marginBottom: 8, flexWrap: 'wrap' }}>
+                      <Icon name="stack" size={13} color="#2d6fb5" />
+                      <span style={{ fontFamily: MONO, fontSize: 12, fontWeight: 700, color: '#2d6fb5' }}>{ref}</span>
+                      <span style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--text-secondary, #5d7188)' }}>{group.length} UIDs</span>
+                      {canModify && (
+                        <span style={{ display: 'inline-flex', gap: 6, marginLeft: 'auto' }}>
+                          <button className="btn btn-sm" style={{ padding: '2px 8px' }} disabled={busy} onClick={() => prioritiseBatch(ref, codes)}>Prioritise all</button>
+                          <button className="btn btn-sm" style={{ padding: '2px 8px' }} disabled={busy} onClick={() => holdBatch(ref, codes)}>Hold all</button>
+                        </span>
+                      )}
+                    </div>
+                    {group.map(Row)}
+                  </div>
+                );
+              })}
+              {loose.map(Row)}
+            </>
+          )}
+        </div>
+
+        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border-card, #e3ebde)', display: 'flex', alignItems: 'center', gap: 10, fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary, #5d7188)' }}>
+          <span>{active.length} UIDs</span><span>·</span>
+          <span>{active.filter((i) => i.priority === 'High').length} High</span><span>·</span>
+          <span>{Object.keys(batchGroups).length} batch group{Object.keys(batchGroups).length === 1 ? '' : 's'}</span>
+          <div style={{ flex: 1 }} />
+          <button className="btn btn-sm" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ProductionFloor() {
   const { location, locationLabel } = useApp();
-  const { user } = useAuth();
+  const { user, isSupervisor, isManager, isAdmin } = useAuth();
+  const canModifyQueue = isSupervisor || isManager || isAdmin;
   const [search, setSearch] = useState('');
   const [storageFilter, setStorageFilter] = useState(null);
   const [selectedCode, setSelectedCode] = useState(null);
+  const [queueFor, setQueueFor] = useState(null); // { code, name } → queue drawer
+  const [floorOperators, setFloorOperators] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    employeesApi.list({ role: 'operator', location }).then((r) => {
+      if (!alive) return;
+      setFloorOperators((r.data || []).map((e) => ({ id: jpick(e, 'id'), name: jpick(e, 'full_name', 'name', 'username') || `Op ${jpick(e, 'id')}` })));
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [location]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
@@ -499,7 +680,7 @@ export default function ProductionFloor() {
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
                 {visibleCards.map((s) => (
-                  <StationCard key={s.code} station={s} onClick={() => setSelectedCode(s.code)} onSwapGenerate={handleSwapGenerate} onSwapOverride={handleSwapOverride} />
+                  <StationCard key={s.code} station={s} onClick={() => setSelectedCode(s.code)} onSwapGenerate={handleSwapGenerate} onSwapOverride={handleSwapOverride} onViewQueue={setQueueFor} />
                 ))}
               </div>
             )}
@@ -542,6 +723,16 @@ export default function ProductionFloor() {
 
       {selectedStation && (
         <StationDrawer station={selectedStation} nowMs={nowMs} onClose={() => setSelectedCode(null)} />
+      )}
+
+      {queueFor && (
+        <QueueDrawer
+          workstation={queueFor}
+          operators={floorOperators}
+          canModify={canModifyQueue}
+          onClose={() => setQueueFor(null)}
+          onChanged={refetch}
+        />
       )}
     </div>
   );
