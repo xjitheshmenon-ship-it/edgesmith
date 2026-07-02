@@ -5,6 +5,7 @@ const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { createAlert } = require('../utils/alerts');
 const { classifyHrc, OUTCOME_LABEL } = require('../utils/hrcEngine');
+const { sampleCount, classifyScenario, decideAction } = require('../utils/batchSampling');
 
 const router = express.Router();
 router.use(authenticate, auditContext);
@@ -234,6 +235,129 @@ router.post('/hrc-samples/:id/result', requireRole(['admin', 'manager', 'supervi
   });
 
   await req.audit({ tableName: 'hrc_inspection_samples', recordId: out.sample.id, action: 'UPDATE', after: out });
+  return res.json({ success: true, data: out });
+});
+
+// ── Batch-level HRC sampling (Type 2) ────────────────────────────────────────
+
+/** Select `pct`% of the batch's not-yet-sampled pieces into the HRC queue for a
+ *  round. Returns the created sample rows joined to uid codes. */
+async function selectBatchSample(client, batch, round, pct) {
+  const { rows: pool } = await client.query(
+    `SELECT fbu.uid_id FROM furnace_batch_uids fbu
+     WHERE fbu.furnace_batch_id = $1
+       AND fbu.uid_id NOT IN (SELECT uid_id FROM hrc_inspection_samples WHERE furnace_batch_id = $1)
+     ORDER BY random()`, [batch.id]
+  );
+  const n = sampleCount(pool.length, pct);
+  const chosen = pool.slice(0, n).map((r) => r.uid_id);
+  if (!chosen.length) return [];
+  const { rows: srcRows } = await client.query(`SELECT step_number FROM cycle_steps WHERE id = $1`, [batch.cycle_step_id]);
+  const srcStep = srcRows[0] ? srcRows[0].step_number : null;
+  const created = [];
+  for (const uidId of chosen) {
+    // eslint-disable-next-line no-await-in-loop
+    const { rows } = await client.query(
+      `INSERT INTO hrc_inspection_samples (uid_id, source_step_number, status, selected_at, furnace_batch_id, sample_round)
+       VALUES ($1,$2,'pending',now(),$3,$4) RETURNING id, uid_id`,
+      [uidId, srcStep, batch.id, round]
+    );
+    created.push(rows[0]);
+  }
+  return created;
+}
+
+/** POST /api/v1/qc/batches/:batchId/hrc-sample — start round-1 (10%) sampling. */
+router.post('/batches/:batchId/hrc-sample', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const out = await withTransaction(async (client) => {
+    const { rows: bRows } = await client.query(`SELECT * FROM furnace_batches WHERE id = $1 FOR UPDATE`, [req.params.batchId]);
+    const batch = bRows[0];
+    if (!batch) throw Object.assign(new Error('Batch not found'), { status: 404, code: 'BATCH_NOT_FOUND' });
+    const { rows: existing } = await client.query(`SELECT COUNT(*)::int AS c FROM hrc_inspection_samples WHERE furnace_batch_id = $1 AND sample_round = 1`, [batch.id]);
+    if (existing[0].c > 0) throw Object.assign(new Error('Round 1 already sampled for this batch'), { status: 409, code: 'ALREADY_SAMPLED' });
+    const created = await selectBatchSample(client, batch, 1, 10);
+    const codes = created.length ? (await client.query(`SELECT uid_code FROM uids WHERE id = ANY($1)`, [created.map((c) => c.uid_id)])).rows.map((r) => r.uid_code) : [];
+    return { round: 1, selected: codes, count: created.length };
+  });
+  return res.status(201).json({ success: true, data: out });
+});
+
+/** GET /api/v1/qc/batches/:batchId/hrc-status — sample rounds + recommended action. */
+router.get('/batches/:batchId/hrc-status', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
+  const batchId = req.params.batchId;
+  const { rows: batch } = await query(`SELECT id, batch_number, status, recall_status, recall_reason, batch_retreatment_count FROM furnace_batches WHERE id = $1`, [batchId]);
+  if (!batch[0]) return res.status(404).json({ success: false, error: { code: 'BATCH_NOT_FOUND', message: 'Batch not found.' } });
+  const { rows: total } = await query(`SELECT COUNT(*)::int AS c FROM furnace_batch_uids WHERE furnace_batch_id = $1`, [batchId]);
+  const { rows: samples } = await query(
+    `SELECT s.sample_round, s.status, s.hrc_value, u.uid_code
+     FROM hrc_inspection_samples s JOIN uids u ON u.id = s.uid_id
+     WHERE s.furnace_batch_id = $1 ORDER BY s.sample_round, s.id`, [batchId]
+  );
+  const rounds = {};
+  for (const s of samples) {
+    const r = rounds[s.sample_round] || (rounds[s.sample_round] = { round: s.sample_round, samples: [], pass: 0, fail: 0, pending: 0 });
+    r.samples.push({ uidCode: s.uid_code, status: s.status, hrcValue: s.hrc_value });
+    if (s.status === 'pass') r.pass++; else if (s.status === 'fail') r.fail++; else r.pending++;
+  }
+  const roundList = Object.values(rounds).sort((a, b) => a.round - b.round);
+  const latest = roundList[roundList.length - 1];
+  let recommended = null;
+  if (latest && latest.pending === 0 && latest.samples.length) {
+    const scenario = classifyScenario(latest.pass, latest.samples.length);
+    recommended = { scenario, action: decideAction(latest.round, scenario) };
+  }
+  return res.json({ success: true, data: { batch: batch[0], totalPieces: total[0].c, rounds: roundList, recommended } });
+});
+
+/** POST /api/v1/qc/batches/:batchId/evaluate — apply the whole-batch decision
+ *  from the latest completed sampling round. */
+router.post('/batches/:batchId/evaluate', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const out = await withTransaction(async (client) => {
+    const { rows: bRows } = await client.query(`SELECT * FROM furnace_batches WHERE id = $1 FOR UPDATE`, [req.params.batchId]);
+    const batch = bRows[0];
+    if (!batch) throw Object.assign(new Error('Batch not found'), { status: 404, code: 'BATCH_NOT_FOUND' });
+
+    const { rows: rounds } = await client.query(
+      `SELECT sample_round, COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE status = 'pass')::int AS pass,
+              COUNT(*) FILTER (WHERE status = 'pending')::int AS pending
+       FROM hrc_inspection_samples WHERE furnace_batch_id = $1 GROUP BY sample_round ORDER BY sample_round DESC LIMIT 1`, [batch.id]
+    );
+    const latest = rounds[0];
+    if (!latest) throw Object.assign(new Error('No HRC sample taken yet'), { status: 400, code: 'NO_SAMPLE' });
+    if (latest.pending > 0) throw Object.assign(new Error('Some sampled pieces are still awaiting an HRC reading'), { status: 400, code: 'SAMPLE_INCOMPLETE' });
+
+    const scenario = classifyScenario(latest.pass, latest.total);
+    const action = decideAction(latest.sample_round, scenario);
+    const escalate = async (type, severity, message, roles) => {
+      for (const role of roles) {
+        // eslint-disable-next-line no-await-in-loop
+        await createAlert(client.query.bind(client), { type, severity, message, targetRole: role, linkPage: 'batch', linkRecordId: String(batch.id) });
+      }
+    };
+
+    if (action === 'second_sample') {
+      const created = await selectBatchSample(client, batch, latest.sample_round + 1, 5);
+      const codes = created.length ? (await client.query(`SELECT uid_code FROM uids WHERE id = ANY($1)`, [created.map((c) => c.uid_id)])).rows.map((r) => r.uid_code) : [];
+      await escalate('batch_sample', 'warning', `${batch.batch_number}: majority HRC fail — second sample of ${created.length} triggered`, ['supervisor', 'manager']);
+      return { scenario, action, round: latest.sample_round + 1, selected: codes };
+    }
+    if (action === 'recall') {
+      const { rows: uidRows } = await client.query(`SELECT uid_id FROM furnace_batch_uids WHERE furnace_batch_id = $1`, [batch.id]);
+      const ids = uidRows.map((r) => r.uid_id);
+      if (ids.length) await client.query(`UPDATE uids SET status = 'hold', hold_reason = 'Batch HRC failure — recall' WHERE id = ANY($1)`, [ids]);
+      await client.query(`UPDATE furnace_batches SET recall_status = 'recalled', recall_reason = $2, batch_retreatment_count = batch_retreatment_count + 1 WHERE id = $1`, [batch.id, `HRC ${scenario} in round ${latest.sample_round}`]);
+      await escalate('batch_recall', 'critical', `${batch.batch_number}: batch recalled — HRC ${scenario}. ${ids.length} pieces held for re-treatment.`, ['supervisor', 'manager', 'admin']);
+      return { scenario, action, heldPieces: ids.length };
+    }
+    if (action === 'partial_warning') {
+      await client.query(`UPDATE furnace_batches SET recall_status = 'partial_warning', recall_reason = 'Partial HRC failure — monitor closely' WHERE id = $1`, [batch.id]);
+      await escalate('batch_sample', 'warning', `${batch.batch_number}: partial HRC failure — monitor closely`, ['supervisor']);
+      return { scenario, action };
+    }
+    // continue | individual — failed sample pieces were already routed on recording
+    return { scenario, action };
+  });
   return res.json({ success: true, data: out });
 });
 

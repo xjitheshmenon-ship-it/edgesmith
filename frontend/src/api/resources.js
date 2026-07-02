@@ -87,6 +87,10 @@ export const qcApi = {
   // Random HRC inspection sampling queue
   hrcSamples: (status) => api.get('/qc/hrc-samples', { status }),
   recordHrc: (id, hrcValue, result, notes) => api.post(`/qc/hrc-samples/${id}/result`, { hrcValue, result, notes }),
+  // Batch-level HRC sampling (Type 2)
+  batchHrcStatus: (batchId) => api.get(`/qc/batches/${batchId}/hrc-status`),
+  batchHrcSample: (batchId) => api.post(`/qc/batches/${batchId}/hrc-sample`),
+  batchHrcEvaluate: (batchId) => api.post(`/qc/batches/${batchId}/evaluate`),
 };
 
 export const reportsApi = {
