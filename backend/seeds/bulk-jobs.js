@@ -10,6 +10,7 @@
 require('dotenv').config();
 const format = require('pg-format');
 const { pool, query, withTransaction } = require('../src/config/database');
+const { generateUids } = require('../src/utils/uidGenerator');
 
 const PER_STEP = 75;          // jobs per operation → ~28 steps × 75 = ~2100
 const SKIP_IF_UIDS_ATLEAST = 1500;   // idempotency guard
@@ -61,9 +62,19 @@ async function main() {
   const admin = (await query(`SELECT id FROM employees WHERE username = 'admin' LIMIT 1`)).rows[0];
   const adminId = admin ? admin.id : null;
 
-  // Continue the UID number series so codes never collide.
-  const series = (await query(`SELECT next_number FROM uid_series WHERE cycle_type_id = $1`, [eat.id])).rows[0];
-  let seq = series ? series.next_number : 1;
+  // Continue the UID series using the §1-compliant generator (1 letter + 3
+  // digits, rollover to the next unused letter at 999). currentLetter/nextNumber
+  // are read from uid_series so codes continue where the base/demo seed left off;
+  // seriesAll lets the generator avoid colliding with other cycle types' letters.
+  const mine = (await query(
+    `SELECT current_letter AS "currentLetter", next_number AS "nextNumber"
+     FROM uid_series WHERE cycle_type_id = $1`, [eat.id]
+  )).rows[0] || { currentLetter: eat.letter, nextNumber: 1 };
+  const seriesAll = (await query(
+    `SELECT current_letter AS "currentLetter", next_number AS "nextNumber" FROM uid_series`
+  )).rows;
+  const totalJobs = steps.length * PER_STEP;
+  const { codes: uidCodes, newState } = generateUids(mine, seriesAll, totalJobs);
 
   const rows = [];
   let idx = 0;
@@ -77,7 +88,7 @@ async function main() {
       if (step.step_number === lastStep && i % 3 === 0) status = 'done';
       else if (i % 37 === 0) status = 'hold';
       const holdReason = status === 'hold' ? 'Awaiting QC re-check (sample)' : null;
-      const code = `${eat.letter}${String(seq++).padStart(5, '0')}`;
+      const code = uidCodes[idx];
       rows.push([
         code, eat.version_id, step.step_number, step.source_storage_id,
         sizeId, designId, moId, pickPriority(idx), status, holdReason, adminId,
@@ -95,7 +106,10 @@ async function main() {
          VALUES %L`, chunk
       ));
     }
-    await client.query(`UPDATE uid_series SET next_number = $1 WHERE cycle_type_id = $2`, [seq, eat.id]);
+    await client.query(
+      `UPDATE uid_series SET current_letter = $1, next_number = $2 WHERE cycle_type_id = $3`,
+      [newState.currentLetter, newState.nextNumber, eat.id]
+    );
     // MOs with linked jobs move to active.
     await client.query(
       `UPDATE manufacturing_orders SET status = 'active'
@@ -103,7 +117,7 @@ async function main() {
     );
   });
 
-  console.log(`bulk-jobs: seeded ${rows.length} jobs across ${steps.length} EAT operations (codes ${eat.letter}${String(series ? series.next_number : 1).padStart(5, '0')}…${eat.letter}${String(seq - 1).padStart(5, '0')}).`);
+  console.log(`bulk-jobs: seeded ${rows.length} jobs across ${steps.length} EAT operations (codes ${uidCodes[0]}…${uidCodes[uidCodes.length - 1]}).`);
 
   // With the full UID population in place, ensure every Dharmapuri workstation
   // shows an operator (idempotent per-unit top-up).

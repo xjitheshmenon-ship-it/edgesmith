@@ -19,6 +19,7 @@
 require('dotenv').config();
 const bcrypt = require('bcrypt');
 const { pool, query, withTransaction } = require('../src/config/database');
+const { generateUids } = require('../src/utils/uidGenerator');
 
 const DEMO_DISPATCH_REF = 'FAR-DISP-DEMO-001';
 
@@ -395,12 +396,23 @@ async function main() {
       ['23', 'active', 2], ['26', 'active', 3], ['27', 'done', 3],
       ['6', 'hold', 2],
     ];
-    let seq = 1;
+    // §1-compliant codes (1 letter + 3 digits, rollover at 999). Generate the
+    // whole demo run up front from the current uid_series state.
+    const totalUids = dist.reduce((s, d) => s + d[2], 0);
+    const mine = (await one(
+      `SELECT current_letter AS "currentLetter", next_number AS "nextNumber"
+       FROM uid_series WHERE cycle_type_id=$1`, [eat.id], 'EAT uid_series'
+    ));
+    const seriesAll = (await q(
+      `SELECT current_letter AS "currentLetter", next_number AS "nextNumber" FROM uid_series`
+    )).rows;
+    const { codes: uidCodes, newState } = generateUids(mine, seriesAll, totalUids);
+    let seq = 0;
     const uidsByStep = {};
     for (const [stepNum, status, count] of dist) {
       uidsByStep[stepNum] = uidsByStep[stepNum] || [];
       for (let i = 0; i < count; i++) {
-        const code = `${eat.letter}${String(seq).padStart(5, '0')}`;
+        const code = uidCodes[seq];
         seq++;
         const moId = moIds[seq % moIds.length];
         const holdReason = status === 'hold' ? 'Awaiting QC re-check (demo)' : null;
@@ -413,7 +425,7 @@ async function main() {
         uidsByStep[stepNum].push(row.id);
       }
     }
-    await q(`UPDATE uid_series SET next_number=$1 WHERE cycle_type_id=$2`, [seq, eat.id]);
+    await q(`UPDATE uid_series SET current_letter=$1, next_number=$2 WHERE cycle_type_id=$3`, [newState.currentLetter, newState.nextNumber, eat.id]);
 
     const allUidIds = Object.values(uidsByStep).flat();
 
