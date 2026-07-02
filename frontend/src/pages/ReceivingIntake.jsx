@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { useApp } from '../store/AppContext';
 import { useAuth } from '../store/AuthContext';
@@ -313,23 +313,32 @@ function MsIntakeTab({ canCreate }) {
   const [heatNumber, setHeatNumber] = useState('');
   const [dateReceived, setDateReceived] = useState(todayISO);
   const [poReference, setPoReference] = useState('');
-  const [entries, setEntries] = useState([{ sheetId: '', qty: '' }]);
+  // MS sheet length & width are input per delivery; only the height (thickness)
+  // is a fixed standard pulled from the Master List. Offer the distinct heights.
+  const heightStandards = useMemo(() => {
+    const seen = new Map();
+    for (const s of sheets) { const h = num(s.height_mm ?? s.heightMm); if (h && !seen.has(h)) seen.set(h, h); }
+    return [...seen.keys()].sort((a, b) => a - b);
+  }, [sheets]);
+  const defaultHeight = heightStandards.length === 1 ? String(heightStandards[0]) : '';
+
+  const [entries, setEntries] = useState([{ height: defaultHeight, length: '', width: '', qty: '' }]);
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  function sheetOf(id) { return sheets.find((s) => String(s.id) === String(id)) || null; }
-  function dims(id) {
-    const s = sheetOf(id);
-    return s ? { l: num(s.length_mm ?? s.lengthMm), w: num(s.width_mm ?? s.widthMm), h: num(s.height_mm ?? s.heightMm) } : { l: 0, w: 0, h: 0 };
-  }
-  function entryWeight(e) { const d = dims(e.sheetId); return STEEL_DENSITY * d.w * d.l * d.h * num(e.qty); }
+  // once the single-height standard loads, pre-fill any blank height cells
+  useEffect(() => {
+    if (defaultHeight) setEntries((es) => es.map((e) => (e.height ? e : { ...e, height: defaultHeight })));
+  }, [defaultHeight]);
+
+  function entryWeight(e) { return STEEL_DENSITY * num(e.width) * num(e.length) * num(e.height) * num(e.qty); }
   const totalSheets = entries.reduce((s, e) => s + num(e.qty), 0);
   const totalWeight = entries.reduce((s, e) => s + entryWeight(e), 0);
 
   const setEntry = (i, k, v) => setEntries((es) => es.map((e, j) => (j === i ? { ...e, [k]: v } : e)));
-  const addEntry = () => setEntries((es) => [...es, { sheetId: '', qty: '' }]);
+  const addEntry = () => setEntries((es) => [...es, { height: defaultHeight, length: '', width: '', qty: '' }]);
   const removeEntry = (i) => setEntries((es) => (es.length > 1 ? es.filter((_, j) => j !== i) : es));
   function resolveSupplier() { return supplier === ADD_NEW ? newSupplier.trim() : supplier.trim(); }
 
@@ -339,8 +348,8 @@ function MsIntakeTab({ canCreate }) {
     const sup = resolveSupplier();
     if (!sup) return setError('Supplier is required.');
     if (!heatNumber.trim()) return setError('Heat number is required.');
-    const valid = entries.filter((en) => en.sheetId && num(en.qty) > 0);
-    if (!valid.length) return setError('Add at least one sheet entry with a size and quantity.');
+    const valid = entries.filter((en) => num(en.height) > 0 && num(en.length) > 0 && num(en.width) > 0 && num(en.qty) > 0);
+    if (!valid.length) return setError('Add at least one sheet entry with length, width and quantity.');
 
     setBusy(true);
     try {
@@ -352,11 +361,11 @@ function MsIntakeTab({ canCreate }) {
         dateReceived,
         poReference: poReference.trim() || undefined,
         notes: notes.trim() || undefined,
-        entries: valid.map((en) => { const d = dims(en.sheetId); return { length_mm: d.l, width_mm: d.w, height_mm: d.h, quantity: num(en.qty) }; }),
+        entries: valid.map((en) => ({ length_mm: num(en.length), width_mm: num(en.width), height_mm: num(en.height), quantity: num(en.qty) })),
       });
       setSuccess(`Intake recorded · heat ${heatNumber.trim()} · ${totalSheets} sheets, ${totalWeight.toFixed(1)} kg.`);
       setHeatNumber(''); setPoReference(''); setNotes('');
-      setEntries([{ sheetId: '', qty: '' }]);
+      setEntries([{ height: defaultHeight, length: '', width: '', qty: '' }]);
       logRef.refetch();
     } catch (err) {
       setError(err.message || 'Could not save the intake.');
@@ -398,25 +407,34 @@ function MsIntakeTab({ canCreate }) {
           <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: T_MUTED, marginBottom: 6 }}>Sheet entries</div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr><th style={ENTRY_TH}>Sheet size (L × W × H)</th><th style={ENTRY_TH}>Qty</th><th style={{ ...ENTRY_TH, textAlign: 'right' }}>Weight</th><th style={ENTRY_TH} /></tr>
+              <tr>
+                <th style={ENTRY_TH}>Length (mm)</th><th style={ENTRY_TH}>Width (mm)</th>
+                <th style={ENTRY_TH}>Height</th><th style={ENTRY_TH}>Qty</th>
+                <th style={{ ...ENTRY_TH, textAlign: 'right' }}>Weight</th><th style={ENTRY_TH} />
+              </tr>
             </thead>
             <tbody>
               {entries.map((en, i) => {
-                const d = dims(en.sheetId);
+                const ready = num(en.height) > 0 && num(en.length) > 0 && num(en.width) > 0 && num(en.qty) > 0;
                 return (
                   <tr key={i}>
-                    <td style={ENTRY_TD}>
-                      <select className="form-select" style={{ height: 34 }} value={en.sheetId} onChange={(e) => setEntry(i, 'sheetId', e.target.value)}>
-                        <option value="">Sheet size…</option>
-                        {sheets.map((s) => <option key={s.id} value={s.id}>{s.label || `${s.length_mm ?? s.lengthMm} × ${s.width_mm ?? s.widthMm} × ${s.height_mm ?? s.heightMm}`}</option>)}
-                      </select>
-                      {en.sheetId ? <div style={{ fontFamily: MONO, fontSize: 10, color: T_MUTED, marginTop: 3 }}>height {d.h}mm (from Master List)</div> : null}
+                    <td style={{ ...ENTRY_TD, width: 90 }}>
+                      <input className="form-input" style={{ height: 34 }} type="number" min="0" step="any" placeholder="length" value={en.length} onChange={(e) => setEntry(i, 'length', e.target.value)} />
                     </td>
-                    <td style={{ ...ENTRY_TD, width: 80 }}>
+                    <td style={{ ...ENTRY_TD, width: 90 }}>
+                      <input className="form-input" style={{ height: 34 }} type="number" min="0" step="any" placeholder="width" value={en.width} onChange={(e) => setEntry(i, 'width', e.target.value)} />
+                    </td>
+                    <td style={{ ...ENTRY_TD, width: 96 }}>
+                      <select className="form-select" style={{ height: 34 }} value={en.height} onChange={(e) => setEntry(i, 'height', e.target.value)}>
+                        <option value="">height…</option>
+                        {heightStandards.map((h) => <option key={h} value={h}>{h}mm</option>)}
+                      </select>
+                    </td>
+                    <td style={{ ...ENTRY_TD, width: 70 }}>
                       <input className="form-input" style={{ height: 34 }} type="number" min="0" step="1" placeholder="qty" value={en.qty} onChange={(e) => setEntry(i, 'qty', e.target.value)} />
                     </td>
                     <td style={{ ...ENTRY_TD, textAlign: 'right', fontFamily: MONO, fontSize: 12, color: T_PRIMARY, whiteSpace: 'nowrap' }}>
-                      {(en.sheetId && num(en.qty) > 0) ? `${entryWeight(en).toFixed(1)} kg` : '—'}
+                      {ready ? `${entryWeight(en).toFixed(1)} kg` : '—'}
                     </td>
                     <td style={{ ...ENTRY_TD, width: 30, textAlign: 'right' }}>
                       {entries.length > 1 && (
@@ -430,6 +448,9 @@ function MsIntakeTab({ canCreate }) {
               })}
             </tbody>
           </table>
+          <div style={{ fontFamily: SANS, fontSize: 10.5, color: T_MUTED, marginTop: 6 }}>
+            Length &amp; width are entered per delivery; height/thickness is the fixed standard from Master Lists.
+          </div>
           <button type="button" className="btn btn-sm" onClick={addEntry} style={{ marginTop: 8 }}>
             <Icon name="plus" size={13} /> Add sheet size
           </button>
