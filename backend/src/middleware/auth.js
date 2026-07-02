@@ -26,6 +26,19 @@ function authenticate(req, res, next) {
   for (const token of candidates) {
     try {
       req.user = verifyToken(token);
+      // Director is read-only everywhere. Block every mutating method at this
+      // single choke point (every router runs authenticate), so no individual
+      // write route can accidentally let a Director through. Auth-lifecycle
+      // calls (refresh/logout) are exempt — they are session management, not
+      // data writes.
+      const MUTATING = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH' || req.method === 'DELETE';
+      const isAuthLifecycle = /\/auth\//.test(req.originalUrl || req.url || '');
+      if (req.user.role === 'director' && MUTATING && !isAuthLifecycle) {
+        return res.status(403).json({
+          success: false,
+          error: { code: 'READ_ONLY_ROLE', message: 'Director is a read-only role — this action is not available.' },
+        });
+      }
       return next();
     } catch (err) {
       // try the next candidate before giving up

@@ -30,6 +30,7 @@ async function main() {
   console.log('Seeding CPCMS database...\n');
 
   await seedAdminUser();
+  await seedDirectorUser();
   const wsIds = await seedWorkstations();
   await seedWorkstationUnits(wsIds);
   await initStaffingModel();
@@ -63,6 +64,24 @@ async function seedAdminUser() {
     [passwordHash]
   );
   console.log('✓ Admin user created (username: admin / password: ChangeMe123!)');
+}
+
+// The Director is a read-only oversight account: it can view every page and
+// both locations (location_id NULL, like Admin) but the backend blocks every
+// write. Seeded once, idempotently.
+async function seedDirectorUser() {
+  const { rows: existing } = await query(`SELECT id FROM employees WHERE username = 'director'`);
+  if (existing.length) {
+    console.log('✓ Director user already exists, skipping.');
+    return;
+  }
+  const passwordHash = await bcrypt.hash('ChangeMe123!', 10);
+  await query(
+    `INSERT INTO employees (employee_code, full_name, username, password_hash, role, location_id, status)
+     VALUES ('EMP-DIR-001','Director (read-only)','director',$1,'director',NULL,'active')`,
+    [passwordHash]
+  );
+  console.log('✓ Director user created (username: director / password: ChangeMe123!)');
 }
 
 const WORKSTATIONS = [
