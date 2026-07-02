@@ -31,6 +31,40 @@ router.get('/', async (req, res) => {
 });
 
 /**
+ * GET /api/v1/workstation-assignments/mine?operatorId=X
+ * The workstations an operator is assigned to for the current open shift,
+ * expanded to their units (so My Workstation can show a tab per workstation even
+ * before any job is queued there). Operators may only view their own; oversight
+ * roles may pass ?operatorId to view any operator.
+ */
+router.get('/mine', async (req, res) => {
+  const operatorId = req.query.operatorId ? Number(req.query.operatorId) : req.user.sub;
+  if (req.user.role === 'operator' && operatorId !== req.user.sub) {
+    return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'You can only view your own assignments.' } });
+  }
+  const { rows: empRows } = await query(`SELECT location_id FROM employees WHERE id = $1`, [operatorId]);
+  const locationId = empRows[0] ? empRows[0].location_id : (req.user.location_id || 1);
+  const { rows: shiftRows } = await query(
+    `SELECT id FROM shifts WHERE ended_at IS NULL AND location_id = $1 ORDER BY id DESC LIMIT 1`, [locationId]
+  );
+  const shiftId = shiftRows[0] ? shiftRows[0].id : null;
+  if (!shiftId) return res.json({ success: true, data: [] });
+
+  const { rows } = await query(
+    `SELECT wt.id AS workstation_type_id, wt.code AS workstation_type_code, wt.name, wt.category,
+            wt.staffing_model, wt.no_direct_assignment,
+            wu.id AS workstation_unit_id, wu.unit_code, wu.unit_name
+     FROM workstation_assignments wa
+     JOIN workstation_types wt ON wt.id = wa.workstation_type_id
+     JOIN workstation_units wu ON wu.workstation_type_id = wt.id
+     WHERE wa.employee_id = $1 AND wa.shift_id = $2 AND wa.unassigned_at IS NULL
+     ORDER BY wu.unit_code`,
+    [operatorId, shiftId]
+  );
+  return res.json({ success: true, data: rows });
+});
+
+/**
  * POST /api/v1/workstation-assignments
  * Supervisor drags a workstation onto an operator card.
  * body: { shiftId, employeeId, workstationTypeId, overrideBadgeWarning? }

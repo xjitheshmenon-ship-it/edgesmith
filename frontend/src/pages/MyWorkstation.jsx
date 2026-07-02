@@ -3,7 +3,7 @@ import { usePolling } from '../hooks/usePolling';
 import { jobsApi, PAUSE_REASONS } from '../api/jobs';
 import { uidsApi } from '../api/uids';
 import { batchesApi } from '../api/batches';
-import { cyclesApi, masterApi, employeesApi } from '../api/resources';
+import { cyclesApi, masterApi, employeesApi, workstationAssignmentsApi } from '../api/resources';
 import { swapApi } from '../api/swap';
 import { useAuth } from '../store/AuthContext';
 import Icon from '../components/common/Icon';
@@ -1417,29 +1417,51 @@ export default function MyWorkstation() {
 
   const { data, error, loading, refetch } = usePolling(
     () => (viewOperatorId == null
-      ? Promise.resolve([])
-      : jobsApi.list({ assignedTo: viewOperatorId, operator: viewOperatorId }).then((r) => r.data)),
+      ? Promise.resolve({ jobs: [], assigned: [] })
+      : Promise.all([
+        jobsApi.list({ assignedTo: viewOperatorId, operator: viewOperatorId }).then((r) => r.data).catch(() => []),
+        // The shift-level workstation assignments (Work Assignment page) so a
+        // staffed workstation shows a tab even before any job is queued there.
+        workstationAssignmentsApi.mine(viewOperatorId).then((r) => r.data).catch(() => []),
+      ]).then(([jobsData, assigned]) => ({ jobs: jobsData, assigned: assigned || [] }))),
     [viewOperatorId]
   );
 
   // Normalise to a flat job array regardless of envelope shape.
   const jobs = useMemo(() => {
-    if (!data) return [];
-    if (Array.isArray(data)) return data;
-    return data.jobs || data.items || data.results || [];
+    const jd = data && !Array.isArray(data) ? data.jobs : data;
+    if (!jd) return [];
+    if (Array.isArray(jd)) return jd;
+    return jd.jobs || jd.items || jd.results || [];
   }, [data]);
 
-  // Group jobs into workstations (an operator can run several this shift).
+  const assignedUnits = useMemo(() => (data && !Array.isArray(data) ? (data.assigned || []) : []), [data]);
+
+  // Build the operator's workstation tabs from BOTH their shift assignments
+  // (so a staffed workstation shows even with no jobs) and any workstation where
+  // they have jobs. Keyed by workstation unit code.
   const stations = useMemo(() => {
     const map = new Map();
+    for (const a of assignedUnits) {
+      const code = pick(a, 'unit_code', 'workstation_type_code') || 'Unassigned';
+      if (!map.has(code)) {
+        map.set(code, {
+          code,
+          name: pick(a, 'name', 'unit_name', 'workstation_type_code') || code,
+          unit_id: pick(a, 'workstation_unit_id', 'unit_id'),
+          workstation_type_code: pick(a, 'workstation_type_code'),
+          jobs: [],
+        });
+      }
+    }
     for (const job of jobs) {
       const code = pick(job, 'workstation_code', 'unit_code', 'workstation', 'station', 'station_code') || 'Unassigned';
       const name = pick(job, 'workstation_name', 'unit_name', 'workstation_type_code') || code;
-      if (!map.has(code)) map.set(code, { code, name, jobs: [] });
+      if (!map.has(code)) map.set(code, { code, name, unit_id: pick(job, 'workstation_unit_id'), jobs: [] });
       map.get(code).jobs.push(job);
     }
     return Array.from(map.values()).sort((a, b) => a.code.localeCompare(b.code));
-  }, [jobs]);
+  }, [jobs, assignedUnits]);
 
   const [activeStation, setActiveStation] = useState(null);
   useEffect(() => {
@@ -1452,8 +1474,9 @@ export default function MyWorkstation() {
 
   // SG-DLT bunch-grinding stations use a different model: the operator loads
   // several bars at once. Detect by the jobs' workstation type.
-  const isBunch = (station?.jobs || []).some((j) => pick(j, 'workstation_type_code') === 'SG-DLT');
-  const unitId = pick(station?.jobs?.[0] || {}, 'workstation_unit_id');
+  const isBunch = (station?.jobs || []).some((j) => pick(j, 'workstation_type_code') === 'SG-DLT')
+    || String(station?.workstation_type_code || station?.code || '').startsWith('SG-DLT');
+  const unitId = pick(station?.jobs?.[0] || {}, 'workstation_unit_id') ?? station?.unit_id;
 
   // Within a station: the active (in-progress/paused) job vs. queued jobs.
   const activeJob = useMemo(
