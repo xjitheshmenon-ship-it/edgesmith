@@ -54,7 +54,7 @@ function simpleResource(tableName, { fields, writableRoles = ['admin'] }) {
 }
 
 router.use('/workstation-types', simpleResource('workstation_types', {
-  fields: [{ key: 'code', column: 'code' }, { key: 'name', column: 'name' }, { key: 'category', column: 'category' }, { key: 'locationId', column: 'location_id' }, { key: 'status', column: 'status' }],
+  fields: [{ key: 'code', column: 'code' }, { key: 'name', column: 'name' }, { key: 'category', column: 'category' }, { key: 'locationId', column: 'location_id' }, { key: 'minOperators', column: 'min_operators' }, { key: 'status', column: 'status' }],
 }));
 
 router.use('/workstation-units', simpleResource('workstation_units', {

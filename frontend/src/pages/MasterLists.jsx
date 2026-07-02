@@ -159,13 +159,14 @@ const TABS = [
     create: (p) => masterApi.createWorkstationType(p),
     update: (id, p) => masterApi.updateWorkstationType(id, p),
     archive: (id) => masterApi.archiveWorkstationType(id),
-    columns: ['Code', 'Name', 'Category', 'Location', 'Status', ''],
+    columns: ['Code', 'Name', 'Category', 'Location', 'Min ops', 'Status', ''],
     renderRow: (row, ctx) => (
       <>
         <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['code', 'workstation_code'])}</td>
         <td style={TD}>{pick(row, ['name', 'workstation_name'])}</td>
         <td style={TD}>{pick(row, ['category', 'workstation_category', 'type'])}</td>
         <td style={TD}>{row.location ? <LocationBadge location={row.location} /> : (pick(row, ['site']) === 'both' ? 'Both' : pick(row, ['site']))}</td>
+        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['minOperators', 'min_operators']) ?? 1}</td>
         <td style={TD}>{StatusOf(row)}</td>
         <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
       </>
@@ -175,7 +176,9 @@ const TABS = [
       { name: 'name', label: 'Name', required: true, placeholder: 'Workstation name' },
       { name: 'category', label: 'Category', placeholder: 'e.g. furnace, grinding' },
       { name: 'location', label: 'Location', type: 'select', options: [...LOCATION_OPTS, { value: 'both', label: 'Both' }] },
+      { name: 'minOperators', label: 'Minimum operators', type: 'number', placeholder: '1', hint: 'how many operators this workstation needs on shift' },
     ],
+    transform: (v) => ({ ...v, minOperators: v.minOperators !== '' && v.minOperators != null ? Number(v.minOperators) : undefined }),
   },
   {
     key: 'badgeTypes',
