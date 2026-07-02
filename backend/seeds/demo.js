@@ -390,8 +390,11 @@ async function main() {
 
     // ── UIDs spread across steps / storages / statuses ────────────────────────
     // [step_number, status, count]
+    // §1 — UIDs are born at the Tagging Table (step 2); Band Saw Cutting (step 1)
+    // and Tagging (step 2) are pre-UID, so no active UID ever sits there. Genesis
+    // enters the cycle at step 3 (post-tagging).
     const dist = [
-      ['1', 'active', 4], ['2', 'active', 3], ['4', 'active', 3], ['5', 'active', 3],
+      ['3', 'active', 4], ['4', 'active', 3], ['5', 'active', 3],
       ['9', 'active', 4], ['12', 'active', 4], ['14', 'active', 2], ['18', 'active', 3],
       ['23', 'active', 2], ['26', 'active', 3], ['27', 'done', 3],
       ['6', 'hold', 2],
@@ -489,26 +492,28 @@ async function main() {
     const primaryOp = operators[0];
     // Pick steps that have a real workstation unit so every job lands on a
     // named workstation (four distinct ones → four tabs).
-    const jobSteps = ['1', '4', '5', '18'].filter((sn) => unitForStep(sn));
+    // §1 — no UID at Band Saw (1) or Tagging (2); the live jobs start at step 3.
+    const jobSteps = ['3', '4', '5', '18'].filter((sn) => unitForStep(sn));
     let activeUid = null;
+    let activeStepNum = null;
     for (const sn of jobSteps) {
       const ids = (uidsByStep[sn] || []).slice(0, 2);
       for (let i = 0; i < ids.length; i++) {
-        const isActive = sn === '1' && i === 0; // one running job at the first station
+        const isActive = !activeUid && i === 0; // one running job at the first station with work
         await q(
           `INSERT INTO jobs (shift_id, uid_id, cycle_step_id, workstation_unit_id, operator_id, status, assigned_by, assignment_type)
            VALUES ($1,$2,$3,$4,$5,$6,$7,'manual')`,
           [shiftId, ids[i], stepByNum[sn].id, unitForStep(sn), primaryOp, isActive ? 'in_progress' : 'queued', supDhr]
         );
-        if (isActive) activeUid = ids[i];
+        if (isActive) { activeUid = ids[i]; activeStepNum = sn; }
       }
     }
     // Open (un-closed) step log for the running job so its timer shows ~12 min.
     if (activeUid) {
       await q(
         `INSERT INTO uid_step_logs (uid_id, step_number, operation_name, workstation_unit_id, operator_id, shift_id, started_at)
-         VALUES ($1,'1',$2,$3,$4,$5, now() - interval '12 minutes')`,
-        [activeUid, stepByNum['1'].operation_name, unitForStep('1'), primaryOp, shiftId]
+         VALUES ($1,$2,$3,$4,$5,$6, now() - interval '12 minutes')`,
+        [activeUid, activeStepNum, stepByNum[activeStepNum].operation_name, unitForStep(activeStepNum), primaryOp, shiftId]
       );
     }
 

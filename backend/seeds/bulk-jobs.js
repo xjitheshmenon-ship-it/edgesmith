@@ -73,13 +73,16 @@ async function main() {
   const seriesAll = (await query(
     `SELECT current_letter AS "currentLetter", next_number AS "nextNumber" FROM uid_series`
   )).rows;
-  const totalJobs = steps.length * PER_STEP;
+  // §1 — Band Saw Cutting (step 1) and initial UID Tagging (step 2) are pre-UID,
+  // so no UID is seeded there.
+  const eligibleSteps = steps.filter((s) => s.step_number !== '1' && s.step_number !== '2');
+  const totalJobs = eligibleSteps.length * PER_STEP;
   const { codes: uidCodes, newState } = generateUids(mine, seriesAll, totalJobs);
 
   const rows = [];
   let idx = 0;
-  const lastStep = steps[steps.length - 1].step_number;
-  for (const step of steps) {
+  const lastStep = eligibleSteps[eligibleSteps.length - 1].step_number;
+  for (const step of eligibleSteps) {
     for (let i = 0; i < PER_STEP; i++, idx++) {
       const [sizeId, designId] = pairs[idx % pairs.length];
       const moId = moIds.length ? moIds[idx % moIds.length] : null;

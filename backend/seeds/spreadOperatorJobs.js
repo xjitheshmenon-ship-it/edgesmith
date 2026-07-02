@@ -57,6 +57,9 @@ async function spreadOperatorJobs({ query, withTransaction }) {
     for (const u of units) {
       const st = stepByType[u.workstation_type_id];
       if (!st) continue;
+      // §1 — Band Saw Cutting (step 1) and initial UID Tagging (step 2) are
+      // pre-UID (block-level / genesis), so they never carry UID jobs.
+      if (st.step_number === '1' || st.step_number === '2') continue;
       const { rows: has } = await client.query(
         `SELECT 1 FROM jobs WHERE workstation_unit_id=$1 AND status IN ('queued','in_progress','paused') LIMIT 1`,
         [u.unit_id]
