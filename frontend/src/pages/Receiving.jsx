@@ -299,9 +299,9 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, sizes = [], operatorN
   const { remaining } = dispatchTotals(dispatch || {});
 
   const [dateReceived, setDateReceived] = useState(() => new Date().toISOString().slice(0, 10));
-  const [billets, setBillets] = useState('');
+  // A delivery can carry blocks at several post-rolling sizes — enter one row per size.
+  const [blockEntries, setBlockEntries] = useState([{ sizeId: '', count: '' }]);
   const [receivedColor, setReceivedColor] = useState('');
-  const [postRollingSizeId, setPostRollingSizeId] = useState('');
   const [condition, setCondition] = useState('good');
   const [receivedBy, setReceivedBy] = useState(operatorName || '');
   const [receivedByTouched, setReceivedByTouched] = useState(false);
@@ -322,7 +322,11 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, sizes = [], operatorN
   }, [operatorName, receivedByTouched]);
 
   const damage = condition === 'minor_damage' || condition === 'significant_damage';
-  const billetsNum = Number(billets);
+  const validEntries = blockEntries.filter((e) => e.sizeId && Number(e.count) > 0);
+  const billetsNum = validEntries.reduce((s, e) => s + Number(e.count), 0);
+  const setEntry = (i, k, v) => setBlockEntries((es) => es.map((e, j) => (j === i ? { ...e, [k]: v } : e)));
+  const addEntry = () => setBlockEntries((es) => [...es, { sizeId: '', count: '' }]);
+  const removeEntry = (i) => setBlockEntries((es) => (es.length > 1 ? es.filter((_, j) => j !== i) : es));
 
   const colorMatch = useMemo(() => {
     if (!expColor || !receivedColor) return null;
@@ -332,16 +336,14 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, sizes = [], operatorN
   const formValid =
     dispatch &&
     dateReceived &&
-    billetsNum > 0 &&
+    validEntries.length > 0 &&
     receivedColor &&
-    postRollingSizeId &&
     receivedBy.trim() &&
     (!damage || notes.trim());
 
   function reset() {
-    setBillets('');
+    setBlockEntries([{ sizeId: '', count: '' }]);
     setReceivedColor('');
-    setPostRollingSizeId('');
     setCondition('good');
     setNotes('');
     setMismatch(null);
@@ -355,7 +357,7 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, sizes = [], operatorN
     if (!formValid) {
       setError({ message: damage && !notes.trim()
         ? 'Damage was recorded — notes describing the damage are required.'
-        : 'Complete all required fields (date, block count, received colour code, post-rolling size, received by).' });
+        : 'Complete all required fields (date, at least one block size + count, received colour code, received by).' });
       return;
     }
     if (remaining != null && billetsNum > remaining) {
@@ -370,11 +372,10 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, sizes = [], operatorN
         dispatch_id: dispatchId(dispatch),
         faridabad_batch_ref: dispatchRef(dispatch),
         date_received: dateReceived,
-        billets_received: billetsNum,
+        blockEntries: validEntries.map((e) => ({ sizeId: Number(e.sizeId), count: Number(e.count) })),
         received_color_code: receivedColor,
         expected_color_code: expColor || undefined,
         color_match: colorMatch === null ? undefined : colorMatch,
-        post_rolling_size_id: postRollingSizeId ? Number(postRollingSizeId) : undefined,
         condition,
         received_by: receivedBy.trim(),
         notes: notes.trim() || undefined,
@@ -499,15 +500,9 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, sizes = [], operatorN
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-          <div>
-            <Label required>Date received</Label>
-            <input className="form-input" type="date" value={dateReceived} onChange={(e) => setDateReceived(e.target.value)} />
-          </div>
-          <div>
-            <Label required>Blocks in this delivery</Label>
-            <input className="form-input" type="number" min="1" placeholder="e.g. 12" value={billets} onChange={(e) => setBillets(e.target.value)} />
-          </div>
+        <div>
+          <Label required>Date received</Label>
+          <input className="form-input" type="date" value={dateReceived} onChange={(e) => setDateReceived(e.target.value)} />
         </div>
 
         {/* COLOUR-MATCH CHECK */}
@@ -527,16 +522,30 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, sizes = [], operatorN
         </div>
 
         <div>
-          <Label required>Post-rolling size</Label>
-          <select className="form-select" value={postRollingSizeId} onChange={(e) => setPostRollingSizeId(e.target.value)}>
-            <option value="">Select the size after rolling…</option>
-            {sizes.map((s) => {
-              const mm = s.sizeMm ?? s.size_mm ?? s.size;
-              return <option key={s.id} value={s.id}>{mm}mm{s.description ? ` · ${s.description}` : ''}</option>;
-            })}
-          </select>
+          <Label required>Blocks received · by post-rolling size</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            {blockEntries.map((en, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <select className="form-select" style={{ flex: 1 }} value={en.sizeId} onChange={(e) => setEntry(i, 'sizeId', e.target.value)}>
+                  <option value="">Post-rolling size…</option>
+                  {sizes.map((s) => {
+                    const mm = s.sizeMm ?? s.size_mm ?? s.size;
+                    return <option key={s.id} value={s.id}>{mm}mm{s.description ? ` · ${s.description}` : ''}</option>;
+                  })}
+                </select>
+                <input className="form-input" style={{ width: 110 }} type="number" min="1" placeholder="blocks" value={en.count} onChange={(e) => setEntry(i, 'count', e.target.value)} />
+                {blockEntries.length > 1 && (
+                  <button type="button" className="btn btn-sm" onClick={() => removeEntry(i)} aria-label="Remove size" style={{ padding: '6px 8px' }}><Icon name="close" size={13} /></button>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+            <button type="button" className="btn btn-sm" onClick={addEntry}><Icon name="plus" size={13} /> Add size</button>
+            <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-primary)' }}>Total: {billetsNum} block{billetsNum === 1 ? '' : 's'}{remaining != null ? ` / ${remaining} remaining` : ''}</span>
+          </div>
           <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--text-secondary)', marginTop: 5 }}>
-            Rolling changes dimensions — record the size after rolling. It carries forward to BSW-01 (Band Saw Cutting) and TAG-01 (Tagging).
+            Rolling changes dimensions — record each size after rolling. It carries forward to BSW-01 (Band Saw Cutting) and TAG-01 (Tagging).
           </div>
         </div>
 
