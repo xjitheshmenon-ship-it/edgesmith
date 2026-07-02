@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { qcApi } from '../api/resources';
+import { batchesApi } from '../api/batches';
 import { useAuth } from '../store/AuthContext';
 import { StatusPill, PriorityBadge } from '../components/common/Badges';
 import Icon from '../components/common/Icon';
@@ -217,8 +218,80 @@ function HrcSamplesPanel() {
   );
 }
 
+/* Batch-level HRC sampling (Type 2) — pick a furnace batch, take a 10% sample,
+   then evaluate the whole-batch decision (second sample / recall / continue). */
+const SCENARIO_LABEL = { all_pass: 'All pass', minority_fail: 'Minority fail', majority_fail: 'Majority fail', all_fail: 'All fail' };
+const ACTION_LABEL = { continue: 'Batch continues', individual: 'Re-treat failed pieces individually', second_sample: 'Trigger a second sample', partial_warning: 'Partial failure — monitor', recall: 'Recall the whole batch' };
+
+function BatchHrcPanel() {
+  const { data: batchData } = usePolling(() => batchesApi.furnaceList().then((r) => r.data).catch(() => []), [], { interval: 60000 });
+  const batches = (Array.isArray(batchData) ? batchData : batchData?.items || []).filter((b) => ['running', 'complete'].includes(b.status));
+  const [batchId, setBatchId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [notice, setNotice] = useState(null);
+
+  const { data: status, refetch } = usePolling(() => (batchId ? qcApi.batchHrcStatus(batchId).then((r) => r.data) : Promise.resolve(null)), [batchId], { interval: 20000 });
+
+  async function run(fn, label) {
+    setBusy(true); setErr(null); setNotice(null);
+    try { const r = await fn(); setNotice(label(r.data)); refetch(); }
+    catch (e) { setErr(e.message || 'Action failed.'); }
+    finally { setBusy(false); }
+  }
+
+  const rounds = status?.rounds || [];
+  const rec = status?.recommended;
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', marginTop: 16, borderLeft: '4px solid #2d6fb5' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Icon name="stack" size={15} color="#2d6fb5" />
+        <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, color: 'var(--text-primary, #15366a)' }}>Batch HRC Sampling (Type 2)</span>
+      </div>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)', marginBottom: 12 }}>
+        Take a 10% random sample of a furnace batch, record the readings above, then evaluate — the whole-batch decision (second sample / recall) follows the sample results.
+      </div>
+      {err ? <ErrorBanner message={err} /> : null}
+      {notice ? <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--status-success-dark, #1c7a52)', marginBottom: 10 }}>{notice}</div> : null}
+
+      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div>
+          <label className="form-label" style={{ marginBottom: 4 }}>Furnace batch</label>
+          <select className="form-select" style={{ height: 38, minWidth: 220 }} value={batchId} onChange={(e) => { setBatchId(e.target.value); setNotice(null); setErr(null); }}>
+            <option value="">Select a running batch…</option>
+            {batches.map((b) => <option key={b.id} value={b.id}>{b.batch_number}{b.recall_status ? ` · ${b.recall_status}` : ''}</option>)}
+          </select>
+        </div>
+        {batchId && rounds.length === 0 ? (
+          <button className="btn btn-primary btn-sm" style={{ height: 38 }} disabled={busy} onClick={() => run(() => qcApi.batchHrcSample(batchId), (d) => `Round 1: ${d.count} pieces selected — record their HRC above.`)}>Take 10% sample</button>
+        ) : null}
+        {rec ? (
+          <button className="btn btn-primary btn-sm" style={{ height: 38 }} disabled={busy} onClick={() => run(() => qcApi.batchHrcEvaluate(batchId), (d) => `${SCENARIO_LABEL[d.scenario] || d.scenario} → ${ACTION_LABEL[d.action] || d.action}${d.heldPieces ? ` (${d.heldPieces} held)` : ''}${d.selected ? ` (${d.selected.length} newly sampled)` : ''}`)}>Evaluate batch</button>
+        ) : null}
+      </div>
+
+      {status ? (
+        <div style={{ marginTop: 12 }}>
+          {status.batch?.recall_status ? (
+            <span className="badge" style={{ background: 'rgba(229,72,77,0.14)', color: '#e5484d', marginBottom: 8 }}>⚠ {status.batch.recall_status}{status.batch.recall_reason ? ` · ${status.batch.recall_reason}` : ''}</span>
+          ) : null}
+          <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>{status.totalPieces} pieces in batch</div>
+          {rounds.map((r) => (
+            <div key={r.round} style={{ fontFamily: MONO, fontSize: 11.5, color: 'var(--text-primary, #15366a)', marginTop: 4 }}>
+              Round {r.round}: {r.pass} pass · {r.fail} fail{r.pending ? ` · ${r.pending} pending` : ''} ({r.samples.length} sampled)
+            </div>
+          ))}
+          {rec ? <div style={{ fontFamily: SANS, fontSize: 12.5, marginTop: 8, color: '#2d6fb5', fontWeight: 600 }}>Recommendation: {SCENARIO_LABEL[rec.scenario] || rec.scenario} → {ACTION_LABEL[rec.action] || rec.action}</div>
+            : rounds.some((r) => r.pending) ? <div style={{ fontFamily: SANS, fontSize: 12, marginTop: 8, color: 'var(--text-secondary)' }}>Record all sampled readings above, then evaluate.</div> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function QC() {
-  const { user } = useAuth();
+  const { user, isSupervisor, isManager, isAdmin } = useAuth();
 
   const { data: pending, error: pendingError, loading, refetch } = usePolling(
     () => qcApi.pending().then((r) => r.data),
@@ -332,6 +405,7 @@ export default function QC() {
       </div>
 
       <HrcSamplesPanel />
+      {(isSupervisor || isManager || isAdmin) ? <BatchHrcPanel /> : null}
 
       <div
         style={{
