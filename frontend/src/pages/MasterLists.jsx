@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { usePolling } from '../hooks/usePolling';
-import { masterApi } from '../api/resources';
+import { masterApi, adminApi } from '../api/resources';
 import { useAuth } from '../store/AuthContext';
 import { StatusPill, LocationBadge } from '../components/common/Badges';
 import Icon from '../components/common/Icon';
@@ -150,10 +150,64 @@ const LOCATION_OPTS = [
   { value: 'dharmapuri', label: 'Dharmapuri' },
 ];
 
+/* Factory for a dimensional-standard sub-section (block/job/WIP/knife sizes).
+   All share the dimension_standards table, discriminated by category. */
+function dimTab(key, label, category, { tolerances = false } = {}) {
+  const dim = (v, mm = true) => (v == null || v === '' ? 'input' : `${v}${mm ? 'mm' : ''}`);
+  const num = (x) => (x !== '' && x != null ? Number(x) : undefined);
+  return {
+    key, label, icon: 'list', group: 'MEASUREMENTS',
+    fetch: () => masterApi.dimensions(category).then((r) => r.data),
+    create: (p) => masterApi.createDimension({ ...p, category }),
+    update: (id, p) => masterApi.updateDimension(id, p),
+    archive: (id) => masterApi.archiveDimension(id),
+    columns: tolerances
+      ? ['Name', 'Length', 'Width', 'Thick', 'Width tol', 'Thick tol', 'Status', '']
+      : ['Name', 'Length', 'Width', 'Thick', 'Status', ''],
+    renderRow: (row, ctx) => (
+      <>
+        <td style={{ ...TD, fontWeight: 600 }}>{pick(row, ['name'])}</td>
+        <td style={{ ...TD, fontFamily: MONO }}>{dim(pick(row, ['lengthMm', 'length_mm'], null))}</td>
+        <td style={{ ...TD, fontFamily: MONO }}>{dim(pick(row, ['widthMm', 'width_mm'], null))}</td>
+        <td style={{ ...TD, fontFamily: MONO }}>{dim(pick(row, ['thicknessMm', 'thickness_mm'], null))}</td>
+        {tolerances ? (
+          <>
+            <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['widthTolMin', 'width_tol_min'], '—') !== '—' ? `${pick(row, ['widthTolMin', 'width_tol_min'])}–${pick(row, ['widthTolMax', 'width_tol_max'])}` : '—'}</td>
+            <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['thicknessTolMin', 'thickness_tol_min'], '—') !== '—' ? `${pick(row, ['thicknessTolMin', 'thickness_tol_min'])}–${pick(row, ['thicknessTolMax', 'thickness_tol_max'])}` : '—'}</td>
+          </>
+        ) : null}
+        <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+      </>
+    ),
+    fields: [
+      { name: 'name', label: 'Name', required: true, placeholder: 'e.g. Job Standard' },
+      { name: 'lengthMm', label: 'Length (mm)', type: 'number', placeholder: 'blank = input at use' },
+      { name: 'widthMm', label: 'Width (mm)', type: 'number', placeholder: 'blank = input at use' },
+      { name: 'thicknessMm', label: 'Thickness / height (mm)', type: 'number' },
+      ...(tolerances ? [
+        { name: 'widthTolMin', label: 'Width tol min', type: 'number' },
+        { name: 'widthTolMax', label: 'Width tol max', type: 'number' },
+        { name: 'thicknessTolMin', label: 'Thick tol min', type: 'number' },
+        { name: 'thicknessTolMax', label: 'Thick tol max', type: 'number' },
+      ] : []),
+      { name: 'notes', label: 'Notes', full: true },
+    ],
+    transform: (v) => ({
+      name: v.name,
+      lengthMm: num(v.lengthMm), widthMm: num(v.widthMm), thicknessMm: num(v.thicknessMm),
+      widthTolMin: num(v.widthTolMin), widthTolMax: num(v.widthTolMax),
+      thicknessTolMin: num(v.thicknessTolMin), thicknessTolMax: num(v.thicknessTolMax),
+      notes: v.notes || undefined,
+    }),
+  };
+}
+
 const TABS = [
   {
     key: 'workstations',
     label: 'Workstations',
+    group: 'WORKSTATIONS',
     icon: 'monitor',
     fetch: () => masterApi.workstationTypes().then((r) => r.data),
     create: (p) => masterApi.createWorkstationType(p),
@@ -543,7 +597,133 @@ const TABS = [
       { name: 'location', label: 'Location', type: 'select', options: LOCATION_OPTS },
     ],
   },
+  // ── MEASUREMENTS — dimensional standards (L × W × T) ──
+  dimTab('dimBlock', 'Block Sizes (Intake)', 'block_intake'),
+  dimTab('dimJob', 'Job Sizes (WIP)', 'job_wip'),
+  dimTab('dimAlloyWip', 'Alloy Bar — WIP Sizes', 'alloy_bar_wip'),
+  dimTab('dimMsBlock', 'MS Block — WIP Sizes', 'ms_block_wip'),
+  dimTab('dimRolling', 'Blocks for Rolling', 'rolling_block'),
+  dimTab('dimKnife', 'Finished Knife Sizes (FG)', 'fg_knife', { tolerances: true }),
+  dimTab('dimPostRoll', 'Post-Rolling Block Sizes', 'post_rolling'),
+
+  // ── PRODUCTION — colours, concessions, capacity, grinding ──
+  {
+    key: 'colorCodes', label: 'Color Codes (Dispatch)', icon: 'flow', group: 'PRODUCTION',
+    fetch: () => masterApi.colorCodes().then((r) => r.data),
+    create: (p) => masterApi.createColorCode(p), update: (id, p) => masterApi.updateColorCode(id, p), archive: (id) => masterApi.archiveColorCode(id),
+    columns: ['Colour', 'Hex', 'Status', ''],
+    renderRow: (row, ctx) => (
+      <>
+        <td style={{ ...TD, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 14, height: 14, borderRadius: 4, border: '1px solid #ccc', background: pick(row, ['hexSwatch', 'hex_swatch', 'hex']) || '#fff', display: 'inline-block' }} />
+          {pick(row, ['name'])}
+        </td>
+        <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['hexSwatch', 'hex_swatch', 'hex'])}</td>
+        <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+      </>
+    ),
+    fields: [{ name: 'name', label: 'Colour name', required: true }, { name: 'hexSwatch', label: 'Hex', placeholder: '#2D6FB5' }],
+  },
+  {
+    key: 'concessionColors', label: 'Quality Exception Colours', icon: 'flow', group: 'PRODUCTION',
+    fetch: () => masterApi.concessionColors().then((r) => r.data),
+    create: (p) => masterApi.createConcessionColor(p), update: (id, p) => masterApi.updateConcessionColor(id, p), archive: (id) => masterApi.archiveConcessionColor(id),
+    columns: ['Exception type', 'Colour', 'Trigger', 'Status', ''],
+    renderRow: (row, ctx) => (
+      <>
+        <td style={{ ...TD, fontWeight: 600 }}>{pick(row, ['exceptionType', 'exception_type'])}</td>
+        <td style={{ ...TD, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 14, height: 14, borderRadius: 4, border: '1px solid #ccc', background: pick(row, ['hex']) || '#fff', display: 'inline-block' }} />
+          {pick(row, ['colorName', 'color_name'])}
+        </td>
+        <td style={{ ...TD, fontSize: 11.5 }}>{pick(row, ['triggerDesc', 'trigger_desc'])}</td>
+        <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+      </>
+    ),
+    fields: [
+      { name: 'exceptionType', label: 'Exception type', required: true, placeholder: 'e.g. Width concession' },
+      { name: 'colorName', label: 'Colour', required: true, placeholder: 'e.g. Blue' },
+      { name: 'hex', label: 'Hex', placeholder: '#2D6FB5' },
+      { name: 'triggerDesc', label: 'Trigger', full: true, placeholder: 'Width measured below 180mm' },
+    ],
+  },
+  {
+    key: 'truckCapacity', label: 'Truck Capacity', icon: 'truck', group: 'PRODUCTION',
+    fetch: () => masterApi.truckCapacity().then((r) => r.data),
+    create: (p) => masterApi.createTruckCapacity(p), update: (id, p) => masterApi.updateTruckCapacity(id, p), archive: (id) => masterApi.archiveTruckCapacity(id),
+    columns: ['Contractor', 'Max blocks / truck', 'Status', ''],
+    renderRow: (row, ctx) => (
+      <>
+        <td style={TD}>{pick(row, ['contractorName', 'contractor_name']) || (pick(row, ['contractorId', 'contractor_id']) ? `Contractor #${pick(row, ['contractorId', 'contractor_id'])}` : 'Default (all)')}</td>
+        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['maxBlocks', 'max_blocks'])}</td>
+        <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+      </>
+    ),
+    fields: [
+      { name: 'maxBlocks', label: 'Max blocks per truck', required: true, type: 'number', placeholder: '50' },
+      { name: 'contractorId', label: 'Contractor ID (blank = default)', type: 'number' },
+    ],
+    transform: (v) => ({ maxBlocks: v.maxBlocks !== '' ? Number(v.maxBlocks) : undefined, contractorId: v.contractorId !== '' && v.contractorId != null ? Number(v.contractorId) : undefined }),
+  },
+  {
+    key: 'grindingRules', label: 'Grinding Machine Rules', icon: 'flow', group: 'PRODUCTION', noCreate: true,
+    fetch: () => masterApi.grindingRules().then((r) => r.data),
+    update: (id, p) => masterApi.updateGrindingRule(id, p),
+    columns: ['Machine', 'Max bed length', 'Bars per set', ''],
+    renderRow: (row, ctx) => (
+      <>
+        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['workstationCode', 'workstation_code'])}</td>
+        <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['maxLengthMm', 'max_length_mm']) ?? pick(row, ['bedLengthMm', 'bed_length_mm'])}</td>
+        <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['barsPerSet', 'bars_per_set'])}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+      </>
+    ),
+    fields: [
+      { name: 'maxLengthMm', label: 'Max length (mm)', type: 'number' },
+      { name: 'barsPerSet', label: 'Bars per set', type: 'number' },
+      { name: 'bedLengthMm', label: 'Bed length (mm)', type: 'number' },
+    ],
+    transform: (v) => ({ maxLengthMm: v.maxLengthMm !== '' ? Number(v.maxLengthMm) : undefined, barsPerSet: v.barsPerSet !== '' ? Number(v.barsPerSet) : undefined, bedLengthMm: v.bedLengthMm !== '' ? Number(v.bedLengthMm) : undefined }),
+  },
+  // ── WORKSTATIONS — units ──
+  {
+    key: 'workstationUnits', label: 'Workstation Units', icon: 'monitor', group: 'WORKSTATIONS',
+    fetch: () => masterApi.workstationUnits().then((r) => r.data),
+    create: (p) => masterApi.createWorkstationUnit(p), update: (id, p) => masterApi.updateWorkstationUnit(id, p), archive: (id) => masterApi.archiveWorkstationUnit(id),
+    columns: ['Unit code', 'Unit name', 'Type', 'Status', ''],
+    renderRow: (row, ctx) => (
+      <>
+        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['unitCode', 'unit_code'])}</td>
+        <td style={TD}>{pick(row, ['unitName', 'unit_name'])}</td>
+        <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['workstationTypeId', 'workstation_type_id'])}</td>
+        <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+      </>
+    ),
+    fields: [
+      { name: 'workstationTypeId', label: 'Workstation type ID', required: true, type: 'number' },
+      { name: 'unitCode', label: 'Unit code', required: true, placeholder: 'SG-DLT-1' },
+      { name: 'unitName', label: 'Unit name' },
+    ],
+    transform: (v) => ({ ...v, workstationTypeId: v.workstationTypeId !== '' ? Number(v.workstationTypeId) : undefined }),
+  },
+  // ── USERS & ACCESS — shift configuration (custom panel, not generic CRUD) ──
+  { key: 'shiftConfig', label: 'Shift Configuration', icon: 'calendar', group: 'USERS & ACCESS', custom: true },
 ];
+
+/* Which nav group each tab belongs to, and the display order of groups. */
+const GROUP_ORDER = ['MEASUREMENTS', 'MATERIALS', 'WORKSTATIONS', 'PRODUCTION', 'USERS & ACCESS'];
+const GROUP_BY_KEY = {
+  sizes: 'MEASUREMENTS', barProfiles: 'MEASUREMENTS', barLengths: 'MEASUREMENTS', sheetSizes: 'MEASUREMENTS',
+  grades: 'MATERIALS', suppliers: 'MATERIALS', contractors: 'MATERIALS',
+  workstations: 'WORKSTATIONS', storage: 'WORKSTATIONS',
+  products: 'PRODUCTION', designs: 'PRODUCTION', patterns: 'PRODUCTION',
+  badgeTypes: 'USERS & ACCESS',
+};
+function groupOf(tab) { return tab.group || GROUP_BY_KEY[tab.key] || 'PRODUCTION'; }
 
 /* ─────────────────── design validity matrix (read-only) ─────────────────── */
 
@@ -611,7 +791,17 @@ function TabPanel({ tab, canWrite }) {
 
   // archive state
   const [archivingId, setArchivingId] = useState(null);
+  const [restoringId, setRestoringId] = useState(null);
   const [actionError, setActionError] = useState(null);
+
+  // search + archived toggle
+  const [search, setSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+
+  const isArchived = (r) => r.archived === true || r.is_archived === true || (r.status || 'active') === 'archived';
+  const matches = (r) => { const q = search.trim().toLowerCase(); return !q || JSON.stringify(r).toLowerCase().includes(q); };
+  const activeRows = useMemo(() => rows.filter((r) => !isArchived(r) && matches(r)), [rows, search]);
+  const archivedRows = useMemo(() => rows.filter((r) => isArchived(r) && matches(r)), [rows, search]);
 
   // inline edit state (only one row editable at a time)
   const [editingId, setEditingId] = useState(null);
@@ -711,6 +901,21 @@ function TabPanel({ tab, canWrite }) {
     }
   }
 
+  async function restore(row) {
+    if (!tab.update) return;
+    const id = row.id ?? row.code ?? row.uuid;
+    setActionError(null);
+    setRestoringId(id);
+    try {
+      await tab.update(id, { status: 'active' });
+      await refetch();
+    } catch (err) {
+      setActionError(err.message || 'Restore failed.');
+    } finally {
+      setRestoringId(null);
+    }
+  }
+
   const archiveBtn = (row) => {
     if (!tab.archive || !canWrite) return null;
     const id = row.id ?? row.code ?? row.uuid;
@@ -755,9 +960,10 @@ function TabPanel({ tab, canWrite }) {
       {/* ── list ── */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         <div className="card" style={{ padding: '18px 20px' }}>
-          <SectionTitle right={<span className="badge" style={{ background: 'var(--bg-soft-blue, #eaf0f7)', color: 'var(--text-primary, #15366a)' }}>{rows.length} TOTAL</span>}>
+          <SectionTitle right={<span className="badge" style={{ background: 'var(--bg-soft-blue, #eaf0f7)', color: 'var(--text-primary, #15366a)' }}>{activeRows.length} ACTIVE</span>}>
             {tab.label}
           </SectionTitle>
+          <input className="form-input" style={{ height: 34, marginBottom: 12, fontSize: 12.5 }} placeholder={`Search ${tab.label.toLowerCase()}…`} value={search} onChange={(e) => setSearch(e.target.value)} />
           {actionError ? <div style={{ marginBottom: 10 }}><ErrorBanner message={actionError} /></div> : null}
           {error ? (
             <ErrorBanner message={`Could not load ${tab.label.toLowerCase()}.`} />
@@ -766,12 +972,41 @@ function TabPanel({ tab, canWrite }) {
           ) : (
             <Table
               columns={tab.columns}
-              rows={rows}
+              rows={activeRows}
               renderRow={(row, i) => tab.renderRow(row, ctx, i)}
-              empty={`No ${tab.label.toLowerCase()} yet.`}
+              empty={search ? `No ${tab.label.toLowerCase()} match “${search}”.` : `No ${tab.label.toLowerCase()} yet.`}
               keyOf={(r, i) => r.id ?? r.code ?? i}
             />
           )}
+
+          {archivedRows.length ? (
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #eef2ea' }}>
+              <button type="button" onClick={() => setShowArchived((s) => !s)} className="btn btn-sm" style={{ width: '100%', justifyContent: 'space-between' }}>
+                <span>{archivedRows.length} archived</span>
+                <Icon name={showArchived ? 'chevronDown' : 'chevronRight'} size={13} />
+              </button>
+              {showArchived ? (
+                <div style={{ overflowX: 'auto', marginTop: 10, opacity: 0.75 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <tbody>
+                      {archivedRows.map((r, i) => (
+                        <tr key={r.id ?? i} style={{ borderTop: '1px solid #eef2ea' }}>
+                          <td style={TD}>{pick(r, ['name', 'code', 'label', 'exception_type', 'exceptionType', 'unit_code', 'unitCode', 'color_name', 'colorName']) || `#${r.id}`}</td>
+                          <td style={{ ...TD, textAlign: 'right' }}>
+                            {canWrite && tab.update ? (
+                              <button className="btn btn-sm" disabled={restoringId === (r.id ?? r.code)} onClick={() => restore(r)}>
+                                {restoringId === (r.id ?? r.code) ? 'Restoring…' : 'Restore'}
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {editingId != null && canWrite ? (
             <div style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid #eef2ea' }}>
@@ -808,6 +1043,8 @@ function TabPanel({ tab, canWrite }) {
         <SectionTitle>New {tab.label.replace(/s$/, '')}</SectionTitle>
         {!canWrite ? (
           <Empty>Master Lists are managed by Admin. Your role has view-only access.</Empty>
+        ) : tab.noCreate || !tab.create ? (
+          <Empty>This is a fixed reference set — edit existing rows from the list; new rows aren&apos;t added here.</Empty>
         ) : (
           <form onSubmit={submit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {tab.fields.map((f) => (
@@ -824,6 +1061,60 @@ function TabPanel({ tab, canWrite }) {
           </form>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ─────────────────── shift configuration (custom panel) ─────────────────── */
+
+function ShiftConfigPanel({ canWrite }) {
+  const { data, error, loading, refetch } = usePolling(() => adminApi.shiftConfig().then((r) => r.data), []);
+  const rows = useMemo(() => asList(data), [data]);
+  const [edits, setEdits] = useState({});
+  const [savingNum, setSavingNum] = useState(null);
+  const [saveError, setSaveError] = useState(null);
+
+  const timeVal = (r, key, col) => {
+    const e = edits[r.shift_number];
+    if (e && e[key] != null) return e[key];
+    return (r[col] || '').slice(0, 5);
+  };
+  const setTime = (num, key, v) => setEdits((s) => ({ ...s, [num]: { ...s[num], [key]: v } }));
+
+  async function save(r) {
+    setSaveError(null); setSavingNum(r.shift_number);
+    try {
+      await adminApi.updateShiftConfig({ shiftNumber: r.shift_number, startTime: timeVal(r, 'start', 'start_time'), endTime: timeVal(r, 'end', 'end_time') });
+      setEdits((s) => { const n = { ...s }; delete n[r.shift_number]; return n; });
+      await refetch();
+    } catch (err) { setSaveError(err.message || 'Could not save shift times.'); }
+    finally { setSavingNum(null); }
+  }
+
+  return (
+    <div className="card" style={{ padding: '18px 20px', maxWidth: 620 }}>
+      <SectionTitle>Shift Configuration</SectionTitle>
+      <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)', marginBottom: 12 }}>Start/end times per shift. Changes take effect from the next shift start.</div>
+      {error ? <ErrorBanner message="Could not load shift configuration." /> : loading && !data ? <Empty>Loading…</Empty> : (
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead><tr><th style={TH}>Shift</th><th style={TH}>Start</th><th style={TH}>End</th><th style={TH} /></tr></thead>
+          <tbody>
+            {rows.map((r) => {
+              const dirty = !!edits[r.shift_number];
+              return (
+                <tr key={r.shift_number} style={{ borderTop: '1px solid #eef2ea' }}>
+                  <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>Shift {r.shift_number}</td>
+                  <td style={TD}><input type="time" className="form-input" style={{ height: 32, width: 120 }} disabled={!canWrite} value={timeVal(r, 'start', 'start_time')} onChange={(e) => setTime(r.shift_number, 'start', e.target.value)} /></td>
+                  <td style={TD}><input type="time" className="form-input" style={{ height: 32, width: 120 }} disabled={!canWrite} value={timeVal(r, 'end', 'end_time')} onChange={(e) => setTime(r.shift_number, 'end', e.target.value)} /></td>
+                  <td style={{ ...TD, textAlign: 'right' }}>{canWrite ? <button className="btn btn-primary btn-sm" disabled={!dirty || savingNum === r.shift_number} onClick={() => save(r)}>{savingNum === r.shift_number ? 'Saving…' : 'Save'}</button> : null}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      {saveError ? <div style={{ marginTop: 10 }}><ErrorBanner message={saveError} /></div> : null}
+      {!canWrite ? <div style={{ marginTop: 10 }}><Empty>Managed by Admin. Your role has view-only access.</Empty></div> : null}
     </div>
   );
 }
@@ -848,38 +1139,38 @@ export default function MasterLists() {
         Manage reference data used across the system{canWrite ? '' : ' · view only'}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '210px 1fr', gap: 20, marginTop: 20, alignItems: 'start' }}>
-        {/* left segmented control (vertical tab strip) */}
-        <div className="card" style={{ padding: 8, position: 'sticky', top: 16 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            {TABS.map((t) => {
-              const isActive = t.key === active;
-              return (
-                <button
-                  key={t.key}
-                  onClick={() => setActive(t.key)}
-                  className="btn"
-                  style={{
-                    height: 40,
-                    justifyContent: 'flex-start',
-                    width: '100%',
-                    border: 'none',
-                    background: isActive ? 'var(--ink-650, #15366a)' : 'transparent',
-                    color: isActive ? 'var(--text-onink, #eaf4e4)' : 'var(--text-secondary, #5d7188)',
-                    fontSize: 12.5,
-                  }}
-                >
-                  <Icon name={t.icon} size={16} color={isActive ? 'var(--accent-green, #d4eecb)' : 'var(--text-secondary, #5d7188)'} />
-                  {t.label}
-                </button>
-              );
-            })}
-          </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '230px 1fr', gap: 20, marginTop: 20, alignItems: 'start' }}>
+        {/* left grouped nav */}
+        <div className="card" style={{ padding: 8, position: 'sticky', top: 16, maxHeight: 'calc(100vh - 90px)', overflowY: 'auto' }}>
+          {GROUP_ORDER.map((group) => {
+            const items = TABS.filter((t) => groupOf(t) === group);
+            if (!items.length) return null;
+            return (
+              <div key={group} style={{ marginBottom: 6 }}>
+                <div style={{ fontFamily: MONO, fontSize: 9, letterSpacing: '0.12em', color: 'var(--text-muted, #9bb4d4)', padding: '8px 10px 4px' }}>{group}</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {items.map((t) => {
+                    const isActive = t.key === active;
+                    return (
+                      <button key={t.key} onClick={() => setActive(t.key)} className="btn" style={{
+                        height: 34, justifyContent: 'flex-start', width: '100%', border: 'none',
+                        background: isActive ? 'var(--ink-650, #15366a)' : 'transparent',
+                        color: isActive ? 'var(--text-onink, #eaf4e4)' : 'var(--text-secondary, #5d7188)', fontSize: 12,
+                      }}>
+                        <Icon name={t.icon} size={15} color={isActive ? 'var(--accent-green, #d4eecb)' : 'var(--text-secondary, #5d7188)'} />
+                        <span style={{ textAlign: 'left', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* active panel */}
         <div className="cp-fade-in" key={tab.key}>
-          <TabPanel tab={tab} canWrite={canWrite} />
+          {tab.custom === true && tab.key === 'shiftConfig' ? <ShiftConfigPanel canWrite={canWrite} /> : <TabPanel tab={tab} canWrite={canWrite} />}
         </div>
       </div>
     </div>
