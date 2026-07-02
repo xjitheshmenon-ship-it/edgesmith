@@ -516,13 +516,18 @@ async function wipSummary(req, res) {
  */
 async function stationSummary(req, res) {
   const { rows } = await query(
-    `SELECT wt.code, wt.name, wt.min_operators, COUNT(u.id) AS active_count
+    `SELECT wt.code, wt.name, wt.min_operators, wt.max_operators, wt.required_skill_code, wt.category, COUNT(u.id) AS active_count
      FROM workstation_types wt
      LEFT JOIN cycle_steps cs ON cs.workstation_type_id = wt.id
      LEFT JOIN uids u ON u.current_step = cs.step_number AND u.cycle_version_id = cs.cycle_version_id AND u.status = 'active'
-     GROUP BY wt.code, wt.name, wt.min_operators ORDER BY wt.code`
+     GROUP BY wt.code, wt.name, wt.min_operators, wt.max_operators, wt.required_skill_code, wt.category ORDER BY wt.code`
   );
-  return res.json({ success: true, data: rows.map((r) => ({ code: r.code, name: r.name, active_count: Number(r.active_count), min_operators: Number(r.min_operators) || 1 })) });
+  return res.json({ success: true, data: rows.map((r) => ({
+    code: r.code, name: r.name, category: r.category, active_count: Number(r.active_count),
+    min_operators: Number(r.min_operators) || 1,
+    max_operators: r.max_operators != null ? Number(r.max_operators) : null,
+    required_badge: r.required_skill_code || null,
+  })) });
 }
 
 /**

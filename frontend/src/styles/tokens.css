@@ -194,9 +194,23 @@ aside::-webkit-scrollbar {
 .ja-op-grab:hover { transform: translateY(-2px); box-shadow: var(--shadow-card-hover, 0 8px 22px -12px rgba(17,48,95,0.28)); }
 .ja-op-dragging { opacity: 0.45; transform: scale(0.97) rotate(-0.6deg); }
 .ja-chip-in { animation: ja-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+@keyframes ja-drawer-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes ja-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  50% { transform: translateX(6px); }
+  80% { transform: translateX(-4px); }
+}
+.ja-drawer-in { animation: ja-drawer-in 0.24s ease-out both; }
+.ja-shake { animation: ja-shake 0.3s ease-in-out; }
+/* min-operator progress bar fill */
+.ja-bar-fill { transition: width 0.35s ease-in-out, background 0.3s ease; }
 @media (prefers-reduced-motion: reduce) {
-  .ja-rise, .ja-understaffed, .ja-flash-ok, .ja-chip-in { animation: none; }
-  .ja-drop, .ja-op { transition: none; }
+  .ja-rise, .ja-understaffed, .ja-flash-ok, .ja-chip-in, .ja-drawer-in, .ja-shake { animation: none; }
+  .ja-drop, .ja-op, .ja-bar-fill { transition: none; }
 }
 
 /* ── Shared component classes (badges, pills, buttons) ── */
