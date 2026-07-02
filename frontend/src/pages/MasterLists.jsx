@@ -505,7 +505,7 @@ const TABS = [
   dimTab('dimMsBlock', 'MS Block — WIP Sizes', 'ms_block_wip'),
   dimTab('dimRolling', 'Blocks for Rolling', 'rolling_block'),
   dimTab('dimKnife', 'Finished Knife Sizes (FG)', 'fg_knife', { tolerances: true }),
-  dimTab('dimPostRoll', 'Post-Rolling Block Sizes', 'post_rolling'),
+  dimTab('dimPostRoll', 'Alloy Steel Bar Width & Thickness', 'post_rolling'),
 
   // ── PRODUCTION — colours, concessions, capacity, grinding ──
   {
