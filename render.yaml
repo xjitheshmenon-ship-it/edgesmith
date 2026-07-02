@@ -14,7 +14,11 @@ services:
           name: edgesmith-db-v2
           property: connectionString
       - key: JWT_SECRET
-        generateValue: true
+        # Managed manually in the Render dashboard (a fixed, high-entropy secret).
+        # sync:false tells Render to keep the dashboard value and never regenerate
+        # or overwrite it on blueprint sync — generateValue rotated the secret when
+        # the service was recreated, silently invalidating every issued JWT.
+        sync: false
       - key: JWT_EXPIRES_IN
         value: 8h
       - key: CORS_ALLOWED_ORIGIN
