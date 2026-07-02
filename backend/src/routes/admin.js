@@ -91,6 +91,39 @@ router.get('/audit-log', requireRole(['admin']), async (req, res) => {
   return res.json({ success: true, data: rows });
 });
 
+/** GET /api/v1/admin/hrc-params — HRC target band + re-treatment rules per cycle. */
+router.get('/hrc-params', async (req, res) => {
+  const { rows } = await query(
+    `SELECT hp.*, ct.code AS cycle_code, e.full_name AS changed_by_name
+     FROM hrc_parameters hp JOIN cycle_types ct ON ct.id = hp.cycle_type_id
+     LEFT JOIN employees e ON e.id = hp.changed_by ORDER BY ct.code`
+  );
+  return res.json({ success: true, data: rows });
+});
+
+/** PATCH /api/v1/admin/hrc-params/:cycleCode (Admin only)
+ *  body: { hrcTargetMin, hrcTargetMax, veryLowHrc, slightlyLowRetemperStep, maxRetreatments } */
+router.patch('/hrc-params/:cycleCode', requireRole(['admin']), async (req, res) => {
+  const { hrcTargetMin, hrcTargetMax, veryLowHrc, slightlyLowRetemperStep, maxRetreatments } = req.body || {};
+  const { rows: cycleRows } = await query(`SELECT id FROM cycle_types WHERE code = $1`, [req.params.cycleCode]);
+  if (!cycleRows[0]) return res.status(404).json({ success: false, error: { code: 'UNKNOWN_CYCLE', message: 'Unknown cycle type.' } });
+  if (hrcTargetMin != null && hrcTargetMax != null && Number(hrcTargetMin) > Number(hrcTargetMax)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_RANGE', message: 'HRC target min cannot exceed max.' } });
+  }
+  const { rows } = await query(
+    `INSERT INTO hrc_parameters (cycle_type_id, hrc_target_min, hrc_target_max, very_low_hrc, slightly_low_retemper_step, max_retreatments, changed_by, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7, now())
+     ON CONFLICT (cycle_type_id) DO UPDATE SET
+       hrc_target_min = EXCLUDED.hrc_target_min, hrc_target_max = EXCLUDED.hrc_target_max,
+       very_low_hrc = EXCLUDED.very_low_hrc, slightly_low_retemper_step = EXCLUDED.slightly_low_retemper_step,
+       max_retreatments = EXCLUDED.max_retreatments, changed_by = EXCLUDED.changed_by, updated_at = now()
+     RETURNING *`,
+    [cycleRows[0].id, hrcTargetMin, hrcTargetMax, veryLowHrc, slightlyLowRetemperStep || null, maxRetreatments == null || maxRetreatments === '' ? 3 : maxRetreatments, req.user.sub]
+  );
+  await req.audit({ tableName: 'hrc_parameters', recordId: rows[0].cycle_type_id, action: 'UPDATE', after: rows[0] });
+  return res.json({ success: true, data: rows[0] });
+});
+
 /** GET /api/v1/admin/shift-config */
 router.get('/shift-config', async (req, res) => {
   const { rows } = await query(`SELECT * FROM shifts_config ORDER BY shift_number`);

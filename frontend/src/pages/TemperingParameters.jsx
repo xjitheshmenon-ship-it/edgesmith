@@ -251,6 +251,79 @@ function MatrixCell({ cycle, stepMeta, param, isAdmin, editing, busy, onEdit, on
 }
 
 // ── Page ────────────────────────────────────────────────────────────────────
+/* HRC target band + re-treatment rules per cycle type. Drives the HRC outcome
+   engine (slightly-low → re-temper step, very-low → anneal, high → re-temper T1,
+   max re-treatments → hold). */
+function HrcParamsCard({ isAdmin }) {
+  const [rows, setRows] = useState(null);
+  const [edits, setEdits] = useState({});
+  const [savingCycle, setSavingCycle] = useState(null);
+  const [err, setErr] = useState(null);
+  const [ok, setOk] = useState(null);
+
+  const load = useCallback(() => {
+    adminApi.hrcParams().then((r) => setRows(Array.isArray(r.data) ? r.data : [])).catch((e) => setErr(e.message || 'Could not load HRC parameters.'));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const val = (r, key, col) => { const e = edits[r.cycle_code]; return e && e[key] != null ? e[key] : (r[col] ?? ''); };
+  const set = (code, key, v) => setEdits((s) => ({ ...s, [code]: { ...s[code], [key]: v } }));
+
+  async function save(r) {
+    setErr(null); setOk(null); setSavingCycle(r.cycle_code);
+    try {
+      await adminApi.updateHrcParams(r.cycle_code, {
+        hrcTargetMin: Number(val(r, 'min', 'hrc_target_min')),
+        hrcTargetMax: Number(val(r, 'max', 'hrc_target_max')),
+        veryLowHrc: Number(val(r, 'veryLow', 'very_low_hrc')),
+        slightlyLowRetemperStep: (val(r, 'step', 'slightly_low_retemper_step') || '') || null,
+        maxRetreatments: Number(val(r, 'maxRt', 'max_retreatments')),
+      });
+      setOk(`${r.cycle_code} HRC parameters updated.`);
+      setEdits((s) => { const n = { ...s }; delete n[r.cycle_code]; return n; });
+      load();
+    } catch (e) { setErr(e.message || 'Could not save HRC parameters.'); }
+    finally { setSavingCycle(null); }
+  }
+
+  const TH = { padding: '6px 10px 8px 0', textAlign: 'left', fontFamily: MONO, fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted, #9bb4d4)' };
+  const inp = { height: 30, width: 74, fontSize: 12 };
+
+  return (
+    <div className="card" style={{ marginTop: 16, padding: '18px 20px' }}>
+      <SectionTitle>HRC Parameters · Target band & re-treatment rules</SectionTitle>
+      <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)', marginBottom: 12 }}>
+        The HRC check scores each reading against these per-cycle bands. Below min but ≥ very-low → re-temper at the step below; below very-low → external annealing; above max → re-temper from Tempering 1. A piece is held once it reaches the re-treatment ceiling.
+      </div>
+      {err ? <div style={{ marginBottom: 10 }}><ErrorBanner message={err} /></div> : null}
+      {ok ? <div style={{ marginBottom: 10 }}><SuccessBanner message={ok} /></div> : null}
+      {rows == null ? <Empty>Loading HRC parameters…</Empty> : rows.length === 0 ? <Empty>No HRC parameters configured.</Empty> : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead><tr><th style={TH}>Cycle</th><th style={TH}>Target min</th><th style={TH}>Target max</th><th style={TH}>Very-low &lt;</th><th style={TH}>Slightly-low re-temper step</th><th style={TH}>Max re-treatments</th><th style={TH} /></tr></thead>
+            <tbody>
+              {rows.map((r) => {
+                const dirty = !!edits[r.cycle_code];
+                return (
+                  <tr key={r.cycle_code} style={{ borderTop: '1px solid #eef2ea' }}>
+                    <td style={{ padding: '8px 10px 8px 0', fontFamily: MONO, fontWeight: 700, fontSize: 12.5, color: 'var(--text-primary, #15366a)' }}>{r.cycle_code}</td>
+                    <td style={{ padding: '6px 10px 6px 0' }}><input className="form-input" style={inp} type="number" step="0.1" disabled={!isAdmin} value={val(r, 'min', 'hrc_target_min')} onChange={(e) => set(r.cycle_code, 'min', e.target.value)} /></td>
+                    <td style={{ padding: '6px 10px 6px 0' }}><input className="form-input" style={inp} type="number" step="0.1" disabled={!isAdmin} value={val(r, 'max', 'hrc_target_max')} onChange={(e) => set(r.cycle_code, 'max', e.target.value)} /></td>
+                    <td style={{ padding: '6px 10px 6px 0' }}><input className="form-input" style={inp} type="number" step="0.1" disabled={!isAdmin} value={val(r, 'veryLow', 'very_low_hrc')} onChange={(e) => set(r.cycle_code, 'veryLow', e.target.value)} /></td>
+                    <td style={{ padding: '6px 10px 6px 0' }}><input className="form-input" style={{ ...inp, width: 64 }} disabled={!isAdmin} placeholder="e.g. 14" value={val(r, 'step', 'slightly_low_retemper_step')} onChange={(e) => set(r.cycle_code, 'step', e.target.value)} /></td>
+                    <td style={{ padding: '6px 10px 6px 0' }}><input className="form-input" style={{ ...inp, width: 60 }} type="number" disabled={!isAdmin} value={val(r, 'maxRt', 'max_retreatments')} onChange={(e) => set(r.cycle_code, 'maxRt', e.target.value)} /></td>
+                    <td style={{ padding: '6px 0 6px 0', textAlign: 'right' }}>{isAdmin ? <button className="btn btn-primary btn-sm" disabled={!dirty || savingCycle === r.cycle_code} onClick={() => save(r)}>{savingCycle === r.cycle_code ? 'Saving…' : 'Save'}</button> : null}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function TemperingParameters() {
   const { isAdmin, user } = useAuth();
 
@@ -434,6 +507,8 @@ export default function TemperingParameters() {
           ) : null}
         </div>
       </div>
+
+      <HrcParamsCard isAdmin={isAdmin} />
     </div>
   );
 }

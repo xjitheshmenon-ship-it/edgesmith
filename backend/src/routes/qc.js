@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { createAlert } = require('../utils/alerts');
+const { classifyHrc, OUTCOME_LABEL } = require('../utils/hrcEngine');
 
 const router = express.Router();
 router.use(authenticate, auditContext);
@@ -150,38 +151,89 @@ router.get('/hrc-samples', requireRole(['admin', 'manager', 'supervisor', 'opera
   return res.json({ success: true, data: rows });
 });
 
-/** POST /api/v1/qc/hrc-samples/:id/result — record the HRC reading.
- *  body: { hrcValue, result: 'Pass'|'Fail', notes? }. A Fail holds the UID. */
+/** POST /api/v1/qc/hrc-samples/:id/result — record the HRC reading and apply the
+ *  cycle change. body: { hrcValue, result?, notes? }.
+ *
+ *  When the UID's cycle type has HRC parameters, the numeric reading is SCORED
+ *  against the target band and drives the outcome automatically:
+ *    in_range     → continue
+ *    slightly_low → re-temper at the configured step (retreat +1)
+ *    very_low     → hold for external annealing (retreat +1)
+ *    high         → re-temper from Tempering 1 (retreat +1)
+ *  A re-treatment ceiling holds the piece instead of routing once reached.
+ *  With no params/numeric value it falls back to the old result-based hold. */
 router.post('/hrc-samples/:id/result', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
   const { hrcValue, result, notes } = req.body || {};
-  const status = String(result || '').toLowerCase() === 'fail' ? 'fail' : 'pass';
+  const numeric = hrcValue == null || hrcValue === '' ? null : Number(hrcValue);
 
   const out = await withTransaction(async (client) => {
     const { rows: sRows } = await client.query(`SELECT * FROM hrc_inspection_samples WHERE id = $1 FOR UPDATE`, [req.params.id]);
     const sample = sRows[0];
     if (!sample) throw Object.assign(new Error('HRC sample not found'), { status: 404, code: 'SAMPLE_NOT_FOUND' });
 
-    const { rows } = await client.query(
-      `UPDATE hrc_inspection_samples
-         SET status = $1, hrc_value = $2, notes = $3, inspected_by = $4, inspected_at = now()
+    const { rows: uRows } = await client.query(
+      `SELECT u.id, u.uid_code, u.retreatment_count, u.cycle_version_id, cv.cycle_type_id, ct.code AS cycle_code
+       FROM uids u JOIN cycle_versions cv ON cv.id = u.cycle_version_id JOIN cycle_types ct ON ct.id = cv.cycle_type_id
+       WHERE u.id = $1 FOR UPDATE`, [sample.uid_id]);
+    const uid = uRows[0];
+    const params = uid ? (await client.query(`SELECT * FROM hrc_parameters WHERE cycle_type_id = $1`, [uid.cycle_type_id])).rows[0] || null : null;
+
+    const cls = classifyHrc(numeric, params);
+    const sampleStatus = cls.outcome === 'unknown'
+      ? (String(result || '').toLowerCase() === 'fail' ? 'fail' : 'pass')
+      : (cls.isPass ? 'pass' : 'fail');
+    const outcomeNote = cls.outcome !== 'unknown' ? `HRC ${OUTCOME_LABEL[cls.outcome]}` : null;
+    const combinedNotes = [notes, outcomeNote].filter(Boolean).join(' · ') || null;
+
+    const { rows: updated } = await client.query(
+      `UPDATE hrc_inspection_samples SET status = $1, hrc_value = $2, notes = $3, inspected_by = $4, inspected_at = now()
        WHERE id = $5 RETURNING *`,
-      [status, hrcValue == null || hrcValue === '' ? null : Number(hrcValue), notes || null, req.user.sub, sample.id]
+      [sampleStatus, numeric, combinedNotes, req.user.sub, sample.id]
     );
 
-    // A failed HRC sample holds the piece for the supervisor.
-    if (status === 'fail') {
-      await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`,
-        [`HRC sample failed (${hrcValue ?? '—'} HRC)`, sample.uid_id]);
-      await createAlert(client.query.bind(client), {
-        type: 'qc_fail', severity: 'critical', uidId: sample.uid_id,
-        message: `HRC FAIL (${hrcValue ?? '—'} HRC) — sample held for review`,
-        targetRole: 'supervisor', linkPage: 'qc', linkRecordId: String(sample.uid_id),
-      });
+    const escalate = async (type, severity, message) => {
+      for (const role of ['supervisor', 'manager']) {
+        // eslint-disable-next-line no-await-in-loop
+        await createAlert(client.query.bind(client), { type, severity, uidId: uid.id, message, targetRole: role, linkPage: 'qc', linkRecordId: String(uid.id) });
+      }
+    };
+    const targetStorage = async (stepNumber) => (await client.query(
+      `SELECT source_storage_id FROM cycle_steps WHERE cycle_version_id = $1 AND step_number = $2`, [uid.cycle_version_id, stepNumber]
+    )).rows[0]?.source_storage_id ?? null;
+    const firstTemperStep = async () => (await client.query(
+      `SELECT step_number FROM cycle_steps WHERE cycle_version_id = $1 AND step_type = 'temper' ORDER BY sequence_order LIMIT 1`, [uid.cycle_version_id]
+    )).rows[0]?.step_number ?? null;
+
+    let action = { outcome: cls.outcome, action: 'continue' };
+
+    if (sampleStatus === 'fail' && uid) {
+      const hrcTxt = numeric != null ? `${numeric} HRC` : 'HRC';
+      if (cls.outcome === 'unknown') {
+        await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`HRC sample failed (${hrcTxt})`, uid.id]);
+        await createAlert(client.query.bind(client), { type: 'qc_fail', severity: 'critical', uidId: uid.id, message: `HRC FAIL (${hrcTxt}) — sample held for review`, targetRole: 'supervisor', linkPage: 'qc', linkRecordId: String(uid.id) });
+        action = { outcome: 'unknown', action: 'hold' };
+      } else if ((uid.retreatment_count || 0) >= (params.max_retreatments || 3)) {
+        await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [`Maximum re-treatments reached (${uid.retreatment_count}/${params.max_retreatments})`, uid.id]);
+        await escalate('max_retreat', 'critical', `${uid.uid_code}: max re-treatments reached (${uid.retreatment_count}/${params.max_retreatments}) — needs Manager/Admin decision`);
+        action = { outcome: cls.outcome, action: 'max_reached', retreatmentCount: uid.retreatment_count, maxRetreatments: params.max_retreatments };
+      } else if (cls.outcome === 'very_low') {
+        await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1, retreatment_count = retreatment_count + 1 WHERE id = $2`, ['HRC critically low — sent for third-party Annealing', uid.id]);
+        await escalate('annealing', 'critical', `${uid.uid_code}: HRC very low (${hrcTxt}) — requires external annealing`);
+        action = { outcome: 'very_low', action: 'annealing_hold', retreatmentCount: (uid.retreatment_count || 0) + 1 };
+      } else {
+        // slightly_low → configured re-temper step; high → re-temper from Tempering 1
+        let targetStep = cls.outcome === 'slightly_low' ? params.slightly_low_retemper_step : null;
+        if (!targetStep) targetStep = await firstTemperStep();
+        const storage = targetStep ? await targetStorage(targetStep) : null;
+        await client.query(`UPDATE uids SET current_step = $1, current_storage_id = $2, status = 'active', retreatment_count = retreatment_count + 1 WHERE id = $3`, [targetStep, storage, uid.id]);
+        await createAlert(client.query.bind(client), { type: 'hrc_retreat', severity: 'warning', uidId: uid.id, message: `${uid.uid_code}: HRC ${cls.outcome === 'high' ? 'high' : 'slightly low'} (${hrcTxt}) — re-temper → step ${targetStep}`, targetRole: 'supervisor', linkPage: 'qc', linkRecordId: String(uid.id) });
+        action = { outcome: cls.outcome, action: 're_temper', targetStep, retreatmentCount: (uid.retreatment_count || 0) + 1 };
+      }
     }
-    return rows[0];
+    return { sample: updated[0], ...action };
   });
 
-  await req.audit({ tableName: 'hrc_inspection_samples', recordId: out.id, action: 'UPDATE', after: out });
+  await req.audit({ tableName: 'hrc_inspection_samples', recordId: out.sample.id, action: 'UPDATE', after: out });
   return res.json({ success: true, data: out });
 });
 
