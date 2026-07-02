@@ -132,7 +132,7 @@ function normColor(v) {
 
 // ── main page ─────────────────────────────────────────────────────────────────
 
-export default function Receiving() {
+export default function Receiving({ embedded = false }) {
   const { user } = useAuth();
 
   // Expected consignments (in-transit from Faridabad, not fully received)
@@ -141,10 +141,13 @@ export default function Receiving() {
   const log = usePolling(() => receivingApi.list().then((r) => r.data), [], { interval: 30000 });
   // Color-code master list for the received-color dropdown
   const colorRef = usePolling(() => masterApi.colorCodes().then((r) => r.data).catch(() => []), [], { interval: 120000 });
+  // Post-rolling size options (rolling changes dimensions — this is the size that carries to BSW-01).
+  const sizeRef = usePolling(() => masterApi.sizes().then((r) => r.data).catch(() => []), [], { interval: 120000 });
 
   const expectedRows = asArray(expected.data);
   const logRows = asArray(log.data);
   const colorCodes = asArray(colorRef.data);
+  const sizes = asArray(sizeRef.data);
 
   const [selected, setSelected] = useState(null); // selected dispatch (prefills form)
   const [detailId, setDetailId] = useState(null); // receiving event being inspected
@@ -165,23 +168,25 @@ export default function Receiving() {
   }
 
   return (
-    <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
-      {/* Page header */}
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Icon name="truck" size={20} color="var(--text-primary)" />
-            <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: 'var(--text-primary)' }}>Receiving</div>
-            <LocationBadge location="dharmapuri" />
-          </div>
-          <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
-            Log rolled composite blocks arriving from Faridabad. Each delivery is matched to its dispatch by colour code before it is recorded.
+    <div style={{ padding: embedded ? '4px 0 40px' : '28px 28px 60px', maxWidth: 1280 }}>
+      {/* Page header (suppressed when embedded in the unified Receiving & Intake page) */}
+      {!embedded && (
+        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Icon name="truck" size={20} color="var(--text-primary)" />
+              <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 24, letterSpacing: '-0.03em', color: 'var(--text-primary)' }}>Receiving</div>
+              <LocationBadge location="dharmapuri" />
+            </div>
+            <div style={{ fontFamily: SANS, fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
+              Log rolled composite blocks arriving from Faridabad. Each delivery is matched to its dispatch by colour code before it is recorded.
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Expected consignments */}
-      <div style={{ marginTop: 22 }}>
+      <div style={{ marginTop: embedded ? 0 : 22 }}>
         <ExpectedPanel
           rows={expectedRows}
           loading={expected.loading && !expected.data}
@@ -197,6 +202,7 @@ export default function Receiving() {
           dispatch={selected}
           dispatches={expectedRows}
           colorCodes={colorCodes}
+          sizes={sizes}
           operatorName={user?.name || user?.full_name || user?.username || ''}
           onClear={() => setSelected(null)}
           onPickDispatch={(d) => setSelected(d)}
@@ -288,13 +294,14 @@ function ColorChip({ code }) {
 
 // ── RECEIVING FORM (with colour-match check + mismatch confirmation) ───────────
 
-function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear, onPickDispatch, onSaved }) {
+function ReceivingForm({ dispatch, dispatches, colorCodes, sizes = [], operatorName, onClear, onPickDispatch, onSaved }) {
   const expColor = expectedColor(dispatch);
   const { remaining } = dispatchTotals(dispatch || {});
 
   const [dateReceived, setDateReceived] = useState(() => new Date().toISOString().slice(0, 10));
   const [billets, setBillets] = useState('');
   const [receivedColor, setReceivedColor] = useState('');
+  const [postRollingSizeId, setPostRollingSizeId] = useState('');
   const [condition, setCondition] = useState('good');
   const [receivedBy, setReceivedBy] = useState(operatorName || '');
   const [receivedByTouched, setReceivedByTouched] = useState(false);
@@ -327,12 +334,14 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear
     dateReceived &&
     billetsNum > 0 &&
     receivedColor &&
+    postRollingSizeId &&
     receivedBy.trim() &&
     (!damage || notes.trim());
 
   function reset() {
     setBillets('');
     setReceivedColor('');
+    setPostRollingSizeId('');
     setCondition('good');
     setNotes('');
     setMismatch(null);
@@ -346,7 +355,7 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear
     if (!formValid) {
       setError({ message: damage && !notes.trim()
         ? 'Damage was recorded — notes describing the damage are required.'
-        : 'Complete all required fields (date, block count, received colour code, received by).' });
+        : 'Complete all required fields (date, block count, received colour code, post-rolling size, received by).' });
       return;
     }
     if (remaining != null && billetsNum > remaining) {
@@ -365,6 +374,7 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear
         received_color_code: receivedColor,
         expected_color_code: expColor || undefined,
         color_match: colorMatch === null ? undefined : colorMatch,
+        post_rolling_size_id: postRollingSizeId ? Number(postRollingSizeId) : undefined,
         condition,
         received_by: receivedBy.trim(),
         notes: notes.trim() || undefined,
@@ -514,6 +524,20 @@ function ReceivingForm({ dispatch, dispatches, colorCodes, operatorName, onClear
             })}
           </select>
           <ColorMatchBanner match={colorMatch} expected={expColor} received={receivedColor} />
+        </div>
+
+        <div>
+          <Label required>Post-rolling size</Label>
+          <select className="form-select" value={postRollingSizeId} onChange={(e) => setPostRollingSizeId(e.target.value)}>
+            <option value="">Select the size after rolling…</option>
+            {sizes.map((s) => {
+              const mm = s.sizeMm ?? s.size_mm ?? s.size;
+              return <option key={s.id} value={s.id}>{mm}mm{s.description ? ` · ${s.description}` : ''}</option>;
+            })}
+          </select>
+          <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--text-secondary)', marginTop: 5 }}>
+            Rolling changes dimensions — record the size after rolling. It carries forward to BSW-01 (Band Saw Cutting) and TAG-01 (Tagging).
+          </div>
         </div>
 
         <div>

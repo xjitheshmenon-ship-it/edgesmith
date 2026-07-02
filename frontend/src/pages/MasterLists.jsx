@@ -264,6 +264,124 @@ const TABS = [
     transform: (v) => ({ ...v, sizeMm: v.sizeMm !== '' && v.sizeMm != null ? Number(v.sizeMm) : undefined }),
   },
   {
+    key: 'barProfiles',
+    label: 'Bar Profiles',
+    icon: 'list',
+    fetch: () => masterApi.barProfiles().then((r) => r.data),
+    create: (p) => masterApi.createBarProfile(p),
+    update: (id, p) => masterApi.updateBarProfile(id, p),
+    archive: (id) => masterApi.archiveBarProfile(id),
+    columns: ['Profile', 'Width (mm)', 'Thickness (mm)', 'Status', ''],
+    renderRow: (row, ctx) => {
+      const w = pick(row, ['widthMm', 'width_mm']);
+      const t = pick(row, ['thicknessMm', 'thickness_mm']);
+      return (
+        <>
+          <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['label']) !== '—' ? pick(row, ['label']) : `${w}mm × ${t}mm`}</td>
+          <td style={{ ...TD, fontFamily: MONO }}>{w}</td>
+          <td style={{ ...TD, fontFamily: MONO }}>{t}</td>
+          <td style={TD}>{StatusOf(row)}</td>
+          <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+        </>
+      );
+    },
+    fields: [
+      { name: 'widthMm', label: 'Width (mm)', required: true, type: 'number', placeholder: 'e.g. 80' },
+      { name: 'thicknessMm', label: 'Thickness (mm)', required: true, type: 'number', placeholder: 'e.g. 25' },
+      { name: 'label', label: 'Label (optional)', placeholder: 'auto: 80mm × 25mm', full: true },
+    ],
+    transform: (v) => ({
+      widthMm: v.widthMm !== '' && v.widthMm != null ? Number(v.widthMm) : undefined,
+      thicknessMm: v.thicknessMm !== '' && v.thicknessMm != null ? Number(v.thicknessMm) : undefined,
+      label: v.label && v.label.trim() ? v.label.trim() : (v.widthMm && v.thicknessMm ? `${v.widthMm}mm × ${v.thicknessMm}mm` : undefined),
+    }),
+  },
+  {
+    key: 'barLengths',
+    label: 'Bar Lengths',
+    icon: 'list',
+    fetch: () => masterApi.barLengths().then((r) => r.data),
+    create: (p) => masterApi.createBarLength(p),
+    update: (id, p) => masterApi.updateBarLength(id, p),
+    archive: (id) => masterApi.archiveBarLength(id),
+    columns: ['Length (mm)', 'Label', 'Status', ''],
+    renderRow: (row, ctx) => (
+      <>
+        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['lengthMm', 'length_mm'])}</td>
+        <td style={TD}>{pick(row, ['label'])}</td>
+        <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+      </>
+    ),
+    fields: [
+      { name: 'lengthMm', label: 'Length (mm)', required: true, type: 'number', placeholder: 'e.g. 1500' },
+      { name: 'label', label: 'Label (optional)', placeholder: 'auto: 1500mm' },
+    ],
+    transform: (v) => ({
+      lengthMm: v.lengthMm !== '' && v.lengthMm != null ? Number(v.lengthMm) : undefined,
+      label: v.label && v.label.trim() ? v.label.trim() : (v.lengthMm ? `${v.lengthMm}mm` : undefined),
+    }),
+  },
+  {
+    key: 'sheetSizes',
+    label: 'Sheet Sizes',
+    icon: 'list',
+    fetch: () => masterApi.sheetSizes().then((r) => r.data),
+    create: (p) => masterApi.createSheetSize(p),
+    update: (id, p) => masterApi.updateSheetSize(id, p),
+    archive: (id) => masterApi.archiveSheetSize(id),
+    columns: ['Sheet Size', 'Length', 'Width', 'Height (mm)', 'Status', ''],
+    renderRow: (row, ctx) => {
+      const l = pick(row, ['lengthMm', 'length_mm']);
+      const w = pick(row, ['widthMm', 'width_mm']);
+      const h = pick(row, ['heightMm', 'height_mm']);
+      return (
+        <>
+          <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['label']) !== '—' ? pick(row, ['label']) : `${l}×${w}×${h}`}</td>
+          <td style={{ ...TD, fontFamily: MONO }}>{l}</td>
+          <td style={{ ...TD, fontFamily: MONO }}>{w}</td>
+          <td style={{ ...TD, fontFamily: MONO }}>{h}</td>
+          <td style={TD}>{StatusOf(row)}</td>
+          <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+        </>
+      );
+    },
+    fields: [
+      { name: 'lengthMm', label: 'Length (mm)', required: true, type: 'number', placeholder: 'e.g. 2000' },
+      { name: 'widthMm', label: 'Width (mm)', required: true, type: 'number', placeholder: 'e.g. 1000' },
+      { name: 'heightMm', label: 'Height / thickness (mm)', required: true, type: 'number', placeholder: 'e.g. 80' },
+      { name: 'label', label: 'Label (optional)', placeholder: 'auto: 2000×1000×80', full: true },
+    ],
+    transform: (v) => ({
+      lengthMm: v.lengthMm !== '' && v.lengthMm != null ? Number(v.lengthMm) : undefined,
+      widthMm: v.widthMm !== '' && v.widthMm != null ? Number(v.widthMm) : undefined,
+      heightMm: v.heightMm !== '' && v.heightMm != null ? Number(v.heightMm) : undefined,
+      label: v.label && v.label.trim() ? v.label.trim() : (v.lengthMm && v.widthMm && v.heightMm ? `${v.lengthMm}×${v.widthMm}×${v.heightMm}` : undefined),
+    }),
+  },
+  {
+    key: 'grades',
+    label: 'Grades',
+    icon: 'doc',
+    fetch: () => masterApi.gradeCycleMap().then((r) => r.data),
+    create: (p) => masterApi.createGradeCycleMap(p),
+    update: (id, p) => masterApi.updateGradeCycleMap(id, p),
+    archive: (id) => masterApi.archiveGradeCycleMap(id),
+    columns: ['Alloy Grade', 'Cycle Type', 'Status', ''],
+    renderRow: (row, ctx) => (
+      <>
+        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['alloyGrade', 'alloy_grade'])}</td>
+        <td style={{ ...TD, fontFamily: MONO }}>{pick(row, ['cycleTypeCode', 'cycle_type_code'])}</td>
+        <td style={TD}>{StatusOf(row)}</td>
+        <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
+      </>
+    ),
+    fields: [
+      { name: 'alloyGrade', label: 'Alloy Grade', required: true, placeholder: 'e.g. EN8' },
+      { name: 'cycleTypeCode', label: 'Cycle Type', type: 'select', required: true, options: [{ value: 'EAT', label: 'EAT' }, { value: 'SWAN', label: 'SWAN' }, { value: 'OVEN', label: 'OVEN' }] },
+    ],
+  },
+  {
     key: 'designs',
     label: 'Designs',
     icon: 'doc',

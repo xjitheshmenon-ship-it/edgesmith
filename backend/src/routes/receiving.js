@@ -12,12 +12,13 @@ router.get('/', async (req, res) => {
   const { rows } = await query(
     `SELECT re.*, cd.batch_reference AS dispatch_reference, cd.cycle_type_id, ct.code AS cycle_code,
             cd.color_code_id AS dispatch_color_id, dc.name AS dispatch_color_name,
-            arrival.name AS arrival_color_name
+            arrival.name AS arrival_color_name, sz.size_mm AS post_rolling_size_mm
      FROM receiving_events re
      JOIN contractor_dispatches cd ON cd.id = re.dispatch_batch_id
      JOIN cycle_types ct ON ct.id = cd.cycle_type_id
      LEFT JOIN color_codes dc ON dc.id = cd.color_code_id
      LEFT JOIN color_codes arrival ON arrival.id = re.color_code_on_arrival_id
+     LEFT JOIN sizes sz ON sz.id = re.post_rolling_size_id
      ORDER BY re.created_at DESC`
   );
   return res.json({ success: true, data: rows });
@@ -61,10 +62,22 @@ router.get('/:id', async (req, res) => {
  * acknowledges (handled as a separate PATCH below).
  */
 router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
-  const { dispatchBatchId, blockCount, colorCodeOnArrivalId, condition, conditionNotes, dateReceived } = req.body;
+  const b = req.body || {};
+  // Accept both the camelCase API contract and the snake_case names the
+  // receiving form sends. Colour may arrive as an id or as a code/name string.
+  const dispatchBatchId = b.dispatchBatchId ?? b.dispatch_id ?? b.dispatchId ?? null;
+  const blockCount = b.blockCount ?? b.billets_received ?? b.blocksReceived ?? b.block_count ?? null;
+  const condition = b.condition || 'good';
+  const conditionNotes = b.conditionNotes ?? b.notes ?? null;
+  const dateReceived = b.dateReceived ?? b.date_received ?? null;
+  const postRollingSizeId = b.postRollingSizeId != null && b.postRollingSizeId !== ''
+    ? Number(b.postRollingSizeId)
+    : (b.post_rolling_size_id != null && b.post_rolling_size_id !== '' ? Number(b.post_rolling_size_id) : null);
+  const colorIdRaw = b.colorCodeOnArrivalId ?? b.color_code_on_arrival_id ?? null;
+  const colorNameRaw = b.received_color_code ?? b.receivedColorCode ?? null;
 
   if (!dispatchBatchId || !blockCount || !dateReceived) {
-    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'dispatchBatchId, blockCount, dateReceived are required.' } });
+    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'dispatch, block count and date received are required.' } });
   }
 
   const result = await withTransaction(async (client) => {
@@ -72,6 +85,14 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, re
     const dispatch = dispatchRows[0];
     if (!dispatch) throw Object.assign(new Error('Dispatch not found'), { status: 404, code: 'DISPATCH_NOT_FOUND' });
 
+    // Resolve the arrival colour to an id: explicit id wins, else look up by code/name.
+    let colorCodeOnArrivalId = colorIdRaw != null && colorIdRaw !== '' ? Number(colorIdRaw) : null;
+    if (!colorCodeOnArrivalId && colorNameRaw) {
+      const { rows: ccRows } = await client.query(
+        `SELECT id FROM color_codes WHERE lower(name) = lower($1) LIMIT 1`, [String(colorNameRaw).trim()]
+      );
+      colorCodeOnArrivalId = ccRows[0] ? ccRows[0].id : null;
+    }
     const colorMatch = colorCodeOnArrivalId ? colorCodeOnArrivalId === dispatch.color_code_id : null;
 
     const year = new Date().getFullYear();
@@ -82,10 +103,10 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, re
     const { rows: recRows } = await client.query(
       `INSERT INTO receiving_events
          (receiving_reference, dispatch_batch_id, block_count, color_code_on_arrival_id, color_match,
-          condition, condition_notes, received_by, date_received)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+          condition, condition_notes, post_rolling_size_id, received_by, date_received)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [receivingReference, dispatchBatchId, blockCount, colorCodeOnArrivalId || null, colorMatch,
-        condition || 'good', conditionNotes || null, req.user.sub, dateReceived]
+        condition, conditionNotes || null, postRollingSizeId, req.user.sub, dateReceived]
     );
 
     const { rows: totalRows } = await client.query(
@@ -108,12 +129,15 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, re
  * Supervisor explicitly confirms proceeding despite a color mismatch.
  */
 router.patch('/:id/confirm-mismatch', requireRole(['admin', 'manager', 'supervisor']), async (req, res) => {
+  const note = (req.body && (req.body.note ?? req.body.mismatchNote ?? req.body.notes)) || null;
   const { rows } = await query(
-    `UPDATE receiving_events SET status = 'in_production' WHERE id = $1 AND color_match = false RETURNING *`,
-    [req.params.id]
+    `UPDATE receiving_events
+       SET status = 'in_production', mismatch_note = $2, mismatch_confirmed_by = $3
+     WHERE id = $1 AND color_match = false RETURNING *`,
+    [req.params.id, note, req.user.sub]
   );
   if (!rows[0]) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'No mismatched receiving event found with this id.' } });
-  await req.audit({ tableName: 'receiving_events', recordId: req.params.id, action: 'UPDATE', after: { mismatchConfirmed: true } });
+  await req.audit({ tableName: 'receiving_events', recordId: req.params.id, action: 'UPDATE', after: { mismatchConfirmed: true, note } });
   return res.json({ success: true, data: rows[0] });
 });
 
