@@ -91,6 +91,7 @@ app.use(`${API_PREFIX}/alerts`, require('./src/routes/alerts'));
 app.use(`${API_PREFIX}/activity`, require('./src/routes/activity'));
 app.use(`${API_PREFIX}/workstation-assignments`, require('./src/routes/workstationAssignments'));
 app.use(`${API_PREFIX}/swap-pools`, require('./src/routes/swapPools'));
+app.use(`${API_PREFIX}/queue`, require('./src/routes/queue'));
 // batches.js internally covers two resource families under one router
 // (/furnace-batches/* and /grinding/*) via scoped sub-routers, so it is
 // mounted at the bare API prefix rather than a single named sub-path.
