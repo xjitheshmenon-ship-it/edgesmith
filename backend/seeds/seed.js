@@ -32,6 +32,7 @@ async function main() {
   await seedAdminUser();
   const wsIds = await seedWorkstations();
   await seedWorkstationUnits(wsIds);
+  await initStaffingModel();
   await seedStorageLocations(); // idempotent — schema migration already inserts these, this is a safety net
   const cycleVersionId = await seedEatCycle(wsIds);
   await seedFaridabadCycle();
@@ -152,6 +153,11 @@ const WORKSTATION_UNITS = {
   'BSW-01': ['BSW-01-1'],
   'BSW-02': ['BSW-02-1'],
   'TAG-01': ['TAG-01-1'],
+  'STR-MAN': ['STR-MAN-1'],
+  'PRO': ['PRO-1'],
+  'HRC-01': ['HRC-01-1'],
+  'PKG': ['PKG-1'],
+  'ISP': ['ISP-1'],
   'WELD-01': ['WB-1', 'WB-2', 'WB-3'], // Faridabad weld bays
 };
 
@@ -170,6 +176,21 @@ async function seedWorkstationUnits(wsIds) {
     }
   }
   console.log(`✓ Seeded ${count} workstation units`);
+}
+
+// Staffing model + minimum operators per the rule book (Sections 9 & 24).
+// Applied once per workstation (guarded by staffing_model IS NULL) so an Admin
+// edit is never overwritten on a later boot. STR-HYD is covered by the furnace
+// crew and takes no direct assignment. Mirrors migration 036 for fresh installs
+// (where workstation rows are inserted after migrate runs).
+async function initStaffingModel() {
+  await query(`UPDATE workstation_types SET min_operators = 3 WHERE code IN ('HT70','HT80','STR-MAN','PRO','PKG') AND staffing_model IS NULL`);
+  await query(`UPDATE workstation_types SET min_operators = 2 WHERE code = 'HT90' AND staffing_model IS NULL`);
+  await query(`UPDATE workstation_types SET staffing_model = 3 WHERE code IN ('HT70','HT80','HT90','STR-HYD') AND staffing_model IS NULL`);
+  await query(`UPDATE workstation_types SET staffing_model = 2 WHERE code IN ('STR-MAN','PRO','PKG','HRC-01') AND staffing_model IS NULL`);
+  await query(`UPDATE workstation_types SET staffing_model = 1 WHERE staffing_model IS NULL`);
+  await query(`UPDATE workstation_types SET no_direct_assignment = true WHERE code = 'STR-HYD'`);
+  console.log('✓ Staffing model + minimum operators initialised');
 }
 
 async function seedStorageLocations() {

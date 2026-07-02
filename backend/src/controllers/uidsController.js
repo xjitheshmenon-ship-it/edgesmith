@@ -517,19 +517,43 @@ async function wipSummary(req, res) {
  * GET /api/v1/uids/summary/stations — count per workstation
  */
 async function stationSummary(req, res) {
+  // Current (open) shift — used to count the crew actually assigned to each
+  // workstation so the floor can show the crew bar and the furnace hard block.
+  const { rows: shiftRows } = await query(`SELECT id FROM shifts WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1`);
+  const currentShiftId = shiftRows[0] ? shiftRows[0].id : null;
+
   const { rows } = await query(
-    `SELECT wt.code, wt.name, wt.min_operators, wt.max_operators, wt.required_skill_code, wt.category, COUNT(u.id) AS active_count
+    `SELECT wt.code, wt.name, wt.min_operators, wt.max_operators, wt.required_skill_code, wt.category,
+            wt.staffing_model, wt.no_direct_assignment,
+            COUNT(DISTINCT u.id) AS active_count,
+            COUNT(DISTINCT wa.employee_id) FILTER (WHERE wa.unassigned_at IS NULL) AS assigned_operators
      FROM workstation_types wt
      LEFT JOIN cycle_steps cs ON cs.workstation_type_id = wt.id
      LEFT JOIN uids u ON u.current_step = cs.step_number AND u.cycle_version_id = cs.cycle_version_id AND u.status = 'active'
-     GROUP BY wt.code, wt.name, wt.min_operators, wt.max_operators, wt.required_skill_code, wt.category ORDER BY wt.code`
+     LEFT JOIN workstation_assignments wa ON wa.workstation_type_id = wt.id AND wa.shift_id = $1
+     GROUP BY wt.code, wt.name, wt.min_operators, wt.max_operators, wt.required_skill_code, wt.category,
+              wt.staffing_model, wt.no_direct_assignment
+     ORDER BY wt.code`,
+    [currentShiftId]
   );
-  return res.json({ success: true, data: rows.map((r) => ({
-    code: r.code, name: r.name, category: r.category, active_count: Number(r.active_count),
-    min_operators: Number(r.min_operators) || 1,
-    max_operators: r.max_operators != null ? Number(r.max_operators) : null,
-    required_badge: r.required_skill_code || null,
-  })) });
+  return res.json({ success: true, data: rows.map((r) => {
+    const minOps = Number(r.min_operators) || 1;
+    const assigned = Number(r.assigned_operators) || 0;
+    const isFurnace = r.category === 'heat_treatment';
+    return {
+      code: r.code, name: r.name, category: r.category, active_count: Number(r.active_count),
+      min_operators: minOps,
+      max_operators: r.max_operators != null ? Number(r.max_operators) : null,
+      required_badge: r.required_skill_code || null,
+      staffing_model: r.staffing_model != null ? Number(r.staffing_model) : null,
+      no_direct_assignment: !!r.no_direct_assignment,
+      assigned_operators: assigned,
+      // A furnace (Model 3) whose crew is under the minimum cannot issue the
+      // shift — the floor shows "SHIFT NOT ISSUED" and blocks batch creation.
+      crew_met: r.no_direct_assignment ? true : assigned >= minOps,
+      shift_issued: isFurnace ? assigned >= minOps : true,
+    };
+  }) });
 }
 
 /**

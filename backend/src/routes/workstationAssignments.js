@@ -57,12 +57,25 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, re
     return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'shiftId, employeeId, and a workstation (code or id) are required.' } });
   }
 
+  // §9.2 — overriding the skill-badge warning requires a logged reason.
+  if (overrideBadgeWarning && !String(overrideReason || '').trim()) {
+    return res.status(400).json({ success: false, error: { code: 'OVERRIDE_REASON_REQUIRED', message: 'A reason is required to override the badge warning.' } });
+  }
+
   const result = await withTransaction(async (client) => {
     const { rows: empRows } = await client.query(`SELECT role FROM employees WHERE id = $1`, [employeeId]);
     if (!empRows[0]) throw Object.assign(new Error('Employee not found'), { status: 404, code: 'EMPLOYEE_NOT_FOUND' });
 
-    const { rows: wsRows } = await client.query(`SELECT category, code FROM workstation_types WHERE id = $1`, [workstationTypeId]);
+    const { rows: wsRows } = await client.query(`SELECT category, code, no_direct_assignment FROM workstation_types WHERE id = $1`, [workstationTypeId]);
     if (!wsRows[0]) throw Object.assign(new Error('Workstation not found'), { status: 404, code: 'WORKSTATION_NOT_FOUND' });
+
+    // §24 / §9 — STR-HYD is covered by the furnace (HT) crew and takes no direct
+    // operator assignment.
+    if (wsRows[0].no_direct_assignment) {
+      throw Object.assign(new Error(`${wsRows[0].code} is covered by the furnace crew — it takes no separate operator assignment.`), {
+        status: 409, code: 'NO_DIRECT_ASSIGNMENT',
+      });
+    }
 
     // §8.4 — furnace workstations require a valid HT (Heat Treatment)
     // certification, not merely a role. No override for this specific rule.
