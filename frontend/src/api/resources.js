@@ -207,6 +207,8 @@ export const adminApi = {
   temperingParams: () => api.get('/admin/tempering-params'),
   updateTemperingParams: (cycleCode, temperingStep, payload) =>
     api.patch(`/admin/tempering-params/${cycleCode}/${temperingStep}`, payload),
+  hrcParams: () => api.get('/admin/hrc-params'),
+  updateHrcParams: (cycleCode, payload) => api.patch(`/admin/hrc-params/${cycleCode}`, payload),
   users: () => api.get('/admin/users'),
   auditLog: (filters) => api.get('/admin/audit-log', filters),
   shiftConfig: () => api.get('/admin/shift-config'),

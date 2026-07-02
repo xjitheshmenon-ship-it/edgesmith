@@ -89,10 +89,12 @@ async function getUidDetail(req, res) {
             sz.size_mm, d.code AS design_code, mo.mo_number, p.uid_code AS parent_uid_code,
             re.receiving_reference, cd.batch_reference AS dispatch_batch_reference,
             cd.possible_alloy_heats, cd.possible_ms_heats, cd.color_code_id,
-            cc.name AS color_name, cont.name AS contractor_name
+            cc.name AS color_name, cont.name AS contractor_name,
+            hp.max_retreatments
      FROM uids u
      JOIN cycle_versions cv ON cv.id = u.cycle_version_id
      JOIN cycle_types ct ON ct.id = cv.cycle_type_id
+     LEFT JOIN hrc_parameters hp ON hp.cycle_type_id = ct.id
      LEFT JOIN storage_locations sl ON sl.id = u.current_storage_id
      LEFT JOIN sizes sz ON sz.id = u.size_id
      LEFT JOIN designs d ON d.id = u.design_id

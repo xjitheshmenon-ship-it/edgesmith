@@ -476,6 +476,17 @@ export default function UidDetail({ code: codeProp }) {
             <StatusPill status={uid.status} label={STATUS_LABEL[uid.status] || uid.status} />
             <CycleBadge cycle={uid.cycle_code} />
             <PriorityBadge priority={uid.priority} />
+            {Number(uid.retreatment_count) > 0 ? (() => {
+              const n = Number(uid.retreatment_count);
+              const max = Number(uid.max_retreatments) || null;
+              const atMax = max != null && n >= max;
+              const color = atMax ? 'var(--status-danger, #e5484d)' : n >= 2 ? 'var(--status-warning, #d97a2b)' : 'var(--text-secondary, #5d7188)';
+              return (
+                <span className="badge" title="Heat-treatment re-treatments applied" style={{ background: atMax ? 'rgba(229,72,77,0.14)' : n >= 2 ? 'rgba(217,122,43,0.14)' : 'rgba(154,160,166,0.14)', color }}>
+                  ♺ Re-treatments {n}{max != null ? ` / ${max}` : ''}
+                </span>
+              );
+            })() : null}
           </div>
         </div>
       </div>
