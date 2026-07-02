@@ -332,66 +332,30 @@ const TABS = [
     }),
   },
   {
-    key: 'barLengths',
-    label: 'Bar Lengths',
+    key: 'sheetHeights',
+    label: 'MS Sheet Height',
     icon: 'list',
-    fetch: () => masterApi.barLengths().then((r) => r.data),
-    create: (p) => masterApi.createBarLength(p),
-    update: (id, p) => masterApi.updateBarLength(id, p),
-    archive: (id) => masterApi.archiveBarLength(id),
-    columns: ['Length (mm)', 'Label', 'Status', ''],
+    group: 'MEASUREMENTS',
+    fetch: () => masterApi.sheetHeights().then((r) => r.data),
+    create: (p) => masterApi.createSheetHeight(p),
+    update: (id, p) => masterApi.updateSheetHeight(id, p),
+    archive: (id) => masterApi.archiveSheetHeight(id),
+    columns: ['Height (mm)', 'Label', 'Status', ''],
     renderRow: (row, ctx) => (
       <>
-        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['lengthMm', 'length_mm'])}</td>
+        <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['heightMm', 'height_mm'])}</td>
         <td style={TD}>{pick(row, ['label'])}</td>
         <td style={TD}>{StatusOf(row)}</td>
         <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
       </>
     ),
     fields: [
-      { name: 'lengthMm', label: 'Length (mm)', required: true, type: 'number', placeholder: 'e.g. 1500' },
-      { name: 'label', label: 'Label (optional)', placeholder: 'auto: 1500mm' },
-    ],
-    transform: (v) => ({
-      lengthMm: v.lengthMm !== '' && v.lengthMm != null ? Number(v.lengthMm) : undefined,
-      label: v.label && v.label.trim() ? v.label.trim() : (v.lengthMm ? `${v.lengthMm}mm` : undefined),
-    }),
-  },
-  {
-    key: 'sheetSizes',
-    label: 'Sheet Sizes',
-    icon: 'list',
-    fetch: () => masterApi.sheetSizes().then((r) => r.data),
-    create: (p) => masterApi.createSheetSize(p),
-    update: (id, p) => masterApi.updateSheetSize(id, p),
-    archive: (id) => masterApi.archiveSheetSize(id),
-    columns: ['Sheet Size', 'Length', 'Width', 'Height (mm)', 'Status', ''],
-    renderRow: (row, ctx) => {
-      const l = pick(row, ['lengthMm', 'length_mm']);
-      const w = pick(row, ['widthMm', 'width_mm']);
-      const h = pick(row, ['heightMm', 'height_mm']);
-      return (
-        <>
-          <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['label']) !== '—' ? pick(row, ['label']) : `${l}×${w}×${h}`}</td>
-          <td style={{ ...TD, fontFamily: MONO }}>{l}</td>
-          <td style={{ ...TD, fontFamily: MONO }}>{w}</td>
-          <td style={{ ...TD, fontFamily: MONO }}>{h}</td>
-          <td style={TD}>{StatusOf(row)}</td>
-          <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
-        </>
-      );
-    },
-    fields: [
-      { name: 'lengthMm', label: 'Length (mm)', required: true, type: 'number', placeholder: 'e.g. 2000' },
-      { name: 'widthMm', label: 'Width (mm)', required: true, type: 'number', placeholder: 'e.g. 1000' },
       { name: 'heightMm', label: 'Height / thickness (mm)', required: true, type: 'number', placeholder: 'e.g. 80' },
-      { name: 'label', label: 'Label (optional)', placeholder: 'auto: 2000×1000×80', full: true },
+      { name: 'label', label: 'Label (optional)', placeholder: 'auto: 80mm' },
     ],
     transform: (v) => ({
-      lengthMm: v.lengthMm !== '' && v.lengthMm != null ? Number(v.lengthMm) : undefined,
-      widthMm: v.widthMm !== '' && v.widthMm != null ? Number(v.widthMm) : undefined,
       heightMm: v.heightMm !== '' && v.heightMm != null ? Number(v.heightMm) : undefined,
-      label: v.label && v.label.trim() ? v.label.trim() : (v.lengthMm && v.widthMm && v.heightMm ? `${v.lengthMm}×${v.widthMm}×${v.heightMm}` : undefined),
+      label: v.label && v.label.trim() ? v.label.trim() : (v.heightMm ? `${v.heightMm}mm` : undefined),
     }),
   },
   {
@@ -665,7 +629,7 @@ const TABS = [
 /* Which nav group each tab belongs to, and the display order of groups. */
 const GROUP_ORDER = ['MEASUREMENTS', 'MATERIALS', 'WORKSTATIONS', 'PRODUCTION', 'USERS & ACCESS'];
 const GROUP_BY_KEY = {
-  barProfiles: 'MEASUREMENTS', barLengths: 'MEASUREMENTS', sheetSizes: 'MEASUREMENTS',
+  barProfiles: 'MEASUREMENTS',
   grades: 'MATERIALS', suppliers: 'MATERIALS', contractors: 'MATERIALS',
   workstations: 'WORKSTATIONS', storage: 'WORKSTATIONS',
   products: 'PRODUCTION', designs: 'PRODUCTION', patterns: 'PRODUCTION',

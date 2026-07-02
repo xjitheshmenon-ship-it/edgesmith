@@ -81,13 +81,11 @@ function AlloyIntakeTab({ canCreate }) {
   const suppliersRef = usePolling(() => masterApi.suppliers().then((r) => r.data).catch(() => []), []);
   const gradesRef = usePolling(() => masterApi.gradeCycleMap().then((r) => r.data).catch(() => []), []);
   const profilesRef = usePolling(() => masterApi.barProfiles().then((r) => r.data).catch(() => []), []);
-  const lengthsRef = usePolling(() => masterApi.barLengths().then((r) => r.data).catch(() => []), []);
   const logRef = usePolling(() => faridabadApi.intakes({ material_type: 'alloy_steel' }).then((r) => r.data), []);
 
   const suppliers = asList(suppliersRef.data).filter((s) => (s.status ?? 'active') !== 'archived');
   const grades = asList(gradesRef.data).filter((g) => (g.status ?? 'active') !== 'archived');
   const profiles = asList(profilesRef.data).filter((p) => (p.status ?? 'active') !== 'archived');
-  const lengths = asList(lengthsRef.data).filter((l) => (l.status ?? 'active') !== 'archived');
   const log = asList(logRef.data);
 
   const [supplier, setSupplier] = useState('');
@@ -97,7 +95,8 @@ function AlloyIntakeTab({ canCreate }) {
   const [poReference, setPoReference] = useState('');
   const [grade, setGrade] = useState('');
   const [profileId, setProfileId] = useState('');
-  const [entries, setEntries] = useState([{ lengthId: '', qty: '' }]);
+  // Bar length is entered per bar (bars vary); width & thickness come from the profile.
+  const [entries, setEntries] = useState([{ length: '', qty: '' }]);
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -112,18 +111,14 @@ function AlloyIntakeTab({ canCreate }) {
   const width = profile ? num(profile.width_mm ?? profile.widthMm) : 0;
   const thickness = profile ? num(profile.thickness_mm ?? profile.thicknessMm) : 0;
 
-  function lengthMmOf(lengthId) {
-    const l = lengths.find((x) => String(x.id) === String(lengthId));
-    return l ? num(l.length_mm ?? l.lengthMm) : 0;
-  }
   function entryWeight(e) {
-    return STEEL_DENSITY * width * lengthMmOf(e.lengthId) * thickness * num(e.qty);
+    return STEEL_DENSITY * width * num(e.length) * thickness * num(e.qty);
   }
   const totalBars = entries.reduce((s, e) => s + num(e.qty), 0);
   const totalWeight = entries.reduce((s, e) => s + entryWeight(e), 0);
 
   const setEntry = (i, k, v) => setEntries((es) => es.map((e, j) => (j === i ? { ...e, [k]: v } : e)));
-  const addEntry = () => setEntries((es) => [...es, { lengthId: '', qty: '' }]);
+  const addEntry = () => setEntries((es) => [...es, { length: '', qty: '' }]);
   const removeEntry = (i) => setEntries((es) => (es.length > 1 ? es.filter((_, j) => j !== i) : es));
 
   function resolveSupplier() { return supplier === ADD_NEW ? newSupplier.trim() : supplier.trim(); }
@@ -136,7 +131,7 @@ function AlloyIntakeTab({ canCreate }) {
     if (!heatNumber.trim()) return setError('Heat number is required.');
     if (!grade) return setError('Grade is required — it determines the cycle type.');
     if (!profileId) return setError('Bar profile is required.');
-    const valid = entries.filter((en) => en.lengthId && num(en.qty) > 0);
+    const valid = entries.filter((en) => num(en.length) > 0 && num(en.qty) > 0);
     if (!valid.length) return setError('Add at least one bar entry with a length and quantity.');
 
     setBusy(true);
@@ -152,7 +147,7 @@ function AlloyIntakeTab({ canCreate }) {
         poReference: poReference.trim() || undefined,
         notes: notes.trim() || undefined,
         entries: valid.map((en) => ({
-          length_mm: lengthMmOf(en.lengthId),
+          length_mm: num(en.length),
           width_mm: width,
           thickness_mm: thickness,
           quantity: num(en.qty),
@@ -160,7 +155,7 @@ function AlloyIntakeTab({ canCreate }) {
       });
       setSuccess(`Intake recorded · heat ${heatNumber.trim()} · ${totalBars} bars, ${totalWeight.toFixed(1)} kg.`);
       setHeatNumber(''); setPoReference(''); setNotes('');
-      setEntries([{ lengthId: '', qty: '' }]);
+      setEntries([{ length: '', qty: '' }]);
       logRef.refetch();
     } catch (err) {
       setError(err.message || 'Could not save the intake.');
@@ -245,22 +240,19 @@ function AlloyIntakeTab({ canCreate }) {
           <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: T_MUTED, marginBottom: 6 }}>Bar entries</div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr><th style={ENTRY_TH}>Length</th><th style={ENTRY_TH}>Quantity</th><th style={{ ...ENTRY_TH, textAlign: 'right' }}>Weight</th><th style={ENTRY_TH} /></tr>
+              <tr><th style={ENTRY_TH}>Length (mm)</th><th style={ENTRY_TH}>Quantity</th><th style={{ ...ENTRY_TH, textAlign: 'right' }}>Weight</th><th style={ENTRY_TH} /></tr>
             </thead>
             <tbody>
               {entries.map((en, i) => (
                 <tr key={i}>
-                  <td style={ENTRY_TD}>
-                    <select className="form-select" style={{ height: 34 }} value={en.lengthId} onChange={(e) => setEntry(i, 'lengthId', e.target.value)}>
-                      <option value="">Length…</option>
-                      {lengths.map((l) => <option key={l.id} value={l.id}>{l.label || `${l.length_mm ?? l.lengthMm}mm`}</option>)}
-                    </select>
+                  <td style={{ ...ENTRY_TD, width: 120 }}>
+                    <input className="form-input" style={{ height: 34 }} type="number" min="0" step="any" placeholder="length" value={en.length} onChange={(e) => setEntry(i, 'length', e.target.value)} />
                   </td>
                   <td style={{ ...ENTRY_TD, width: 90 }}>
                     <input className="form-input" style={{ height: 34 }} type="number" min="0" step="1" placeholder="qty" value={en.qty} onChange={(e) => setEntry(i, 'qty', e.target.value)} />
                   </td>
                   <td style={{ ...ENTRY_TD, textAlign: 'right', fontFamily: MONO, fontSize: 12, color: T_PRIMARY, whiteSpace: 'nowrap' }}>
-                    {(profile && en.lengthId && num(en.qty) > 0) ? `${entryWeight(en).toFixed(1)} kg` : '—'}
+                    {(profile && num(en.length) > 0 && num(en.qty) > 0) ? `${entryWeight(en).toFixed(1)} kg` : '—'}
                   </td>
                   <td style={{ ...ENTRY_TD, width: 30, textAlign: 'right' }}>
                     {entries.length > 1 && (
@@ -274,7 +266,7 @@ function AlloyIntakeTab({ canCreate }) {
             </tbody>
           </table>
           <button type="button" className="btn btn-sm" onClick={addEntry} style={{ marginTop: 8 }}>
-            <Icon name="plus" size={13} /> Add length
+            <Icon name="plus" size={13} /> Add bar
           </button>
         </div>
 
@@ -301,7 +293,7 @@ function AlloyIntakeTab({ canCreate }) {
 /* ── MS Sheet Intake ───────────────────────────────────────────────────── */
 function MsIntakeTab({ canCreate }) {
   const suppliersRef = usePolling(() => masterApi.suppliers().then((r) => r.data).catch(() => []), []);
-  const sheetRef = usePolling(() => masterApi.sheetSizes().then((r) => r.data).catch(() => []), []);
+  const sheetRef = usePolling(() => masterApi.sheetHeights().then((r) => r.data).catch(() => []), []);
   const logRef = usePolling(() => faridabadApi.intakes({ material_type: 'ms' }).then((r) => r.data), []);
 
   const suppliers = asList(suppliersRef.data).filter((s) => (s.status ?? 'active') !== 'archived');
@@ -456,7 +448,7 @@ function MsIntakeTab({ canCreate }) {
           </button>
           {!sheets.length && (
             <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--status-warning, #d97a2b)', marginTop: 6 }}>
-              No sheet sizes configured — an admin must add them under Master Lists · Sheet Sizes.
+              No sheet height standards configured — an admin must add them under Master Lists · MS Sheet Height.
             </div>
           )}
         </div>
