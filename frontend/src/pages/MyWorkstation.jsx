@@ -4,6 +4,7 @@ import { jobsApi, PAUSE_REASONS } from '../api/jobs';
 import { uidsApi } from '../api/uids';
 import { batchesApi } from '../api/batches';
 import { cyclesApi, masterApi, employeesApi } from '../api/resources';
+import { swapApi } from '../api/swap';
 import { useAuth } from '../store/AuthContext';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
@@ -1335,6 +1336,40 @@ function AllWorkstationsBoard() {
 
 const ACTIVE_STATUSES = ['in_progress', 'running', 'active', 'paused'];
 
+/* §8 — swap-pool slot banner: the operator's current/next rotation slot with a
+   5-minute pre-slot cue and a takeover confirmation. */
+function SwapSlotBanner() {
+  const { data, refetch } = usePolling(() => swapApi.mySlots().then((r) => r.data).catch(() => []), [], { interval: 30000 });
+  const slots = Array.isArray(data) ? data : [];
+  const [busy, setBusy] = useState(null);
+  if (!slots.length) return null;
+  const active = slots.find((s) => s.active);
+  const next = slots.find((s) => !s.active);
+  const t = (v) => new Date(v).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  async function confirm(id) {
+    setBusy(id);
+    try { await swapApi.confirmSlot(id); await refetch(); } finally { setBusy(null); }
+  }
+  return (
+    <div className="card" style={{ marginTop: 16, padding: '12px 16px', borderLeft: '4px solid #2d6fb5', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <Icon name="timer" size={18} color="#2d6fb5" />
+      <div style={{ flex: 1, fontFamily: SANS, fontSize: 13, color: T_PRIMARY }}>
+        {active
+          ? <>You're on <b>{active.ws_code}</b> now{active.is_fixed ? ' (fixed INSP)' : ''} — until {t(active.ends_at)}.</>
+          : next
+            ? <>Next swap: <b>{next.ws_code}</b> at {t(next.starts_at)}{next.notify_soon ? ' — starting soon' : ''}.</>
+            : null}
+      </div>
+      {active && !active.confirmed_at && !active.is_fixed && (
+        <button className="btn btn-sm btn-primary" disabled={busy === active.id} onClick={() => confirm(active.id)}>Confirm takeover</button>
+      )}
+      {!active && next && next.notify_soon && !next.confirmed_at && (
+        <button className="btn btn-sm" disabled={busy === next.id} onClick={() => confirm(next.id)}>Confirm upcoming</button>
+      )}
+    </div>
+  );
+}
+
 export default function MyWorkstation() {
   const { user, isOperator, isSupervisor, isAdmin, isManager } = useAuth();
   const canAct = isOperator || isSupervisor || isAdmin; // Manager view is read-only
@@ -1560,6 +1595,8 @@ export default function MyWorkstation() {
   return (
     <div style={{ padding: '28px 28px 60px', maxWidth: 1280 }}>
       {header}
+
+      {!showingOperatorView && <SwapSlotBanner />}
 
       {actionError && (
         <div className="card" style={{ marginTop: 16, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, borderLeft: '4px solid var(--status-danger, #e5484d)' }}>

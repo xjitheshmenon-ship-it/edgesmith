@@ -5,6 +5,7 @@ import { useApp } from '../store/AppContext';
 import { useAuth } from '../store/AuthContext';
 import { uidsApi } from '../api/uids';
 import { jobsApi } from '../api/jobs';
+import { swapApi } from '../api/swap';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
 
@@ -136,8 +137,52 @@ function CrewBar({ assigned, min }) {
   );
 }
 
-function StationCard({ station, onClick }) {
-  const { code, name, running, queued, runningUids, queuedUids, jobs = [], category, staffingModel, minOperators, assignedOperators, shiftIssued, noDirect } = station;
+function fmtMMSS(sec) {
+  const s = Math.max(0, Math.round(sec || 0));
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/* Swap-pool panel (Model 2): current + next operator, slot countdown, INSP
+   fixed holder (HRC-01), UNDERSTAFFED state, and Supervisor rotate/override. */
+function SwapPanel({ swap, onGenerate, onOverride }) {
+  if (!swap) return null;
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border-card, #eef2ea)' }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+        <SectionLabel>Swap pool</SectionLabel>
+        {swap.understaffed && <span className="badge" style={{ background: 'rgba(229,72,77,0.14)', color: '#e5484d', fontFamily: MONO, fontSize: 9 }}>UNDERSTAFFED</span>}
+        <span style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-muted, #9bb4d4)' }}>{swap.interval_minutes}m</span>
+      </div>
+      {swap.fixed && (
+        <div style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--text-secondary, #5d7188)' }}>
+          <Icon name="lock" size={10} /> Fixed (INSP): <b>{String(swap.fixed.name || '').split(' ')[0]}</b>
+        </div>
+      )}
+      {swap.current ? (
+        <div style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--text-primary, #15366a)', marginTop: 2 }}>
+          Now: <b>{String(swap.current.name || '').split(' ')[0]}</b> · <span style={{ fontFamily: MONO }}>{fmtMMSS(swap.current.remaining_seconds)}</span> left{swap.current.confirmed ? ' ✓' : ''}
+        </div>
+      ) : swap.has_schedule ? null : (
+        <div style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--text-muted, #9bb4d4)', marginTop: 2 }}>No rotation generated</div>
+      )}
+      {swap.next && (
+        <div style={{ fontFamily: SANS, fontSize: 11.5, color: 'var(--text-secondary, #5d7188)', marginTop: 2 }}>
+          Next: {String(swap.next.name || '').split(' ')[0]}{swap.next.notify_soon ? ' · soon' : ''}
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        <button className="btn btn-sm" style={{ padding: '3px 9px' }} onClick={() => onGenerate(swap)}>
+          {swap.has_schedule ? 'Regenerate' : 'Generate rotation'}
+        </button>
+        {swap.has_schedule && <button className="btn btn-sm" style={{ padding: '3px 9px' }} onClick={() => onOverride(swap)}>Override time</button>}
+      </div>
+    </div>
+  );
+}
+
+function StationCard({ station, onClick, onSwapGenerate, onSwapOverride }) {
+  const { code, name, running, queued, runningUids, queuedUids, jobs = [], category, staffingModel, minOperators, assignedOperators, shiftIssued, noDirect, swap } = station;
   const isIdle = running === 0 && queued === 0;
   const status = stationStatus(running, queued);
   const operators = jobs.map((j) => jpick(j, 'operator_name', 'operator')).filter(Boolean);
@@ -166,8 +211,9 @@ function StationCard({ station, onClick }) {
     );
   }
 
-  // Idle tiles: smaller, greyed out, no queue info (per spec).
-  if (isIdle) {
+  // Idle tiles: smaller, greyed out, no queue info (per spec). Swap-pool stations
+  // still show their rotation so a Supervisor can manage it while the queue is empty.
+  if (isIdle && !(staffingModel === 2)) {
     return (
       <div
         className="card"
@@ -178,6 +224,21 @@ function StationCard({ station, onClick }) {
         <div style={{ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: 'var(--text-primary, #15366a)' }}>{code}</div>
         <div style={{ fontFamily: SANS, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>{name}</div>
         <StatusPill status="idle" />
+      </div>
+    );
+  }
+  if (isIdle && staffingModel === 2) {
+    return (
+      <div className="card" onClick={onClick} title="View workstation detail" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', ...clickable }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary, #15366a)' }}>{code}</div>
+            <div style={{ fontFamily: SANS, fontSize: 12.5, color: 'var(--text-secondary, #5d7188)', marginTop: 1 }}>{name}</div>
+          </div>
+          <StatusPill status="idle" />
+        </div>
+        {showCrew && <CrewBar assigned={assignedOperators} min={minOperators} />}
+        <SwapPanel swap={swap} onGenerate={onSwapGenerate} onOverride={onSwapOverride} />
       </div>
     );
   }
@@ -201,9 +262,7 @@ function StationCard({ station, onClick }) {
         {running} in progress{queued ? ` · ${queued} queued` : ''}
       </div>
       {showCrew && <CrewBar assigned={assignedOperators} min={minOperators} />}
-      {staffingModel === 2 && (
-        <div style={{ fontFamily: MONO, fontSize: 9.5, color: 'var(--text-muted, #9bb4d4)', marginTop: 5 }}>{STAFFING_LABEL[staffingModel]}</div>
-      )}
+      {staffingModel === 2 && <SwapPanel swap={swap} onGenerate={onSwapGenerate} onOverride={onSwapOverride} />}
       {operators.length > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, fontFamily: SANS, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>
           <Icon name="user" size={11} />
@@ -262,15 +321,16 @@ export default function ProductionFloor() {
   // client-side into per-station running / queued buckets.
   const { data, loading, error, refetch } = usePolling(
     async () => {
-      const [stations, active, held, wip, jobsRes] = await Promise.all([
+      const [stations, active, held, wip, jobsRes, swapRes] = await Promise.all([
         uidsApi.stationSummary().then((r) => r.data),
         uidsApi.list({ location, status: 'active', per_page: 200 }).then((r) => r.data),
         uidsApi.list({ location, status: 'hold', per_page: 200 }).then((r) => r.data),
         uidsApi.wipSummary().then((r) => r.data).catch(() => []),
         jobsApi.list({}).then((r) => r.data).catch(() => []),
+        swapApi.list().then((r) => r.data).catch(() => ({ pools: [] })),
       ]);
       const jobs = Array.isArray(jobsRes) ? jobsRes : (jobsRes?.jobs || jobsRes?.items || []);
-      return { stations: stations || [], uids: [...(active || []), ...(held || [])], wip: wip || [], jobs };
+      return { stations: stations || [], uids: [...(active || []), ...(held || [])], wip: wip || [], jobs, swap: swapRes?.pools || [] };
     },
     [location]
   );
@@ -279,6 +339,24 @@ export default function ProductionFloor() {
   const uids = data?.uids || [];
   const wip = data?.wip || [];
   const jobs = data?.jobs || [];
+  const swapByCode = useMemo(() => {
+    const m = new Map();
+    for (const p of data?.swap || []) m.set(p.code, p);
+    return m;
+  }, [data]);
+
+  const handleSwapGenerate = async (swap) => {
+    try { await swapApi.generate(swap.workstation_type_id, swap.interval_minutes || 60); await refetch(); }
+    catch (e) { window.alert(e?.message || 'Could not generate the rotation.'); }
+  };
+  const handleSwapOverride = async (swap) => {
+    const val = window.prompt(`Override swap interval for ${swap.code} (minutes, this shift only):`, String(swap.interval_minutes || 60));
+    if (!val) return;
+    const mins = Number(val);
+    if (!mins || mins < 5 || mins > 480) { window.alert('Enter a number of minutes between 5 and 480.'); return; }
+    try { await swapApi.setInterval(swap.workstation_type_id, mins); await refetch(); }
+    catch (e) { window.alert(e?.message || 'Could not override the interval.'); }
+  };
 
   const jobsByStation = useMemo(() => {
     const m = new Map();
@@ -333,9 +411,10 @@ export default function ProductionFloor() {
         crewMet: s.crew_met !== false,
         shiftIssued: s.shift_issued !== false,
         noDirect: !!s.no_direct_assignment,
+        swap: swapByCode.get(s.code) || null,
       };
     });
-  }, [stations, filteredUids, jobsByStation]);
+  }, [stations, filteredUids, jobsByStation, swapByCode]);
 
   const visibleCards = stationCards;
 
@@ -420,7 +499,7 @@ export default function ProductionFloor() {
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
                 {visibleCards.map((s) => (
-                  <StationCard key={s.code} station={s} onClick={() => setSelectedCode(s.code)} />
+                  <StationCard key={s.code} station={s} onClick={() => setSelectedCode(s.code)} onSwapGenerate={handleSwapGenerate} onSwapOverride={handleSwapOverride} />
                 ))}
               </div>
             )}
