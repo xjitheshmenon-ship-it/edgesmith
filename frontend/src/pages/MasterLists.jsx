@@ -299,39 +299,6 @@ const TABS = [
     }),
   },
   {
-    key: 'barProfiles',
-    label: 'Bar Profiles',
-    icon: 'list',
-    fetch: () => masterApi.barProfiles().then((r) => r.data),
-    create: (p) => masterApi.createBarProfile(p),
-    update: (id, p) => masterApi.updateBarProfile(id, p),
-    archive: (id) => masterApi.archiveBarProfile(id),
-    columns: ['Profile', 'Width (mm)', 'Thickness (mm)', 'Status', ''],
-    renderRow: (row, ctx) => {
-      const w = pick(row, ['widthMm', 'width_mm']);
-      const t = pick(row, ['thicknessMm', 'thickness_mm']);
-      return (
-        <>
-          <td style={{ ...TD, fontFamily: MONO, fontWeight: 600 }}>{pick(row, ['label']) !== '—' ? pick(row, ['label']) : `${w}mm × ${t}mm`}</td>
-          <td style={{ ...TD, fontFamily: MONO }}>{w}</td>
-          <td style={{ ...TD, fontFamily: MONO }}>{t}</td>
-          <td style={TD}>{StatusOf(row)}</td>
-          <td style={{ ...TD, textAlign: 'right' }}>{ctx.rowActions(row)}</td>
-        </>
-      );
-    },
-    fields: [
-      { name: 'widthMm', label: 'Width (mm)', required: true, type: 'number', placeholder: 'e.g. 80' },
-      { name: 'thicknessMm', label: 'Thickness (mm)', required: true, type: 'number', placeholder: 'e.g. 25' },
-      { name: 'label', label: 'Label (optional)', placeholder: 'auto: 80mm × 25mm', full: true },
-    ],
-    transform: (v) => ({
-      widthMm: v.widthMm !== '' && v.widthMm != null ? Number(v.widthMm) : undefined,
-      thicknessMm: v.thicknessMm !== '' && v.thicknessMm != null ? Number(v.thicknessMm) : undefined,
-      label: v.label && v.label.trim() ? v.label.trim() : (v.widthMm && v.thicknessMm ? `${v.widthMm}mm × ${v.thicknessMm}mm` : undefined),
-    }),
-  },
-  {
     key: 'sheetHeights',
     label: 'MS Sheet Height',
     icon: 'list',
@@ -629,7 +596,6 @@ const TABS = [
 /* Which nav group each tab belongs to, and the display order of groups. */
 const GROUP_ORDER = ['MEASUREMENTS', 'MATERIALS', 'WORKSTATIONS', 'PRODUCTION', 'USERS & ACCESS'];
 const GROUP_BY_KEY = {
-  barProfiles: 'MEASUREMENTS',
   grades: 'MATERIALS', suppliers: 'MATERIALS', contractors: 'MATERIALS',
   workstations: 'WORKSTATIONS', storage: 'WORKSTATIONS',
   products: 'PRODUCTION', designs: 'PRODUCTION', patterns: 'PRODUCTION',

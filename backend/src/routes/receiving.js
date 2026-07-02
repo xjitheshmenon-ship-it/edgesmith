@@ -66,15 +66,32 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, re
   // Accept both the camelCase API contract and the snake_case names the
   // receiving form sends. Colour may arrive as an id or as a code/name string.
   const dispatchBatchId = b.dispatchBatchId ?? b.dispatch_id ?? b.dispatchId ?? null;
-  const blockCount = b.blockCount ?? b.billets_received ?? b.blocksReceived ?? b.block_count ?? null;
   const condition = b.condition || 'good';
   const conditionNotes = b.conditionNotes ?? b.notes ?? null;
   const dateReceived = b.dateReceived ?? b.date_received ?? null;
-  const postRollingSizeId = b.postRollingSizeId != null && b.postRollingSizeId !== ''
-    ? Number(b.postRollingSizeId)
-    : (b.post_rolling_size_id != null && b.post_rolling_size_id !== '' ? Number(b.post_rolling_size_id) : null);
   const colorIdRaw = b.colorCodeOnArrivalId ?? b.color_code_on_arrival_id ?? null;
   const colorNameRaw = b.received_color_code ?? b.receivedColorCode ?? null;
+
+  // A delivery can carry blocks at several post-rolling sizes. blockEntries is
+  // [{ sizeId, count }]; block_count is the total, post_rolling_size_id keeps
+  // the first size for single-size readers. Falls back to the single-size shape.
+  const rawEntries = Array.isArray(b.blockEntries ?? b.block_entries) ? (b.blockEntries ?? b.block_entries) : null;
+  let blockEntries = null;
+  let blockCount = b.blockCount ?? b.billets_received ?? b.blocksReceived ?? b.block_count ?? null;
+  let postRollingSizeId = b.postRollingSizeId != null && b.postRollingSizeId !== ''
+    ? Number(b.postRollingSizeId)
+    : (b.post_rolling_size_id != null && b.post_rolling_size_id !== '' ? Number(b.post_rolling_size_id) : null);
+
+  if (rawEntries) {
+    blockEntries = rawEntries
+      .map((e) => ({ size_id: Number(e.sizeId ?? e.size_id) || null, count: Number(e.count ?? e.blockCount) || 0 }))
+      .filter((e) => e.size_id && e.count > 0);
+    if (!blockEntries.length) {
+      return res.status(400).json({ success: false, error: { code: 'NO_ENTRIES', message: 'At least one block size with a count is required.' } });
+    }
+    blockCount = blockEntries.reduce((s, e) => s + e.count, 0);
+    postRollingSizeId = blockEntries[0].size_id;
+  }
 
   if (!dispatchBatchId || !blockCount || !dateReceived) {
     return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'dispatch, block count and date received are required.' } });
@@ -103,10 +120,10 @@ router.post('/', requireRole(['admin', 'manager', 'supervisor']), async (req, re
     const { rows: recRows } = await client.query(
       `INSERT INTO receiving_events
          (receiving_reference, dispatch_batch_id, block_count, color_code_on_arrival_id, color_match,
-          condition, condition_notes, post_rolling_size_id, received_by, date_received)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+          condition, condition_notes, post_rolling_size_id, block_entries, received_by, date_received)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [receivingReference, dispatchBatchId, blockCount, colorCodeOnArrivalId || null, colorMatch,
-        condition, conditionNotes || null, postRollingSizeId, req.user.sub, dateReceived]
+        condition, conditionNotes || null, postRollingSizeId, blockEntries ? JSON.stringify(blockEntries) : null, req.user.sub, dateReceived]
     );
 
     const { rows: totalRows } = await client.query(

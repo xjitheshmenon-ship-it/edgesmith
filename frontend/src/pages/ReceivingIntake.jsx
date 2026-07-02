@@ -80,12 +80,10 @@ const ENTRY_TD = { padding: '5px 8px 5px 0', verticalAlign: 'middle' };
 function AlloyIntakeTab({ canCreate }) {
   const suppliersRef = usePolling(() => masterApi.suppliers().then((r) => r.data).catch(() => []), []);
   const gradesRef = usePolling(() => masterApi.gradeCycleMap().then((r) => r.data).catch(() => []), []);
-  const profilesRef = usePolling(() => masterApi.barProfiles().then((r) => r.data).catch(() => []), []);
   const logRef = usePolling(() => faridabadApi.intakes({ material_type: 'alloy_steel' }).then((r) => r.data), []);
 
   const suppliers = asList(suppliersRef.data).filter((s) => (s.status ?? 'active') !== 'archived');
   const grades = asList(gradesRef.data).filter((g) => (g.status ?? 'active') !== 'archived');
-  const profiles = asList(profilesRef.data).filter((p) => (p.status ?? 'active') !== 'archived');
   const log = asList(logRef.data);
 
   const [supplier, setSupplier] = useState('');
@@ -94,9 +92,8 @@ function AlloyIntakeTab({ canCreate }) {
   const [dateReceived, setDateReceived] = useState(todayISO);
   const [poReference, setPoReference] = useState('');
   const [grade, setGrade] = useState('');
-  const [profileId, setProfileId] = useState('');
-  // Bar length is entered per bar (bars vary); width & thickness come from the profile.
-  const [entries, setEntries] = useState([{ length: '', qty: '' }]);
+  // Every bar dimension is entered at intake (length, width, thickness vary).
+  const [entries, setEntries] = useState([{ length: '', width: '', thickness: '', qty: '' }]);
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -107,18 +104,15 @@ function AlloyIntakeTab({ canCreate }) {
     return g ? (g.cycle_type_code ?? g.cycleTypeCode) : null;
   }, [grades, grade]);
 
-  const profile = useMemo(() => profiles.find((p) => String(p.id) === String(profileId)) || null, [profiles, profileId]);
-  const width = profile ? num(profile.width_mm ?? profile.widthMm) : 0;
-  const thickness = profile ? num(profile.thickness_mm ?? profile.thicknessMm) : 0;
-
   function entryWeight(e) {
-    return STEEL_DENSITY * width * num(e.length) * thickness * num(e.qty);
+    return STEEL_DENSITY * num(e.width) * num(e.length) * num(e.thickness) * num(e.qty);
   }
+  const entryReady = (e) => num(e.length) > 0 && num(e.width) > 0 && num(e.thickness) > 0 && num(e.qty) > 0;
   const totalBars = entries.reduce((s, e) => s + num(e.qty), 0);
   const totalWeight = entries.reduce((s, e) => s + entryWeight(e), 0);
 
   const setEntry = (i, k, v) => setEntries((es) => es.map((e, j) => (j === i ? { ...e, [k]: v } : e)));
-  const addEntry = () => setEntries((es) => [...es, { length: '', qty: '' }]);
+  const addEntry = () => setEntries((es) => [...es, { length: '', width: '', thickness: '', qty: '' }]);
   const removeEntry = (i) => setEntries((es) => (es.length > 1 ? es.filter((_, j) => j !== i) : es));
 
   function resolveSupplier() { return supplier === ADD_NEW ? newSupplier.trim() : supplier.trim(); }
@@ -130,9 +124,8 @@ function AlloyIntakeTab({ canCreate }) {
     if (!sup) return setError('Supplier is required.');
     if (!heatNumber.trim()) return setError('Heat number is required.');
     if (!grade) return setError('Grade is required — it determines the cycle type.');
-    if (!profileId) return setError('Bar profile is required.');
-    const valid = entries.filter((en) => num(en.length) > 0 && num(en.qty) > 0);
-    if (!valid.length) return setError('Add at least one bar entry with a length and quantity.');
+    const valid = entries.filter(entryReady);
+    if (!valid.length) return setError('Add at least one bar entry with length, width, thickness and quantity.');
 
     setBusy(true);
     try {
@@ -142,20 +135,19 @@ function AlloyIntakeTab({ canCreate }) {
         newSupplier: supplier === ADD_NEW ? sup : undefined,
         heatNumber: heatNumber.trim(),
         grade,
-        profileId: Number(profileId),
         dateReceived,
         poReference: poReference.trim() || undefined,
         notes: notes.trim() || undefined,
         entries: valid.map((en) => ({
           length_mm: num(en.length),
-          width_mm: width,
-          thickness_mm: thickness,
+          width_mm: num(en.width),
+          thickness_mm: num(en.thickness),
           quantity: num(en.qty),
         })),
       });
       setSuccess(`Intake recorded · heat ${heatNumber.trim()} · ${totalBars} bars, ${totalWeight.toFixed(1)} kg.`);
       setHeatNumber(''); setPoReference(''); setNotes('');
-      setEntries([{ length: '', qty: '' }]);
+      setEntries([{ length: '', width: '', thickness: '', qty: '' }]);
       logRef.refetch();
     } catch (err) {
       setError(err.message || 'Could not save the intake.');
@@ -214,45 +206,33 @@ function AlloyIntakeTab({ canCreate }) {
           </div>
         )}
 
-        <div>
-          <label className="form-label">Bar profile *</label>
-          <select className="form-select" value={profileId} onChange={(e) => setProfileId(e.target.value)}>
-            <option value="">Select a profile from Master Lists…</option>
-            {profiles.map((p) => {
-              const w = p.width_mm ?? p.widthMm; const t = p.thickness_mm ?? p.thicknessMm;
-              return <option key={p.id} value={p.id}>{p.label || `${w}mm × ${t}mm`}</option>;
-            })}
-          </select>
-          {profile && (
-            <div style={{ fontFamily: MONO, fontSize: 11, color: T_SECONDARY, marginTop: 6 }}>
-              Width: {width}mm · Thickness: {thickness}mm <span style={{ color: T_MUTED }}>(read-only, from Master List)</span>
-            </div>
-          )}
-          {!profiles.length && (
-            <div style={{ fontFamily: SANS, fontSize: 11, color: 'var(--status-warning, #d97a2b)', marginTop: 6 }}>
-              No bar profiles configured — an admin must add one under Master Lists · Bar Profiles.
-            </div>
-          )}
-        </div>
-
-        {/* BAR ENTRIES */}
+        {/* BAR ENTRIES — every dimension entered per bar */}
         <div>
           <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: '0.1em', textTransform: 'uppercase', color: T_MUTED, marginBottom: 6 }}>Bar entries</div>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr><th style={ENTRY_TH}>Length (mm)</th><th style={ENTRY_TH}>Quantity</th><th style={{ ...ENTRY_TH, textAlign: 'right' }}>Weight</th><th style={ENTRY_TH} /></tr>
+              <tr>
+                <th style={ENTRY_TH}>Length (mm)</th><th style={ENTRY_TH}>Width (mm)</th><th style={ENTRY_TH}>Thickness (mm)</th>
+                <th style={ENTRY_TH}>Qty</th><th style={{ ...ENTRY_TH, textAlign: 'right' }}>Weight</th><th style={ENTRY_TH} />
+              </tr>
             </thead>
             <tbody>
               {entries.map((en, i) => (
                 <tr key={i}>
-                  <td style={{ ...ENTRY_TD, width: 120 }}>
+                  <td style={{ ...ENTRY_TD, width: 96 }}>
                     <input className="form-input" style={{ height: 34 }} type="number" min="0" step="any" placeholder="length" value={en.length} onChange={(e) => setEntry(i, 'length', e.target.value)} />
                   </td>
-                  <td style={{ ...ENTRY_TD, width: 90 }}>
+                  <td style={{ ...ENTRY_TD, width: 84 }}>
+                    <input className="form-input" style={{ height: 34 }} type="number" min="0" step="any" placeholder="width" value={en.width} onChange={(e) => setEntry(i, 'width', e.target.value)} />
+                  </td>
+                  <td style={{ ...ENTRY_TD, width: 96 }}>
+                    <input className="form-input" style={{ height: 34 }} type="number" min="0" step="any" placeholder="thick" value={en.thickness} onChange={(e) => setEntry(i, 'thickness', e.target.value)} />
+                  </td>
+                  <td style={{ ...ENTRY_TD, width: 70 }}>
                     <input className="form-input" style={{ height: 34 }} type="number" min="0" step="1" placeholder="qty" value={en.qty} onChange={(e) => setEntry(i, 'qty', e.target.value)} />
                   </td>
                   <td style={{ ...ENTRY_TD, textAlign: 'right', fontFamily: MONO, fontSize: 12, color: T_PRIMARY, whiteSpace: 'nowrap' }}>
-                    {(profile && num(en.length) > 0 && num(en.qty) > 0) ? `${entryWeight(en).toFixed(1)} kg` : '—'}
+                    {entryReady(en) ? `${entryWeight(en).toFixed(1)} kg` : '—'}
                   </td>
                   <td style={{ ...ENTRY_TD, width: 30, textAlign: 'right' }}>
                     {entries.length > 1 && (
