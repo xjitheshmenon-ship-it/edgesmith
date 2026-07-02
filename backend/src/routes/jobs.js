@@ -59,7 +59,9 @@ router.get('/', async (req, res) => {
      ) sl ON true
      LEFT JOIN faridabad_weld_log wl ON wl.id = j.weld_log_id
      ${where}
-     ORDER BY CASE WHEN j.status = 'in_progress' THEN 0 WHEN j.status = 'paused' THEN 1 ELSE 2 END, j.created_at ASC`,
+     ORDER BY CASE WHEN j.status = 'in_progress' THEN 0 WHEN j.status = 'paused' THEN 1 ELSE 2 END,
+              CASE WHEN u.priority = 'High' THEN 0 WHEN u.priority = 'Normal' THEN 1 ELSE 2 END,
+              j.created_at ASC`,
     params
   );
   return res.json({ success: true, data: rows });
@@ -122,6 +124,34 @@ router.post('/:id/start', requireRole(['admin', 'manager', 'supervisor', 'operat
           });
         }
       }
+
+      // §8.8 — operators cannot skip the queue: a queued job may only be started
+      // if it is the head of this operator's queue at this workstation
+      // (High priority first, then FIFO). Supervisors/managers/admins are exempt.
+      if (job.status === 'queued' && job.workstation_unit_id) {
+        let myRank = 1; // Normal
+        if (job.uid_id) {
+          const { rows: pr } = await client.query(`SELECT priority FROM uids WHERE id = $1`, [job.uid_id]);
+          const p = pr[0] && pr[0].priority;
+          myRank = p === 'High' ? 0 : p === 'Low' ? 2 : 1;
+        }
+        const { rows: aheadRows } = await client.query(
+          `SELECT j2.id FROM jobs j2
+             LEFT JOIN uids u2 ON u2.id = j2.uid_id
+           WHERE j2.status = 'queued' AND j2.operator_id = $1 AND j2.workstation_unit_id = $2 AND j2.id <> $3
+             AND (
+               (CASE WHEN u2.priority = 'High' THEN 0 WHEN u2.priority = 'Normal' THEN 1 ELSE 2 END, j2.created_at, j2.id)
+               < ($4::int, $5::timestamptz, $3::bigint)
+             )
+           LIMIT 1`,
+          [job.operator_id, job.workstation_unit_id, job.id, myRank, job.created_at]
+        );
+        if (aheadRows.length) {
+          throw Object.assign(new Error('Open jobs in queue order — an earlier job is still waiting at this workstation.'), {
+            status: 409, code: 'QUEUE_ORDER',
+          });
+        }
+      }
     }
 
     await client.query(`UPDATE jobs SET status = 'in_progress' WHERE id = $1`, [job.id]);
@@ -152,8 +182,9 @@ router.post('/:id/start', requireRole(['admin', 'manager', 'supervisor', 'operat
  */
 router.post('/:id/return', requireRole(['admin', 'manager', 'supervisor', 'operator']), async (req, res) => {
   const reason = ((req.body && req.body.reason) || '').trim();
-  if (!reason) {
-    return res.status(400).json({ success: false, error: { code: 'REASON_REQUIRED', message: 'A reason is required to return a job.' } });
+  // §6.3 — return-to-queue reason is mandatory and must be at least 10 characters.
+  if (reason.length < 10) {
+    return res.status(400).json({ success: false, error: { code: 'REASON_TOO_SHORT', message: 'A reason of at least 10 characters is required to return a job.' } });
   }
   const result = await withTransaction(async (client) => {
     const { rows: jobRows } = await client.query(`SELECT * FROM jobs WHERE id = $1 FOR UPDATE`, [req.params.id]);
@@ -162,15 +193,18 @@ router.post('/:id/return', requireRole(['admin', 'manager', 'supervisor', 'opera
     if (req.user.role === 'operator' && job.operator_id !== req.user.sub) {
       throw Object.assign(new Error('Not your job'), { status: 403, code: 'NOT_YOUR_JOB' });
     }
-    if (job.status === 'in_progress' || job.status === 'completed' || job.status === 'closed') {
+    if (job.status === 'in_progress' || job.status === 'closed') {
       throw Object.assign(new Error('Only a job that has not been started can be returned.'), { status: 409, code: 'ALREADY_STARTED' });
     }
     await client.query(`UPDATE jobs SET status = 'queued', operator_id = NULL WHERE id = $1`, [job.id]);
-    await createAlert(client.query.bind(client), {
-      type: 'job_returned', severity: 'warning', uidId: job.uid_id || null,
-      message: `Job returned to the queue by the operator — reason: ${reason}`,
-      targetRole: 'supervisor', linkPage: 'jobs', linkRecordId: String(job.id),
-    });
+    // §6.3 — notify the Supervisor on duty AND Admin immediately.
+    for (const role of ['supervisor', 'admin']) {
+      await createAlert(client.query.bind(client), {
+        type: 'job_returned', severity: 'warning', uidId: job.uid_id || null,
+        message: `Job returned to the queue — reason: ${reason}`,
+        targetRole: role, linkPage: 'jobs', linkRecordId: String(job.id),
+      });
+    }
     return { ...job, status: 'queued', operator_id: null };
   });
   await req.audit({ tableName: 'jobs', recordId: req.params.id, action: 'UPDATE', after: { status: 'queued', returned: true, reason } });
@@ -188,6 +222,10 @@ router.post('/:id/pause', requireRole(['admin', 'manager', 'supervisor', 'operat
       success: false,
       error: { code: 'INVALID_REASON', message: `reason is required and must be one of: ${PAUSE_REASONS.join(', ')}` },
     });
+  }
+  // §6.4 — "Other" requires free-text detail.
+  if (reason === 'Other' && !String(notes || '').trim()) {
+    return res.status(400).json({ success: false, error: { code: 'NOTES_REQUIRED', message: 'Free-text notes are required when the pause reason is "Other".' } });
   }
 
   const result = await withTransaction(async (client) => {
@@ -302,9 +340,20 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
         [job.uid_id]
       );
       const log = logRows[0];
-      const netSeconds = log && log.started_at
-        ? Math.floor((Date.now() - new Date(log.started_at).getTime()) / 1000)
-        : null;
+      // §6.5 — total elapsed is wall-clock (incl. pauses, context only); net work
+      // time is active time only (total minus pause durations, the primary metric).
+      let totalSeconds = null;
+      let netSeconds = null;
+      if (log && log.started_at) {
+        totalSeconds = Math.floor((Date.now() - new Date(log.started_at).getTime()) / 1000);
+        const { rows: pauseRows } = await client.query(
+          `SELECT COALESCE(SUM(COALESCE(duration_seconds, EXTRACT(EPOCH FROM (now() - paused_at))::int)), 0)::int AS s
+           FROM uid_pauses WHERE step_log_id = $1`,
+          [log.id]
+        );
+        const pauseSeconds = Number(pauseRows[0].s) || 0;
+        netSeconds = Math.max(0, totalSeconds - pauseSeconds);
+      }
 
       const { rows: stepRows } = await client.query(
         `SELECT * FROM cycle_steps WHERE cycle_version_id = $1 AND step_number = $2`,
@@ -326,16 +375,16 @@ router.post('/:id/close', requireRole(['admin', 'manager', 'supervisor', 'operat
         await client.query(`UPDATE uids SET status = 'hold', hold_reason = $1 WHERE id = $2`, [
           'Design not confirmed — required before Step 15 (Straighten Manual)', uid.id,
         ]);
-        if (log) await client.query(`UPDATE uid_step_logs SET closed_at = now(), net_work_seconds = $1 WHERE id = $2`, [netSeconds, log.id]);
+        if (log) await client.query(`UPDATE uid_step_logs SET closed_at = now(), net_work_seconds = $1, total_elapsed_seconds = $2 WHERE id = $3`, [netSeconds, totalSeconds, log.id]);
         await client.query(`UPDATE jobs SET status = 'closed' WHERE id = $1`, [job.id]);
         return { type: 'held', uidCode: uid.uid_code };
       }
 
       if (log) {
         await client.query(
-          `UPDATE uid_step_logs SET closed_at = now(), net_work_seconds = $1, qc_result = $2, qc_check_type = $3, qc_value = $4, notes = $5
-           WHERE id = $6`,
-          [netSeconds, qcResult || null, qcType || null, qcValue || null, notes || null, log.id]
+          `UPDATE uid_step_logs SET closed_at = now(), net_work_seconds = $1, total_elapsed_seconds = $2, qc_result = $3, qc_check_type = $4, qc_value = $5, notes = $6
+           WHERE id = $7`,
+          [netSeconds, totalSeconds, qcResult || null, qcType || null, qcValue || null, notes || null, log.id]
         );
       }
 

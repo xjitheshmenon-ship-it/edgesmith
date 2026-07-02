@@ -5,6 +5,7 @@ const { requireRole } = require('../middleware/rbac');
 const { auditContext } = require('../middleware/audit');
 const { furnaceCapacityForSize, furnaceSlotsForBar, validateGrindingCombination, bunchGrindingRunCapacity, planBunchSets } = require('../utils/scrapCalculator');
 const { checkDeviation } = require('../utils/deviationChecker');
+const { createAlert } = require('../utils/alerts');
 
 const router = express.Router();
 
@@ -205,6 +206,32 @@ furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor', 'operator
     const { rows: startShift } = await client.query(`SELECT id FROM shifts WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1`);
     const startShiftId = startShift[0] ? startShift[0].id : null;
 
+    // §3 / §24 (Model 3) — furnace crew hard block: the workstation must have its
+    // minimum operators assigned for the current shift or the shift is "not issued"
+    // and no furnace batch can be created. Never overridable.
+    if (workstationUnitId && startShiftId) {
+      const { rows: crewRows } = await client.query(
+        `SELECT wt.code, wt.min_operators, wt.no_direct_assignment,
+                COUNT(DISTINCT wa.employee_id) FILTER (WHERE wa.unassigned_at IS NULL) AS assigned
+         FROM workstation_units wu
+         JOIN workstation_types wt ON wt.id = wu.workstation_type_id
+         LEFT JOIN workstation_assignments wa ON wa.workstation_type_id = wt.id AND wa.shift_id = $2
+         WHERE wu.id = $1
+         GROUP BY wt.code, wt.min_operators, wt.no_direct_assignment`,
+        [workstationUnitId, startShiftId]
+      );
+      const crew = crewRows[0];
+      if (crew && !crew.no_direct_assignment) {
+        const minOps = Number(crew.min_operators) || 1;
+        const assigned = Number(crew.assigned) || 0;
+        if (assigned < minOps) {
+          throw Object.assign(new Error(`SHIFT NOT ISSUED — ${crew.code} needs ${minOps} operators assigned (${assigned} present) before a furnace batch can be created.`), {
+            status: 409, code: 'SHIFT_NOT_ISSUED', meta: { workstation: crew.code, required: minOps, assigned },
+          });
+        }
+      }
+    }
+
     // §8.3 — created pending a Supervisor's verification; started_at is set at
     // verify time, when the run is actually allowed to begin.
     const { rows: batchRows } = await client.query(
@@ -231,6 +258,14 @@ furnaceRouter.post('/', requireRole(['admin', 'manager', 'supervisor', 'operator
         after: { override: true, reason: overrideReason, queueSize: uidIds.length, required: step.min_queue_threshold },
       }, client);
     }
+
+    // §8.3 / §3 — the setup awaits a Supervisor's verification before START;
+    // notify the Supervisor on duty.
+    await createAlert(client.query.bind(client), {
+      type: 'furnace_verification', severity: 'warning',
+      message: `Furnace batch ${batch.batch_number} awaiting Supervisor verification before START`,
+      targetRole: 'supervisor', linkPage: 'batches', linkRecordId: String(batch.id),
+    });
 
     return batch;
   });
