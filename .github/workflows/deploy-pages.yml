@@ -10,9 +10,11 @@ permissions:
   pages: write
   id-token: write
 
+# Let a newer run supersede one that is stuck waiting in GitHub's Pages
+# deployment queue, instead of piling up behind it and timing out.
 concurrency:
   group: pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -65,3 +67,9 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          # GitHub's Pages queue is intermittently slow to leave
+          # "deployment_queued"; wait it out (10 min) and tolerate more transient
+          # polling errors rather than aborting the publish.
+          timeout: 600000
+          error_count: 25
