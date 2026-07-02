@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { usePolling } from '../hooks/usePolling';
 import { useApp } from '../store/AppContext';
 import { useAuth } from '../store/AuthContext';
@@ -58,11 +59,15 @@ function EmptyDetail() {
 
 function UidLookupMain() {
   const { location } = useApp();
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('all');
+  // Deep-link support (Appendix F.1): other pages navigate here with a preset
+  // filter (?status=hold), a search term (?search=), or a specific UID
+  // (?code=E006) to pre-select.
+  const [params] = useSearchParams();
+  const [search, setSearch] = useState(params.get('search') || '');
+  const [status, setStatus] = useState(params.get('status') || 'all');
   const [cycle, setCycle] = useState('all');
   const [priority, setPriority] = useState('all');
-  const [selected, setSelected] = useState(null);
+  const [selected, setSelected] = useState(params.get('code') || null);
 
   const filters = useMemo(() => {
     const f = { location, per_page: 60 };

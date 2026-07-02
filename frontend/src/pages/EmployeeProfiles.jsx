@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { employeesApi } from '../api/resources';
 import { useAuth } from '../store/AuthContext';
 import { usePolling } from '../hooks/usePolling';
@@ -599,15 +600,21 @@ function EmployeeDetail({ employee, canManage, busy, onEdit, onChanged }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function EmployeeProfiles() {
-  const { user, isAdmin, isManager, isSupervisor, isOperator } = useAuth();
+  const { user, isAdmin, isManager, isSupervisor, isOperator, isDirector } = useAuth();
   const canManage = isAdmin; // admin manages; everyone else is view-only
-  const canView = isAdmin || isManager || isSupervisor || isOperator;
+  const canView = isAdmin || isManager || isSupervisor || isOperator || isDirector;
 
+  // Deep-link: other pages navigate here with ?employee=ID to pre-select a
+  // profile (Appendix F.1 — "Click operator name → Employee Profiles").
+  const [params] = useSearchParams();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [locationFilter, setLocationFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(() => {
+    const q = params.get('employee');
+    return q != null && q !== '' ? (Number(q) || q) : null;
+  });
 
   const [panel, setPanel] = useState(null); // null | { mode:'create' } | { mode:'edit', employee }
   const [busy, setBusy] = useState(false);

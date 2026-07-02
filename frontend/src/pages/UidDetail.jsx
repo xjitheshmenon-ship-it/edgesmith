@@ -561,7 +561,7 @@ export default function UidDetail({ code: codeProp }) {
           <Field label="Product type" value={uid.product_type || uid.product_name} />
           <Field label="Size (mm)" mono value={uid.size_mm} />
           <Field label="Design / drawing no." mono value={uid.design_code} empty="Pending" />
-          <Field label="MO number" mono value={uid.mo_number} link={uid.mo_number ? `/mo/${uid.mo_number}` : null} />
+          <Field label="MO number" mono value={uid.mo_number} link={uid.mo_number ? `/mo?mo=${encodeURIComponent(uid.mo_number)}` : null} />
         </FieldGrid>
       </SectionCard>
 

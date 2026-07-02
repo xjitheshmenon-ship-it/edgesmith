@@ -10,6 +10,7 @@ import { queueApi } from '../api/queue';
 import { employeesApi } from '../api/resources';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
+import { EntityLink, routes } from '../lib/wiring';
 
 const MONO = "'IBM Plex Mono', monospace";
 const ARCHIVO = "'Archivo', sans-serif";
@@ -380,7 +381,7 @@ function QueueDrawer({ workstation, operators, canModify, onClose, onChanged }) 
     <div key={it.uid_code} style={{ border: '1px solid var(--border-card, #e3ebde)', borderRadius: 9, padding: '9px 11px', marginBottom: 7, background: it.status === 'hold' ? 'rgba(229,72,77,0.04)' : '#fff' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{ width: 22, height: 22, borderRadius: 11, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: '#fff', background: it.priority === 'High' ? '#e5484d' : '#9bb4d4' }}>{it.position}</span>
-        <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: 'var(--text-primary, #15366a)' }}>{it.uid_code}</span>
+        <EntityLink to={routes.uid(it.uid_code)} mono title="Open UID detail" style={{ fontWeight: 700, fontSize: 13 }}>{it.uid_code}</EntityLink>
         {it.size_mm ? <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>{it.size_mm}mm</span> : null}
         {it.cycle_code ? <CycleBadge cycle={it.cycle_code} /> : null}
         <PriorityBadge priority={it.priority} />
@@ -751,8 +752,10 @@ function StationDrawer({ station, nowMs, onClose }) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 0', borderBottom: '1px solid var(--border-card, #eef2f7)', fontFamily: SANS, fontSize: 12.5 }}>
         <StatusPill status={jstatus(j)} />
-        <span style={{ color: 'var(--text-primary, #15366a)', fontWeight: 600 }}>{jpick(j, 'operator_name', 'operator') || 'Unassigned'}</span>
-        {jpick(j, 'uid_code', 'uid') && <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-secondary, #5d7188)' }}>{jpick(j, 'uid_code', 'uid')}</span>}
+        {jpick(j, 'operator_id') && jpick(j, 'operator_name', 'operator')
+          ? <EntityLink to={routes.employee(jpick(j, 'operator_id'))} title="Open employee profile">{jpick(j, 'operator_name', 'operator')}</EntityLink>
+          : <span style={{ color: 'var(--text-primary, #15366a)', fontWeight: 600 }}>{jpick(j, 'operator_name', 'operator') || 'Unassigned'}</span>}
+        {jpick(j, 'uid_code', 'uid') && <EntityLink to={routes.uid(jpick(j, 'uid_code', 'uid'))} mono title="Open UID detail" style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-secondary, #5d7188)' }}>{jpick(j, 'uid_code', 'uid')}</EntityLink>}
         {jpick(j, 'step_number', 'step') != null && <span style={{ fontFamily: MONO, fontSize: 11, color: 'var(--text-muted, #9bb4d4)' }}>· Step {jpick(j, 'step_number', 'step')}</span>}
         {running && <span style={{ marginLeft: 'auto', fontFamily: MONO, fontSize: 11, fontWeight: 700, color: 'var(--text-primary, #15366a)' }}>{fmtHMS(secs)}</span>}
       </div>

@@ -6,6 +6,7 @@ import { useAuth } from '../store/AuthContext';
 import { useApp } from '../store/AppContext';
 import { StatusPill } from '../components/common/Badges';
 import Icon from '../components/common/Icon';
+import { EntityLink, routes } from '../lib/wiring';
 
 const ARCHIVO = "'Archivo', sans-serif";
 const MONO = "'IBM Plex Mono', monospace";
@@ -347,7 +348,7 @@ function ConcessionPanel({ canDecide, onInstruct, refreshKey, onChanged }) {
         {items.map((c) => (
           <div key={c.id} style={{ border: '1px solid var(--border-card, #e3ebde)', borderRadius: 9, padding: '11px 13px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: T_PRIMARY }}>{c.uid_code}</span>
+              <EntityLink to={routes.uid(c.uid_code)} mono title="Open UID detail" style={{ fontWeight: 700, fontSize: 13 }}>{c.uid_code}</EntityLink>
               <span style={{ fontFamily: SANS, fontSize: 12, color: T_SECONDARY }}>Step {c.step_number}{c.operation_name ? ` · ${c.operation_name}` : ''}</span>
               <span style={{ fontFamily: MONO, fontSize: 12, color: '#e5484d' }}>{c.dimension}: {c.measured_value}mm (min {c.min_value}mm)</span>
               {c.color_name ? <span className="badge" style={{ background: (c.hex || '#888') + '22', color: c.hex || '#555' }}>{c.color_name} box</span> : null}
@@ -440,7 +441,7 @@ function FeedRow({ ev, canOverride, onOverride }) {
     <div style={{ borderBottom: '1px solid var(--border-card, #eef2ea)', padding: '10px 2px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', flexWrap: 'wrap' }} onClick={() => setOpen((o) => !o)}>
         <span style={{ fontFamily: MONO, fontSize: 11, color: T_MUTED, width: 44 }}>{ev.at ? new Date(ev.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
-        <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 13, color: T_PRIMARY }}>{ev.uidCode}</span>
+        <EntityLink to={routes.uid(ev.uidCode)} mono title="Open UID detail" style={{ fontWeight: 700, fontSize: 13 }}>{ev.uidCode}</EntityLink>
         <span style={{ fontFamily: SANS, fontSize: 11.5, color: T_SECONDARY }}>Step {ev.step}{ev.operation ? ` · ${ev.operation}` : ''}</span>
         {ev.operator ? <span style={{ fontFamily: SANS, fontSize: 11, color: T_MUTED }}>{ev.operator}{ev.unit ? ` / ${ev.unit}` : ''}</span> : null}
         <div style={{ flex: 1 }} />
@@ -491,7 +492,7 @@ function OverriddenView() {
           {rows.map((o) => (
             <tr key={o.id} style={{ borderTop: '1px solid var(--border-card, #eef2ea)' }}>
               <td style={{ padding: '7px 8px', fontFamily: MONO, color: T_SECONDARY }}>{String(o.created_at).slice(0, 10)}</td>
-              <td style={{ padding: '7px 8px', fontFamily: MONO, fontWeight: 700, color: T_PRIMARY }}>{o.uid_code}</td>
+              <td style={{ padding: '7px 8px', fontFamily: MONO, fontWeight: 700 }}><EntityLink to={routes.uid(o.uid_code)} mono title="Open UID detail">{o.uid_code}</EntityLink></td>
               <td style={{ padding: '7px 8px', fontFamily: MONO }}>{o.step_number}</td>
               <td style={{ padding: '7px 8px', color: resultColor(o.original_result) }}>{o.original_result || '—'}</td>
               <td style={{ padding: '7px 8px', color: resultColor(o.new_result), fontWeight: 700 }}>{o.new_result}</td>
@@ -506,9 +507,9 @@ function OverriddenView() {
 }
 
 export default function QC() {
-  const { isSupervisor, isManager, isAdmin } = useAuth();
+  const { isSupervisor, isManager, isAdmin, isDirector } = useAuth();
   const { locationLabel } = useApp();
-  const canView = isSupervisor || isManager || isAdmin;
+  const canView = isSupervisor || isManager || isAdmin || isDirector; // Director: read-only oversight
   const canDecide = isManager || isAdmin;
 
   const [filter, setFilter] = useState('all');

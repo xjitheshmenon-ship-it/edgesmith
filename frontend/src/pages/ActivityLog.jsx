@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { usePolling } from '../hooks/usePolling';
 import { activityApi } from '../api/resources';
 import Icon from '../components/common/Icon';
+import { EntityLink, routes } from '../lib/wiring';
 
 const ARCHIVO = "'Archivo', sans-serif";
 const MONO = "'IBM Plex Mono', monospace";
@@ -83,7 +84,11 @@ export default function ActivityLog() {
                       {r.factory === 'faridabad' ? 'Faridabad' : 'Dharmapuri'}
                     </span>
                   </td>
-                  <td style={{ ...TD, fontFamily: MONO, fontSize: 11.5 }}>{r.ref || '—'}</td>
+                  <td style={{ ...TD, fontFamily: MONO, fontSize: 11.5 }}>
+                    {r.ref && r.factory !== 'faridabad'
+                      ? <EntityLink to={routes.uid(r.ref)} mono title="Open UID detail">{r.ref}</EntityLink>
+                      : (r.ref || '—')}
+                  </td>
                   <td style={TD}>{r.step_number != null ? `${r.step_number} · ` : ''}{r.operation_name || '—'}</td>
                   <td style={{ ...TD, fontFamily: MONO, fontSize: 11.5, color: 'var(--text-secondary, #5d7188)' }}>{r.inputs || '—'}</td>
                   <td style={{ ...TD, fontFamily: MONO, fontSize: 11.5, textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtDur(r.net_work_seconds)}</td>

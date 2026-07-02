@@ -8,6 +8,7 @@ import { swapApi } from '../api/swap';
 import { useAuth } from '../store/AuthContext';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
+import { EntityLink, routes } from '../lib/wiring';
 
 /* ──────────────────────────────────────────────────────────────────────────
    PAGE 22 — MY WORKSTATION (Operator view, rebuilt model)
@@ -695,8 +696,10 @@ function ActiveJobCard({ job, nowMs, canAct, canHold, onStart, onPause, onResume
           </Mono>
         </div>
 
-        <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 34, letterSpacing: '-0.03em', color: T_PRIMARY, marginTop: 12, lineHeight: 1 }}>
-          {uid || '—'}
+        <div style={{ marginTop: 12, lineHeight: 1 }}>
+          {uid
+            ? <EntityLink to={routes.uid(uid)} title="Open UID detail" style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 34, letterSpacing: '-0.03em', color: T_PRIMARY }}>{uid}</EntityLink>
+            : <span style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 34, letterSpacing: '-0.03em', color: T_PRIMARY }}>—</span>}
         </div>
         <div style={{ fontFamily: SANS, fontSize: 13, color: T_SECONDARY, marginTop: 6 }}>
           {[opName, station, step != null ? `Step ${step}` : null].filter(Boolean).join(' · ')}
@@ -1134,7 +1137,9 @@ function QueueRow({ job, idx, nowMs, canAct, onStart, pending }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', borderTop: idx ? '1px solid var(--border-card, #e3ebde)' : 'none' }}>
       <Mono style={{ fontSize: 12, color: T_MUTED, width: 18 }}>{idx + 1}.</Mono>
-      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.02em', color: T_PRIMARY, minWidth: 56 }}>{uid}</div>
+      <div style={{ minWidth: 56 }}>
+        <EntityLink to={uid ? routes.uid(uid) : null} title="Open UID detail" style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 15, letterSpacing: '-0.02em', color: T_PRIMARY }}>{uid || '—'}</EntityLink>
+      </div>
       {length != null && <Mono style={{ fontSize: 11, color: T_SECONDARY }}>{length}{String(length).match(/mm$/) ? '' : 'mm'}</Mono>}
       <PriorityBadge priority={priority} />
       <div style={{ flex: 1 }} />
