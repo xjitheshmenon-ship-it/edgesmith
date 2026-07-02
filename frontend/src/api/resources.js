@@ -248,6 +248,7 @@ export const activityApi = {
 
 export const workstationAssignmentsApi = {
   list: (shiftId) => api.get('/workstation-assignments', { shift_id: shiftId }),
+  mine: (operatorId) => api.get('/workstation-assignments/mine', operatorId ? { operatorId } : undefined),
   unassigned: (shiftId, location) => api.get('/workstation-assignments/unassigned', { shift_id: shiftId, location }),
   assign: (payload) => api.post('/workstation-assignments', payload),
   unassign: (id) => api.delete(`/workstation-assignments/${id}`),
