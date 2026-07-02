@@ -31,9 +31,10 @@ async function fgBounds(q, dimension) {
   };
 }
 
-// The concession box-colour id that matches a dimension (Blue=width, Red=thickness).
+// The concession box-colour id that matches a dimension (Blue=width, Red=thickness,
+// Black=both dimensions out).
 async function concessionColorFor(q, dimension) {
-  const like = dimension === 'width' ? '%width%' : '%thick%';
+  const like = dimension === 'both' ? '%both%' : dimension === 'width' ? '%width%' : '%thick%';
   const { rows } = await q(
     `SELECT id FROM concession_color_codes WHERE lower(exception_type) LIKE $1 AND status = 'active' ORDER BY id LIMIT 1`,
     [like]
