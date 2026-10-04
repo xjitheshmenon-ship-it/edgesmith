@@ -1,0 +1,13 @@
+node_modules/
+dist/
+backend/data/
+backend/.env
+*.db
+CPCMS*.zip
+CPCMS*.txt
+
+# The four patterns above are repo-root-anchored; the live app is under cpcms/
+# (and an old copy under cpcms-old/), so also exclude secrets/data at any depth:
+.env
+**/.env
+**/backend/data/
