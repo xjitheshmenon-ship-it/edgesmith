@@ -8903,7 +8903,7 @@ S.signIn = async (email: string, password: string) => {
     S._emit();
     return { ok: true, user: S.auth.user };
   } catch {
-    return { ok: false, error: "Cannot reach the server — check the connection and try again." };
+    return { ok: false, error: "Cannot reach the server. Check the connection and try again." };
   }
 };
 // Match the account to its employee record. Accounts mirror into employees, so
@@ -8955,48 +8955,111 @@ function SetPasswordScreen({ token, isReset }: any) {
       setBusy(false);
       if (!r.ok) { setErr(r.error || "Could not set the password."); return; }
       setDone(r.email);
-    } catch { setBusy(false); setErr("Cannot reach the server — try again."); }
+    } catch { setBusy(false); setErr("Cannot reach the server. Try again."); }
   };
-  return (
-    <div style={{ minHeight: "100vh", fontFamily: sans, background: T.pageBg, color: T.t1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-      <div style={{ width: "100%", maxWidth: 400, background: T.cardBg, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden", boxShadow: "0 30px 70px -34px rgba(18,22,28,.35)" }}>
-        <span className="dc-rail" style={{ display: "block" }} />
-        <div style={{ padding: "26px 28px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ width: 34, height: 34, borderRadius: 9, background: T.grad, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 700 }}>e</span>
-            <span style={{ fontSize: 16, fontWeight: 600 }}>edgesmith<span style={{ color: T.purple }}>.</span> <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", color: T.t4 }}>CPCMS</span></span>
-          </div>
-          {done ? (<>
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              <span style={{ fontSize: 20, fontWeight: 600 }}>Password set</span>
-              <span style={{ fontSize: 13.5, color: T.t3, lineHeight: 1.6 }}>Your account <span style={{ fontFamily: mono }}>{done}</span> is active. Sign in with your new password.</span>
-            </div>
-            <Btn onClick={() => { window.location.href = "/"; }} style={{ height: 44, justifyContent: "center" }}>Go to sign in</Btn>
-          </>) : (<>
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              <span style={{ fontSize: 20, fontWeight: 600 }}>{isReset ? "Choose a new password" : "Set your password"}</span>
-              <span style={{ fontSize: 13, color: T.t3 }}>{isReset ? "Your old password stops working once this is saved." : "This activates your Edgesmith Console account."}</span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: T.t4 }}>New password</span>
-              <Field type="password" autoFocus value={pw} onChange={(e: any) => setPw(e.target.value)} h={42} err={!!err} style={{ width: "100%" }} />
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: T.t4 }}>Repeat it</span>
-              <Field type="password" value={pw2} onChange={(e: any) => setPw2(e.target.value)} onKeyDown={(e: any) => e.key === "Enter" && submit()} h={42} err={!!err} style={{ width: "100%" }} />
-            </div>
-            {err && <div style={{ display: "flex", gap: 8, background: T.softRed, border: `1px solid ${T.red}22`, borderRadius: 7, padding: "9px 12px" }}>
-              <Icon name="alert" size={14} color={T.red} /><span style={{ fontSize: 12.5, color: T.t2 }}>{err}</span></div>}
-            <Btn onClick={submit} disabled={busy || !pw || !pw2} style={{ height: 44, justifyContent: "center", fontSize: 14 }}>{busy ? "Saving…" : "Save password"}</Btn>
-            <span style={{ fontSize: 11.5, color: T.t4, lineHeight: 1.55 }}>At least 8 characters. If this link has expired, ask an administrator to send a new one.</span>
-          </>)}
-        </div>
-      </div>
+  const errBox = err && (
+    <div id="cp-set-err" role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 8, background: T.softRed, border: `1px solid ${T.red}33`, borderRadius: 6, padding: "10px 12px" }}>
+      <Icon name="alert" size={14} color={T.red} />
+      <span style={{ fontSize: 13, color: T.t2, lineHeight: 1.5 }}>{err}</span>
     </div>
+  );
+  return (
+    <LoginShell>
+      {done ? (
+        <div style={LOGIN_FORM}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <h2 style={{ margin: 0, fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em" }}>Password set</h2>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: T.t3 }}>Your account <span style={{ fontFamily: mono, color: T.t2 }}>{done}</span> is active. Sign in with your new password.</p>
+          </div>
+          <Btn onClick={() => { window.location.href = "/"; }} style={{ height: 46, justifyContent: "center", fontSize: 14, width: "100%" }}>Go to sign in</Btn>
+        </div>
+      ) : (
+        <form noValidate onSubmit={(e) => { e.preventDefault(); submit(); }} style={LOGIN_FORM}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <h2 style={{ margin: 0, fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em" }}>{isReset ? "Choose a new password" : "Set your password"}</h2>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: T.t3 }}>{isReset ? "Your old password stops working once this is saved." : "This activates your Edgesmith Console account."}</p>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label htmlFor="cp-set-pw" style={LOGIN_LABEL()}>New password</label>
+            <Field id="cp-set-pw" name="new-password" type="password" autoComplete="new-password" autoFocus
+              value={pw} onChange={(e: any) => setPw(e.target.value)} h={44} err={!!err}
+              aria-invalid={!!err} aria-describedby={err ? "cp-set-err cp-set-help" : "cp-set-help"} style={{ width: "100%" }} />
+            <span id="cp-set-help" style={{ fontSize: 12.5, color: T.t3 }}>At least 8 characters.</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label htmlFor="cp-set-pw2" style={LOGIN_LABEL()}>Repeat it</label>
+            <Field id="cp-set-pw2" name="confirm-password" type="password" autoComplete="new-password"
+              value={pw2} onChange={(e: any) => setPw2(e.target.value)} h={44} err={!!err}
+              aria-invalid={!!err} aria-describedby={err ? "cp-set-err" : undefined} style={{ width: "100%" }} />
+          </div>
+          {errBox}
+          <Btn disabled={busy || !pw || !pw2} style={{ height: 46, justifyContent: "center", fontSize: 14, width: "100%" }}>{busy ? "Saving…" : "Save password"}</Btn>
+          <span style={{ fontSize: 12.5, color: T.t3, lineHeight: 1.55 }}>If this link has expired, ask an administrator to send a new one.</span>
+        </form>
+      )}
+    </LoginShell>
   );
 }
 
-// ── Sign-in screen — Design 2.0 split: brand story left, form right ────────────
+// ── Sign-in screen — plant photo left, form right ──────────────────────────────
+// Drop a real photo of the floor at frontend/public/login-plant.jpg (about
+// 1600×2000). Until it exists the panel falls back to the deep brand gradient.
+const LOGIN_PHOTO = "/login-plant.jpg";
+const LOGIN_CSS = `
+  .cp-login { display: flex; min-height: 100vh; min-height: 100dvh; }
+  .cp-login-panel { flex: 1 1 0; min-width: 0; position: relative; overflow: hidden; color: #F5F7FA;
+    background: linear-gradient(160deg, #1F35A8 0%, #24206B 100%);
+    display: flex; flex-direction: column; justify-content: space-between; gap: 40px; padding: 40px 6vw 56px; }
+  .cp-login-panel img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .cp-login-panel::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(to top, rgba(12,16,32,.86) 0%, rgba(12,16,32,.35) 55%, rgba(12,16,32,.5) 100%); }
+  .cp-login-panel > :not(img) { position: relative; z-index: 1; }
+  .cp-login-form { flex: 0 0 520px; display: flex; align-items: center; justify-content: center; padding: 48px 56px; }
+  .cp-login-form form { animation: riseIn 520ms cubic-bezier(.16,1,.3,1) both; }
+  .cp-login-link { border: none; background: transparent; cursor: pointer; padding: 0; font: inherit;
+    display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; border-radius: 4px; }
+  .cp-login-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+  .cp-login-link:focus-visible { outline: 2px solid #4C6BFF; outline-offset: 3px; }
+  @media (max-width: 960px) { .cp-login-form { flex-basis: 440px; padding: 40px 32px; } }
+  @media (max-width: 780px) {
+    .cp-login { flex-direction: column; }
+    .cp-login-panel { flex: none; padding: 20px 16px; gap: 0; }
+    .cp-login-story { display: none !important; }
+    .cp-login-form { flex: 1 1 auto; align-items: flex-start; padding: 32px 16px 40px; }
+  }
+`;
+// Shared frame for the sign-in and set-password screens: plant photo panel on the
+// left, the form on the right. `story` adds the headline — only sign-in carries it.
+const LOGIN_LABEL = (): any => ({ fontSize: 13, fontWeight: 500, color: T.t2 });
+const LOGIN_FORM: any = { width: "100%", maxWidth: 360, display: "flex", flexDirection: "column", gap: 20 };
+function LoginShell({ story, children }: any) {
+  const [photo, setPhoto] = useState(true);
+  return (
+    <div className="cp-login" style={{ fontFamily: sans, background: T.pageBg, color: T.t1 }}>
+      <style>{LOGIN_CSS}</style>
+
+      <aside className="cp-login-panel">
+        {photo && <img src={LOGIN_PHOTO} alt="" onError={() => setPhoto(false)} />}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span aria-hidden="true" style={{ width: 40, height: 40, borderRadius: 10, background: T.grad, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 700, letterSpacing: "-0.03em", boxShadow: "inset 0 1px 0 rgba(255,255,255,.25)" }}>
+            e<span style={{ opacity: .75 }}>.</span>
+          </span>
+          <span style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em" }}>edgesmith</span>
+          <span style={{ height: 24, display: "inline-flex", alignItems: "center", padding: "0 9px", borderRadius: 6, border: "1px solid rgba(245,247,250,.35)", fontFamily: mono, fontSize: 11, fontWeight: 600, letterSpacing: ".08em" }}>CPCMS</span>
+        </div>
+        {story && <div className="cp-login-story" style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
+          <span style={{ fontFamily: mono, fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: "rgba(245,247,250,.72)" }}>Configurable Production Cycle Management System</span>
+          <h1 style={{ margin: 0, fontSize: "clamp(34px, 3.6vw, 48px)", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.08 }}>Configure the cycle. The floor follows.</h1>
+          <p style={{ margin: 0, fontSize: 16, lineHeight: 1.6, color: "rgba(245,247,250,.82)", maxWidth: 440 }}>Two plants, one system. Sign in to pick up where your shift left off.</p>
+        </div>}
+      </aside>
+
+      <main className="cp-login-form">
+        {children}
+      </main>
+    </div>
+  );
+}
 function LoginScreen({ onSignedIn }: any) {
   const st = useJobStore() as any;
   const [email, setEmail] = useState("");
@@ -9007,14 +9070,14 @@ function LoginScreen({ onSignedIn }: any) {
   const [sent, setSent] = useState("");
   const forgot = async () => {
     if (busy || !email) return;
-    if (!email.includes("@")) { setErr("Password reset links need an email — for phone accounts, ask an administrator to reset your password."); return; }
+    if (!email.includes("@")) { setErr("Reset links go to an email address. For a phone account, ask an administrator to reset your password."); return; }
     setBusy(true); setErr(""); setSent("");
     try {
       const r = await api("/api/auth/forgot", { method: "POST", body: JSON.stringify({ email }) });
       setBusy(false);
       if (!r.ok) { setErr(r.error || "Could not send the reset link."); return; }
       setSent(r.message || "If that email has an account, a reset link is on its way.");
-    } catch { setBusy(false); setErr("Cannot reach the server — try again."); }
+    } catch { setBusy(false); setErr("Cannot reach the server. Try again."); }
   };
   const submit = async () => {
     if (mode === "forgot") { forgot(); return; }
@@ -9025,93 +9088,55 @@ function LoginScreen({ onSignedIn }: any) {
     if (!r.ok) { setErr(r.error); return; }
     onSignedIn(r.user);
   };
-  const live = st.flowJobs.filter((j: any) => st.statusOf(j) !== "CLOSED").length;
+  const forgotMode = mode === "forgot";
   return (
-    <div style={{ position: "relative", minHeight: "100vh", fontFamily: sans, backgroundSize: "260% 260%", animation: "ambientFlow 26s ease-in-out infinite",
-      background: `linear-gradient(120deg, ${T.pageBg} 0%, ${T.softBlue}66 26%, ${T.pageBg} 52%, ${T.softBlue}44 76%, ${T.pageBg} 100%)`, color: T.t1, overflow: "hidden", display: "flex" }}>
-      <div style={{ position: "absolute", top: -180, left: -140, width: 620, height: 620, borderRadius: "50%", pointerEvents: "none",
-        background: "radial-gradient(circle, rgba(76,107,255,0.20) 0%, rgba(76,107,255,0) 68%)", animation: "orbA 34s ease-in-out infinite" }} />
-      <div style={{ position: "absolute", top: -120, right: -120, width: 640, height: 640, borderRadius: "50%", pointerEvents: "none",
-        background: "radial-gradient(circle, rgba(110,59,224,0.18) 0%, rgba(110,59,224,0) 68%)", animation: "orbB 37s ease-in-out infinite" }} />
-      <div style={{ position: "absolute", bottom: -240, left: 180, width: 560, height: 560, borderRadius: "50%", pointerEvents: "none",
-        background: "radial-gradient(circle, rgba(192,57,158,0.16) 0%, rgba(192,57,158,0) 70%)", animation: "orbB 41s ease-in-out infinite" }} />
-
-      {/* story */}
-      <div style={{ flex: "1 1 0", minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", gap: 26, padding: "56px 8vw", position: "relative", animation: "riseIn 640ms cubic-bezier(.2,.8,.2,1) both" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <span className="dc-logo" style={{ position: "relative", overflow: "hidden", width: 56, height: 56, borderRadius: 15, background: T.grad, color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em", boxShadow: "0 8px 22px rgba(76,107,255,.28)" }}>
-            <span style={{ position: "absolute", top: 0, bottom: 0, left: 0, width: "40%", pointerEvents: "none",
-              background: "linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.34) 50%, rgba(255,255,255,0) 100%)",
-              animation: "sheen 5.2s cubic-bezier(.4,0,.2,1) infinite" }} />
-            <span style={{ position: "relative" }}>e<span style={{ opacity: .75 }}>.</span></span>
-          </span>
-          <span style={{ fontSize: 27, fontWeight: 600, letterSpacing: "-0.02em" }}>edgesmith<span style={{ color: T.purple }}>.</span></span>
-          <span style={{ display: "inline-flex", alignItems: "center", height: 26, padding: "0 11px", borderRadius: 6, background: "linear-gradient(135deg, #4C6BFF 0%, #6E3BE0 100%)", color: "#fff", fontFamily: mono, fontSize: 12, fontWeight: 600, letterSpacing: ".08em", alignSelf: "center" }}>CPCMS</span>
-        </div>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: mono, fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase", color: T.t4 }}>Configurable Production Cycle Management System</span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 7, height: 26, padding: "0 10px", borderRadius: 6, border: `1px solid ${T.border}`, background: T.cardBg, fontFamily: mono, fontSize: 10.5, letterSpacing: ".06em", textTransform: "uppercase", color: T.t3 }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "linear-gradient(135deg, #0F7A4A 0%, #0E7490 100%)", animation: "gradDrift 7s linear infinite, pulseDot 1.6s ease-in-out infinite" }} />
-            Plant controller live
-          </span>
-        </span>
-        <span style={{ fontSize: 50, fontWeight: 600, letterSpacing: "-0.032em", lineHeight: 1.06, maxWidth: 600 }}>
-          Configure the cycle.<br />
-          <span style={{ background: "linear-gradient(100deg, #4C6BFF 0%, #6E3BE0 42%, #C0399E 78%)", backgroundSize: "200% 100%", WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent", animation: "gradDrift 7s linear infinite" }}>The floor follows.</span>
-        </span>
-        <span style={{ fontSize: 15, lineHeight: 1.65, color: T.t2, maxWidth: 460 }}>
-          Two plants, one system. Sign in to pick up where your shift left off.
-        </span>
-        <div style={{ display: "flex", gap: 26, flexWrap: "wrap", marginTop: 4 }}>
-          {[["Jobs live", live], ["Stations", DHA_WS.length], ["Plants", 2]].map(([l, v]: any) => (
-            <div key={l} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-              <span style={{ fontFamily: mono, fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1 }}>{v}</span>
-              <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: T.t4 }}>{l}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* form */}
-      <div style={{ flex: "0 0 480px", maxWidth: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 44px", position: "relative" }}>
-        <div style={{ width: "100%", maxWidth: 380, background: T.cardBg, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden", boxShadow: "0 30px 70px -34px rgba(18,22,28,.35)", animation: "riseIn 700ms cubic-bezier(.2,.8,.2,1) 160ms both" }}>
-          <span className="dc-rail" style={{ position: "relative", display: "block" }} />
-          <div style={{ padding: "26px 28px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              <span style={{ fontSize: 21, fontWeight: 600, letterSpacing: "-0.02em" }}>Sign in</span>
-              <span style={{ fontSize: 13, color: T.t3 }}>Sign in with the email or phone number your administrator set up.</span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: T.t4 }}>{mode === "forgot" ? "Email" : "Email or phone"}</span>
-              <Field value={email} autoFocus onChange={(e: any) => setEmail(e.target.value)} onKeyDown={(e: any) => e.key === "Enter" && submit()}
-                placeholder={mode === "forgot" ? "name@edgesmith.in" : "name@edgesmith.in or 98765 43210"} h={42} mono err={!!err} style={{ width: "100%" }} />
-            </div>
-            {mode === "signin" && <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".12em", textTransform: "uppercase", color: T.t4 }}>Password</span>
-              <Field type="password" value={pw} onChange={(e: any) => setPw(e.target.value)} onKeyDown={(e: any) => e.key === "Enter" && submit()}
-                placeholder="••••••••" h={42} err={!!err} style={{ width: "100%" }} />
-            </div>}
-            {sent && <div style={{ background: T.softGreen, border: `1px solid ${T.green}22`, borderRadius: 7, padding: "9px 12px", fontSize: 12.5, color: T.t2, lineHeight: 1.5 }}>{sent}</div>}
-            {err && (
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 8, background: T.softRed, border: `1px solid ${T.red}22`, borderRadius: 7, padding: "9px 12px" }}>
-                <Icon name="alert" size={14} color={T.red} />
-                <span style={{ fontSize: 12.5, color: T.t2, lineHeight: 1.5 }}>{err}</span>
-              </div>
-            )}
-            <Btn onClick={submit} disabled={busy || !email || (mode === "signin" && !pw)} style={{ height: 44, justifyContent: "center", fontSize: 14 }}>
-              {busy ? (mode === "forgot" ? "Sending…" : "Signing in…") : (mode === "forgot" ? "Send reset link" : "Sign in")}<Icon name="chevronRight" size={14} color="#fff" stroke={1.8} />
-            </Btn>
-            <button onClick={() => { setMode(mode === "signin" ? "forgot" : "signin"); setErr(""); setSent(""); }}
-              style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12.5, color: T.blue, fontFamily: "inherit", padding: 0, alignSelf: "flex-start" }}>
-              {mode === "signin" ? "Forgot password?" : "← Back to sign in"}
-            </button>
-            <span style={{ fontSize: 11.5, color: T.t4, lineHeight: 1.55 }}>
-              Your session stays signed in on this device for 7 days.
-            </span>
+    <LoginShell story>
+        <form noValidate onSubmit={(e) => { e.preventDefault(); submit(); }}
+          style={LOGIN_FORM}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <h2 style={{ margin: 0, fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em" }}>{forgotMode ? "Reset your password" : "Sign in"}</h2>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.55, color: T.t3 }}>
+              {forgotMode ? "We will email you a link to choose a new one." : "Use the email or phone number your administrator set up."}
+            </p>
           </div>
-        </div>
-      </div>
-    </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <label htmlFor="cp-login-id" style={LOGIN_LABEL()}>{forgotMode ? "Email" : "Email or phone"}</label>
+            <Field id="cp-login-id" name="username" autoComplete="username" inputMode={forgotMode ? "email" : "text"} autoFocus
+              value={email} onChange={(e: any) => setEmail(e.target.value)}
+              placeholder={forgotMode ? "name@edgesmith.in" : "name@edgesmith.in or 98765 43210"} h={44} mono err={!!err}
+              aria-invalid={!!err} aria-describedby={err ? "cp-login-err" : undefined} style={{ width: "100%" }} />
+          </div>
+
+          {!forgotMode && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 }}>
+              <label htmlFor="cp-login-pw" style={LOGIN_LABEL()}>Password</label>
+              <button type="button" className="cp-login-link" onClick={() => { setMode("forgot"); setErr(""); setSent(""); }}
+                style={{ fontSize: 13, color: T.blue }}>Forgot password?</button>
+            </div>
+            <Field id="cp-login-pw" name="password" type="password" autoComplete="current-password"
+              value={pw} onChange={(e: any) => setPw(e.target.value)} h={44} err={!!err}
+              aria-invalid={!!err} aria-describedby={err ? "cp-login-err" : undefined} style={{ width: "100%" }} />
+          </div>}
+
+          {sent && <div role="status" style={{ background: T.softGreen, border: `1px solid ${T.green}33`, borderRadius: 6, padding: "10px 12px", fontSize: 13, color: T.t2, lineHeight: 1.5 }}>{sent}</div>}
+          {err && (
+            <div id="cp-login-err" role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 8, background: T.softRed, border: `1px solid ${T.red}33`, borderRadius: 6, padding: "10px 12px" }}>
+              <Icon name="alert" size={14} color={T.red} />
+              <span style={{ fontSize: 13, color: T.t2, lineHeight: 1.5 }}>{err}</span>
+            </div>
+          )}
+
+          <Btn disabled={busy || !email || (!forgotMode && !pw)} style={{ height: 46, justifyContent: "center", fontSize: 14, width: "100%" }}>
+            {busy ? (forgotMode ? "Sending…" : "Signing in…") : (forgotMode ? "Send reset link" : "Sign in")}
+          </Btn>
+
+          {forgotMode
+            ? <button type="button" className="cp-login-link" onClick={() => { setMode("signin"); setErr(""); setSent(""); }}
+                style={{ fontSize: 13, color: T.blue }}><Icon name="chevronLeft" size={13} color={T.blue} stroke={1.8} />Back to sign in</button>
+            : <span style={{ fontSize: 12.5, color: T.t3, lineHeight: 1.55 }}>You stay signed in on this device for 7 days.</span>}
+        </form>
+    </LoginShell>
   );
 }
 // ═══════════════════════════════════════════════════════════════════════════════
