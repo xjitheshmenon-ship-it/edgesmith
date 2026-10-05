@@ -6,6 +6,7 @@ import { masterApi, mosApi } from '../api/resources';
 import { useAuth } from '../store/AuthContext';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, PriorityBadge } from '../components/common/Badges';
+import { EntityLink, routes } from '../lib/wiring';
 
 const MONO = "'IBM Plex Mono', monospace";
 const ARCHIVO = "'Archivo', sans-serif";
@@ -649,7 +650,7 @@ export default function UidDetail({ code: codeProp }) {
             <Field label="Total kerf (mm)" mono value={split.kerf_total_mm} />
             <Field label="Scrap (mm)" mono value={split.scrap_mm} />
             <Field label="Scrap reason" value={split.scrap_reason} />
-            <Field label="Authorised by" value={split.authorised_by_name || (split.authorised_by != null ? `Employee #${split.authorised_by}` : null)} />
+            <Field label="Authorised by" value={split.authorised_by_name || (split.authorised_by != null ? `Employee #${split.authorised_by}` : null)} link={split.authorised_by != null ? routes.employee(split.authorised_by) : null} />
           </FieldGrid>
         </SectionCard>
       ) : null}
@@ -687,9 +688,9 @@ export default function UidDetail({ code: codeProp }) {
                         {isTemper ? '🔥 ' : ''}{log.operation_name || '—'}
                         {isTemper && log.furnace_batch_number ? (
                           <div style={{ fontFamily: MONO, fontSize: 10.5, color: 'var(--text-secondary, #5d7188)', marginTop: 3 }}>
-                            <Link to={`/furnace/${log.furnace_batch_number}`} style={{ color: 'var(--cycle-oven, #c0762b)' }}>
+                            <EntityLink to={routes.batch(log.furnace_batch_number)} title="Open batch in Batch Tracker" style={{ color: 'var(--cycle-oven, #c0762b)', fontWeight: 600 }}>
                               Batch {log.furnace_batch_number}
-                            </Link>
+                            </EntityLink>
                             {' · '}
                             {`tgt ${log.target_temp_c ?? '—'}°C/${log.target_soak_min ?? '—'}m`}
                             {' · '}
@@ -699,7 +700,11 @@ export default function UidDetail({ code: codeProp }) {
                         ) : null}
                       </td>
                       <td style={{ padding: '9px 10px', fontFamily: MONO }}>{log.unit_code || '—'}</td>
-                      <td style={{ padding: '9px 10px' }}>{log.operator_name || '—'}</td>
+                      <td style={{ padding: '9px 10px' }}>
+                        <EntityLink to={log.operator_id != null ? routes.employee(log.operator_id) : null} title="Open employee profile">
+                          {log.operator_name || '—'}
+                        </EntityLink>
+                      </td>
                       <td style={{ padding: '9px 10px', whiteSpace: 'nowrap', color: 'var(--text-secondary, #5d7188)' }}>{fmtDate(log.started_at)}</td>
                       <td style={{ padding: '9px 10px', whiteSpace: 'nowrap', color: 'var(--text-secondary, #5d7188)' }}>{fmtDate(log.closed_at)}</td>
                       <td style={{ padding: '9px 10px', fontFamily: MONO }}>{durationLabel(log.net_work_seconds ?? log.total_elapsed_seconds)}</td>

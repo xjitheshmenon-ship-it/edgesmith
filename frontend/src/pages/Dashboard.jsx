@@ -6,6 +6,34 @@ import { uidsApi } from '../api/uids';
 import { alertsApi } from '../api/resources';
 import Icon from '../components/common/Icon';
 import { CycleBadge, PriorityBadge, StatusPill } from '../components/common/Badges';
+import { routes } from '../lib/wiring';
+
+/* Route an alert to its subject record by alert type (Final Instruction §5):
+   hold / QC / furnace → UID Lookup; rolling / piece-count → Batch Tracker;
+   badge → Employee Profiles; furnace-crew → Work Assignment. Alerts carry a
+   structured (link_page, link_record_id) plus a joined uid_code and
+   target_employee_id, so we route off those rather than a single guess. */
+function alertLink(alert) {
+  const explicit = pick(alert, 'link', 'href');
+  if (explicit) return explicit;
+  const page = String(pick(alert, 'link_page') || '').toLowerCase();
+  const uidCode = pick(alert, 'uid_code', 'uid');
+  const recId = pick(alert, 'link_record_id');
+  const empId = pick(alert, 'target_employee_id', 'employee_id');
+  switch (page) {
+    case 'qc':
+    case 'uid': return uidCode ? routes.uid(uidCode) : '/qc';
+    case 'batch':
+    case 'batches': return recId ? routes.batch(recId) : '/batch';
+    case 'jobs': return '/jobs';
+    case 'faridabad': return '/receiving';
+    case 'employees': return empId != null ? routes.employee(empId) : '/employees';
+    default: break;
+  }
+  if (uidCode) return routes.uid(uidCode);
+  if (empId != null) return routes.employee(empId);
+  return null;
+}
 
 const MONO = "'IBM Plex Mono', monospace";
 const ARCHIVO = "'Archivo', sans-serif";
@@ -506,7 +534,7 @@ function AlertRow({ alert, first, onRefresh }) {
   const sev = String(alert.severity || alert.level || 'info').toLowerCase();
   const text = pick(alert, 'message', 'text', 'title', 'description', 'code') || 'Alert';
   const uidCode = pick(alert, 'uid_code', 'uid');
-  const linkTo = pick(alert, 'link', 'href') || (uidCode ? `/uid/${uidCode}` : null);
+  const linkTo = alertLink(alert);
 
   const dismiss = async (e) => {
     e.preventDefault();

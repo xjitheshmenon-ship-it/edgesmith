@@ -1,10 +1,12 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { usePolling } from '../hooks/usePolling';
 import { useAuth } from '../store/AuthContext';
 import { batchesApi } from '../api/batches';
 import { cyclesApi } from '../api/resources';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill } from '../components/common/Badges';
+import { EntityLink, routes } from '../lib/wiring';
 
 const MONO = "'IBM Plex Mono', monospace";
 const ARCHIVO = "'Archivo', sans-serif";
@@ -436,6 +438,22 @@ function ActiveFurnaceBatches() {
 
   const batches = Array.isArray(data) ? data : data?.batches || [];
 
+  // Deep-link highlight: /batch?ref=<batch number> scrolls to and ring-highlights
+  // the matching active batch (the destination side of routes.batch).
+  const [params] = useSearchParams();
+  const ref = params.get('ref');
+  const highlightRef = useRef(null);
+  const matchId = useMemo(() => {
+    if (!ref) return null;
+    const hit = batches.find((b) => String(pick(b, 'batch_number', 'number', 'code') || pick(b, 'id', 'batch_id')) === String(ref));
+    return hit ? pick(hit, 'id', 'batch_id') : null;
+  }, [ref, batches]);
+  useEffect(() => {
+    if (matchId != null && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [matchId]);
+
   if (loading && !data) return <Empty>Loading active batches…</Empty>;
   if (error) return <ErrorBox error={error} onRetry={refetch} />;
   if (batches.length === 0) return <Empty>No active furnace batches.</Empty>;
@@ -450,8 +468,14 @@ function ActiveFurnaceBatches() {
         const uids = pick(b, 'uids', 'uid_codes') || [];
         const pending = String(status).toLowerCase() === 'pending_verification';
         const awaiting = !pending && (String(status).toLowerCase().includes('await') || String(status).toLowerCase() === 'running');
+        const isMatch = matchId != null && id === matchId;
         return (
-          <div key={id} className="card" style={{ padding: '14px 16px' }}>
+          <div
+            key={id}
+            ref={isMatch ? highlightRef : null}
+            className="card"
+            style={{ padding: '14px 16px', ...(isMatch ? { boxShadow: '0 0 0 2px var(--status-blue)', borderColor: 'var(--status-blue)' } : null) }}
+          >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div>
                 <div style={{ fontFamily: MONO, fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{pick(b, 'batch_number', 'number', 'code') || id}</div>
@@ -468,8 +492,15 @@ function ActiveFurnaceBatches() {
             </div>
 
             {Array.isArray(uids) && uids.length > 0 && (
-              <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.6, wordBreak: 'break-word' }}>
-                {uids.map((u) => (typeof u === 'string' ? u : pick(u, 'code', 'uid_code'))).join('  ·  ')}
+              <div style={{ fontFamily: MONO, fontSize: 10, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.6, wordBreak: 'break-word', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {uids.map((u, i) => {
+                  const code = typeof u === 'string' ? u : pick(u, 'code', 'uid_code');
+                  return (
+                    <EntityLink key={code || i} to={code ? routes.uid(code) : null} mono title="Open UID detail" style={{ fontSize: 10, fontWeight: 400 }}>
+                      {code || '—'}
+                    </EntityLink>
+                  );
+                })}
               </div>
             )}
 
