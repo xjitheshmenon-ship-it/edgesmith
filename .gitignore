@@ -10,3 +10,6 @@ dist/
 
 # Capacitor generated Android project (built in CI)
 frontend/android/
+
+# graphify knowledge graph output
+graphify-out/
