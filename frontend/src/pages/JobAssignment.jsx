@@ -7,6 +7,7 @@ import { uidsApi } from '../api/uids';
 import { shiftsApi, employeesApi, workstationAssignmentsApi } from '../api/resources';
 import Icon from '../components/common/Icon';
 import { FurnaceBatchPanel } from './BatchManagement';
+import { EntityLink, routes } from '../lib/wiring';
 
 /* ──────────────────────────────────────────────────────────────────────────
    PAGE 20 — WORK ASSIGNMENT
@@ -356,7 +357,7 @@ function WorkstationCard({ ws, index, ops, draggingOp, flash, canAssign, operato
                   return (
                     <div key={o.assignmentId ?? o.id} className="ja-chip-in card" style={{ padding: '7px 9px', minWidth: 118, display: 'flex', flexDirection: 'column', gap: 3 }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                        <span style={{ fontFamily: SANS, fontWeight: 700, fontSize: 12, color: T_PRIMARY }}>{o.name}</span>
+                        <EntityLink to={o.id != null ? routes.employee(o.id) : null} title="Open employee profile" style={{ fontWeight: 700, fontSize: 12, color: T_PRIMARY }}>{o.name}</EntityLink>
                         {canAssign ? <button type="button" onClick={() => onRemove(o, ws)} aria-label={`Remove ${o.name}`} style={{ border: 'none', background: 'transparent', padding: 1, color: T_SECONDARY, cursor: 'pointer', display: 'inline-flex' }}><Icon name="close" size={12} /></button> : null}
                       </div>
                       {o.empCode ? <Mono style={{ fontSize: 9.5, color: T_SECONDARY }}>{o.empCode}</Mono> : null}

@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { usePolling } from '../hooks/usePolling';
 import { faridabadApi, masterApi, cyclesApi } from '../api/resources';
 import { useAuth } from '../store/AuthContext';
@@ -161,6 +162,14 @@ function DaysAtRolling({ days, overdue }) {
 
 function ActiveBatchesPanel({ rows, loading, error, refetch }) {
   const cols = ['Batch ref', 'Cycle', 'Color', 'Status', 'Days at rolling', 'Blocks', 'Contractor'];
+  // Deep-link: /batch?ref=<batch reference> (from any batch link in the app)
+  // highlights and scrolls to the matching dispatch batch row.
+  const [params] = useSearchParams();
+  const wantRef = params.get('ref');
+  const highlightEl = useRef(null);
+  useEffect(() => {
+    if (wantRef && highlightEl.current) highlightEl.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [wantRef, rows]);
   return (
     <div className="card" style={{ padding: 22 }}>
       <SectionTitle
@@ -198,8 +207,13 @@ function ActiveBatchesPanel({ rows, loading, error, refetch }) {
                 const blocks = pick(b, 'block_count', 'blocks');
                 const contractor = pick(b, 'contractor_name', 'contractor');
                 const received = pick(b, 'date_received');
+                const isMatch = wantRef != null && String(ref) === String(wantRef);
                 return (
-                  <tr key={id} style={{ borderTop: '1px solid var(--border-card)' }}>
+                  <tr
+                    key={id}
+                    ref={isMatch ? highlightEl : null}
+                    style={{ borderTop: '1px solid var(--border-card)', ...(isMatch ? { background: 'var(--bg-soft-blue, #eaf0f7)', boxShadow: 'inset 2px 0 0 var(--status-blue)' } : null) }}
+                  >
                     <td style={{ ...tdStyle, fontFamily: MONO, fontWeight: 600 }}>{ref}</td>
                     <td style={tdStyle}>{cycle ? <CycleBadge cycle={String(cycle).toUpperCase()} /> : '—'}</td>
                     <td style={tdStyle}><ColorSwatch hex={hex} label={colorName} /></td>

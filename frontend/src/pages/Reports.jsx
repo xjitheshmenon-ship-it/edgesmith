@@ -7,6 +7,7 @@ import { ApiError } from '../api/client';
 import { downloadCSV, downloadPDF } from '../utils/exporters';
 import Icon from '../components/common/Icon';
 import { CycleBadge, StatusPill, LocationBadge } from '../components/common/Badges';
+import { EntityLink, routes } from '../lib/wiring';
 
 const MONO = "'IBM Plex Mono', monospace";
 const ARCHIVO = "'Archivo', sans-serif";
@@ -1013,7 +1014,7 @@ function FurnaceReport({ data }) {
           renderCell={(key, row) => {
             const b = row._b;
             switch (key) {
-              case 'batch': return fmt(pick(b, 'batch_number', 'batch', 'batch_no'));
+              case 'batch': { const bn = pick(b, 'batch_number', 'batch', 'batch_no'); return <EntityLink to={bn ? routes.batch(bn) : null} mono title="Open batch in Batch Tracker">{fmt(bn)}</EntityLink>; }
               case 'step': return fmt(pick(b, 'tempering_step', 'step'));
               case 'cycle': { const c = pick(b, 'cycle_code', 'cycle'); return c ? <CycleBadge cycle={c} /> : '—'; }
               case 'uids': return fmt(pick(b, 'uid_count', 'uids'));
@@ -1028,7 +1029,7 @@ function FurnaceReport({ data }) {
                 return flagged ? <StatusPill status="fail" label="DEVIATION" /> : <StatusPill status="pass" label="OK" />;
               }
               case 'date': return fmt(pick(b, 'date', 'run_date', 'created_at'));
-              case 'operator': return fmt(pick(b, 'operator', 'operator_name'));
+              case 'operator': { const oid = pick(b, 'operator_id'); return <EntityLink to={oid != null ? routes.employee(oid) : null} title="Open employee profile">{fmt(pick(b, 'operator', 'operator_name'))}</EntityLink>; }
               default: return '—';
             }
           }}
@@ -1158,7 +1159,7 @@ function MoFulfilmentReport({ data }) {
             const remaining = pick(m, 'remaining') ?? Math.max(0, required - dispatched);
             const pct = pick(m, 'pct_complete', 'percent_complete') ?? (required ? Math.round((dispatched / required) * 100) : 0);
             switch (key) {
-              case 'mo': return fmt(pick(m, 'mo_number', 'mo', 'code'));
+              case 'mo': { const mn = pick(m, 'mo_number', 'mo', 'code'); return <EntityLink to={mn ? routes.mo(mn) : null} mono title="Open in Manufacturing Orders">{fmt(mn)}</EntityLink>; }
               case 'customer': return fmt(pick(m, 'customer', 'customer_name'));
               case 'required': return required;
               case 'linked': return fmt(pick(m, 'linked_uids', 'linked'));
@@ -1308,10 +1309,10 @@ function TraceabilityReport({ data, traceValue }) {
           renderCell={(key, row) => {
             const u = row._u;
             switch (key) {
-              case 'uid': return fmt(pick(u, 'uid_code', 'uid', 'code'));
+              case 'uid': { const uc = pick(u, 'uid_code', 'uid', 'code'); return <EntityLink to={uc ? routes.uid(uc) : null} mono title="Open UID detail">{fmt(uc)}</EntityLink>; }
               case 'status': { const s = pick(u, 'status', 'current_status'); return s ? <StatusPill status={s} label={s} /> : '—'; }
               case 'location': return fmt(pick(u, 'current_location', 'location', 'storage_code'));
-              case 'mo': return fmt(pick(u, 'mo_number', 'mo'));
+              case 'mo': { const mn = pick(u, 'mo_number', 'mo'); return <EntityLink to={mn ? routes.mo(mn) : null} mono title="Open in Manufacturing Orders">{fmt(mn)}</EntityLink>; }
               case 'dispatch_date': return fmt(pick(u, 'dispatch_date', 'dispatched_at'));
               case 'history': return fmt(pick(u, 'step_history_summary', 'history', 'last_step'));
               default: return '—';
@@ -1594,8 +1595,11 @@ function OperatorDetail({ d }) {
   const pauses = d.pauses || { total: 0, byReason: [] };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 18, color: 'var(--text-primary, #15366a)' }}>
+      <div style={{ fontFamily: ARCHIVO, fontWeight: 800, fontSize: 18, color: 'var(--text-primary, #15366a)', display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         {d.employee.name} <span style={{ fontFamily: MONO, fontSize: 12, color: 'var(--text-secondary, #5d7188)' }}>· {d.employee.employeeCode} · OPERATOR</span>
+        <EntityLink to={d.employee.id != null ? routes.employee(d.employee.id) : null} title="Open employee profile" style={{ fontSize: 12, fontWeight: 600 }}>
+          View profile →
+        </EntityLink>
       </div>
 
       {d.daily?.length ? (
@@ -1673,7 +1677,9 @@ function OperatorDetail({ d }) {
                 {d.incidents.map((x, i) => (
                   <tr key={i} style={{ borderTop: '1px solid #eef2ea' }}>
                     <td style={{ ...EP_TD, fontFamily: MONO }}>{String(x.date).slice(0, 10)}</td>
-                    <td style={{ ...EP_TD, fontFamily: MONO, fontWeight: 700 }}>{x.uidCode}</td>
+                    <td style={{ ...EP_TD, fontFamily: MONO, fontWeight: 700 }}>
+                      <EntityLink to={x.uidCode ? routes.uid(x.uidCode) : null} mono title="Open UID detail">{x.uidCode || '—'}</EntityLink>
+                    </td>
                     <td style={{ ...EP_TD, fontFamily: MONO }}>{x.step}</td>
                     <td style={EP_TD}>{x.reason}</td>
                   </tr>
