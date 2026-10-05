@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Th, Td } from '../components/table'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { temperingApi, cycleApi } from '../api/client'
 import { useAuth } from '../hooks/useAuth'
@@ -263,12 +264,6 @@ function BatchForm({ cycles, params, onDone }: { cycles: any[]; params: any[]; o
 
 // ── Tables ────────────────────────────────────────────────────────────────────
 
-const TH = ({ children }: { children: React.ReactNode }) => (
-  <th style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', color: 'var(--ink-3)', textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--line)', fontWeight: 500 }}>{children}</th>
-)
-const TD = ({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) => (
-  <td style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink)', padding: '9px 12px', borderBottom: '1px solid var(--line)', ...style }}>{children}</td>
-)
 
 function ParametersTable({ data, loading }: { data: any[]; loading: boolean }) {
   if (loading) return <div style={{ color: 'var(--ink-3)', padding: 16 }}>Loading…</div>
@@ -276,20 +271,20 @@ function ParametersTable({ data, loading }: { data: any[]; loading: boolean }) {
     <div className="card" style={{ overflow: 'hidden' }}>
       <table className="es-table" style={{ width: '100%' }}>
         <thead><tr>
-          <TH>CYCLE TYPE</TH><TH>STEP</TH><TH>OPERATION</TH>
-          <TH>TARGET TEMP</TH><TH>TARGET SOAK</TH><TH>TEMP TOL</TH><TH>SOAK TOL</TH><TH>UPDATED</TH>
+          <Th>CYCLE TYPE</Th><Th>STEP</Th><Th>OPERATION</Th>
+          <Th>TARGET TEMP</Th><Th>TARGET SOAK</Th><Th>TEMP TOL</Th><Th>SOAK TOL</Th><Th>UPDATED</Th>
         </tr></thead>
         <tbody>
           {data.map((p: any) => (
             <tr key={p.id}>
-              <TD>{p.cycle_type_name}</TD>
-              <TD>Step {p.step_number}</TD>
-              <TD>{p.operation_name}</TD>
-              <TD><span style={{ color: '#fcd34d' }}>{p.target_temp_c}°C</span></TD>
-              <TD><span style={{ color: '#fcd34d' }}>{p.target_soak_minutes} min</span></TD>
-              <TD>±{p.tolerance_temp_c}°C</TD>
-              <TD>±{p.tolerance_soak_minutes} min</TD>
-              <TD>{p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '—'}</TD>
+              <Td>{p.cycle_type_name}</Td>
+              <Td>Step {p.step_number}</Td>
+              <Td>{p.operation_name}</Td>
+              <Td><span style={{ color: '#fcd34d' }}>{p.target_temp_c}°C</span></Td>
+              <Td><span style={{ color: '#fcd34d' }}>{p.target_soak_minutes} min</span></Td>
+              <Td>±{p.tolerance_temp_c}°C</Td>
+              <Td>±{p.tolerance_soak_minutes} min</Td>
+              <Td>{p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '—'}</Td>
             </tr>
           ))}
           {data.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>No parameters configured — Admin sets these</td></tr>}
@@ -305,25 +300,25 @@ function BatchesTable({ data, loading, onSelect }: { data: any[]; loading: boole
     <div className="card" style={{ overflow: 'hidden' }}>
       <table className="es-table" style={{ width: '100%' }}>
         <thead><tr>
-          <TH>BATCH NO</TH><TH>CYCLE</TH><TH>STEP</TH><TH>TARGET</TH>
-          <TH>ACTUAL</TH><TH>UIDS</TH><TH>STATUS</TH><TH>STARTED</TH>
+          <Th>BATCH NO</Th><Th>CYCLE</Th><Th>STEP</Th><Th>TARGET</Th>
+          <Th>ACTUAL</Th><Th>UIDS</Th><Th>STATUS</Th><Th>STARTED</Th>
         </tr></thead>
         <tbody>
           {data.map((b: any) => (
             <tr key={b.id} onClick={() => onSelect(b)} style={{ cursor: 'pointer' }} className="row-hover">
-              <TD><span style={{ color: 'var(--accent)', fontWeight: 700 }}>{b.batch_number}</span></TD>
-              <TD>{b.cycle_type_name}</TD>
-              <TD>Step {b.step_number}</TD>
-              <TD style={{ color: '#fcd34d' }}>{b.target_temp_c ? `${b.target_temp_c}°C / ${b.target_soak_minutes}min` : '—'}</TD>
-              <TD>
+              <Td><span style={{ color: 'var(--accent)', fontWeight: 700 }}>{b.batch_number}</span></Td>
+              <Td>{b.cycle_type_name}</Td>
+              <Td>Step {b.step_number}</Td>
+              <Td style={{ color: '#fcd34d' }}>{b.target_temp_c ? `${b.target_temp_c}°C / ${b.target_soak_minutes}min` : '—'}</Td>
+              <Td>
                 {b.actuals_recorded ? (
                   <span style={{ color: b.deviation_flagged ? 'var(--error)' : '#6ee7b7' }}>
                     {b.actual_temp_c}°C / {b.actual_soak_minutes}min
                   </span>
                 ) : b.ended_at ? <span style={{ color: 'var(--ink-3)' }}>Not recorded</span> : '—'}
-              </TD>
-              <TD>{b.uid_count}</TD>
-              <TD>
+              </Td>
+              <Td>{b.uid_count}</Td>
+              <Td>
                 {b.deviation_flagged ? (
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--error)' }}>
                     <AlertTriangle size={12} /> DEVIATION
@@ -335,8 +330,8 @@ function BatchesTable({ data, loading, onSelect }: { data: any[]; loading: boole
                 ) : (
                   <span style={{ color: '#fcd34d' }}>IN PROGRESS</span>
                 )}
-              </TD>
-              <TD>{b.started_at ? new Date(b.started_at).toLocaleString() : '—'}</TD>
+              </Td>
+              <Td>{b.started_at ? new Date(b.started_at).toLocaleString() : '—'}</Td>
             </tr>
           ))}
           {data.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>No furnace batches yet</td></tr>}

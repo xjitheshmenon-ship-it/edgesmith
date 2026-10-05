@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { cellStyle } from '../components/table'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { factoryApi, productApi, cycleApi, faridabadApi, temperingApi } from '../api/client'
 import type { Workstation, StorageLocation, Size, Design, FactoryLocation, CycleType, CycleStep } from '../types'
@@ -8,7 +9,6 @@ import { format } from 'date-fns'
 type Tab = 'locations' | 'workstations' | 'storage' | 'sizes' | 'designs' | 'cycles' | 'products' | 'contractors' | 'tempering_params'
 
 const TH: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--ink-2)', fontWeight: 500, background: 'var(--surface-2)', borderBottom: '1px solid var(--line)' }
-const TD: React.CSSProperties = { padding: '11px 16px', fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }
 
 export default function Config() {
   const [tab, setTab] = useState<Tab>('workstations')
@@ -105,9 +105,9 @@ function LocationsConfig() {
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{l.code}</td>
-                <td style={TD}>{l.name}</td>
-                <td style={{ ...TD, textAlign: 'right' }}>
+                <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{l.code}</td>
+                <td style={cellStyle}>{l.name}</td>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>
                   <button style={{ fontSize: 12, color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}
                     onClick={() => { setEditId(l.id); setEditName(l.name) }}>Rename</button>
                 </td>
@@ -172,11 +172,11 @@ function WorkstationsConfig() {
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{w.code}</td>
-                <td style={TD}>{w.name}</td>
-                <td style={TD}><span className="badge-blue">{w.category}</span></td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{w.factory_location_id ? (locs.find(l => l.id === w.factory_location_id)?.name ?? `Location ${w.factory_location_id}`) : 'All locations'}</td>
-                <td style={{ ...TD, textAlign: 'right' }}>
+                <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{w.code}</td>
+                <td style={cellStyle}>{w.name}</td>
+                <td style={cellStyle}><span className="badge-blue">{w.category}</span></td>
+                <td style={{ ...cellStyle, color: 'var(--ink-2)' }}>{w.factory_location_id ? (locs.find(l => l.id === w.factory_location_id)?.name ?? `Location ${w.factory_location_id}`) : 'All locations'}</td>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>
                   <button style={{ fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => archive.mutate(w.id)}>Archive</button>
                 </td>
               </tr>
@@ -235,9 +235,9 @@ function StorageConfig() {
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.code}</td>
-                <td style={TD}>{s.name}</td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{s.factory_location_id ? (locs.find(l => l.id === s.factory_location_id)?.name ?? `Location ${s.factory_location_id}`) : 'All'}</td>
+                <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.code}</td>
+                <td style={cellStyle}>{s.name}</td>
+                <td style={{ ...cellStyle, color: 'var(--ink-2)' }}>{s.factory_location_id ? (locs.find(l => l.id === s.factory_location_id)?.name ?? `Location ${s.factory_location_id}`) : 'All'}</td>
               </tr>
             ))}
           </tbody>
@@ -375,12 +375,12 @@ function CyclesConfig() {
               <tbody>
                 {selected.current_version.steps.map((s: CycleStep) => (
                   <tr key={s.id} style={{ background: s.is_converting_step ? 'rgba(251,146,60,.1)' : s.is_qc_step ? 'rgba(34,160,107,.08)' : '' }}>
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.step_number}</td>
-                    <td style={TD}>{s.operation_name}</td>
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>{s.workstation_code}</td>
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.from_storage_code ?? '—'}</td>
-                    <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.to_storage_code ?? '—'}</td>
-                    <td style={{ ...TD, display: 'flex', gap: 4 }}>
+                    <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.step_number}</td>
+                    <td style={cellStyle}>{s.operation_name}</td>
+                    <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>{s.workstation_code}</td>
+                    <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.from_storage_code ?? '—'}</td>
+                    <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.to_storage_code ?? '—'}</td>
+                    <td style={{ ...cellStyle, display: 'flex', gap: 4 }}>
                       {s.is_converting_step && <span className="badge-orange">Convert</span>}
                       {s.is_child_marking_step && <span className="badge-blue">Child Mark</span>}
                       {s.is_qc_step && <span className="badge-green">QC</span>}
@@ -432,9 +432,9 @@ function DesignsConfig() {
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
-                <td style={{ ...TD, fontWeight: 600 }}>{d.code}</td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{d.description}</td>
-                <td style={TD}>{d.valid_sizes_mm.join('mm, ')}mm</td>
+                <td style={{ ...cellStyle, fontWeight: 600 }}>{d.code}</td>
+                <td style={{ ...cellStyle, color: 'var(--ink-2)' }}>{d.description}</td>
+                <td style={cellStyle}>{d.valid_sizes_mm.join('mm, ')}mm</td>
               </tr>
             ))}
           </tbody>
@@ -511,19 +511,19 @@ function ProductsConfig() {
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{p.code}</td>
-                <td style={TD}>{p.name}</td>
-                <td style={TD}>{p.valid_cycle_type_ids.length} cycle{p.valid_cycle_type_ids.length !== 1 ? 's' : ''}</td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>
+                <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{p.code}</td>
+                <td style={cellStyle}>{p.name}</td>
+                <td style={cellStyle}>{p.valid_cycle_type_ids.length} cycle{p.valid_cycle_type_ids.length !== 1 ? 's' : ''}</td>
+                <td style={{ ...cellStyle, color: 'var(--ink-2)' }}>
                   {p.default_cycle_type_id ? (cycles as CycleType[]).find(c => c.id === p.default_cycle_type_id)?.name ?? '—' : '—'}
                 </td>
-                <td style={{ ...TD, textAlign: 'right' }}>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>
                   <button style={{ fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => archive.mutate(p.id)}>Archive</button>
                 </td>
               </tr>
             ))}
             {(products as any[]).length === 0 && (
-              <tr><td colSpan={5} style={{ ...TD, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No products configured</td></tr>
+              <tr><td colSpan={5} style={{ ...cellStyle, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No products configured</td></tr>
             )}
           </tbody>
         </table>
@@ -605,15 +605,15 @@ function ContractorsConfig() {
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
-                <td style={{ ...TD, fontWeight: 600 }}>{c.name}</td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{c.contact_info || '—'}</td>
-                <td style={{ ...TD, textAlign: 'right' }}>
+                <td style={{ ...cellStyle, fontWeight: 600 }}>{c.name}</td>
+                <td style={{ ...cellStyle, color: 'var(--ink-2)' }}>{c.contact_info || '—'}</td>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>
                   <button style={{ fontSize: 12, color: 'var(--error)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => archive.mutate(c.id)}>Archive</button>
                 </td>
               </tr>
             ))}
             {(contractors as any[]).length === 0 && (
-              <tr><td colSpan={3} style={{ ...TD, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No contractors added yet</td></tr>
+              <tr><td colSpan={3} style={{ ...cellStyle, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No contractors added yet</td></tr>
             )}
           </tbody>
         </table>
@@ -740,18 +740,18 @@ function TemperingParamsConfig() {
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
-                <td style={TD}>{p.cycle_type_name}</td>
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace" }}>Step {p.step_number}</td>
-                <td style={TD}>{p.operation_name}</td>
-                <td style={{ ...TD, color: '#fcd34d', fontFamily: "'IBM Plex Mono', monospace" }}>{p.target_temp_c}°C</td>
-                <td style={{ ...TD, color: '#fcd34d', fontFamily: "'IBM Plex Mono', monospace" }}>{p.target_soak_minutes} min</td>
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>±{p.tolerance_temp_c}°C</td>
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>±{p.tolerance_soak_minutes} min</td>
-                <td style={{ ...TD, color: 'var(--ink-3)', fontSize: 12 }}>{p.updated_at ? format(new Date(p.updated_at), 'dd MMM yyyy') : '—'}</td>
+                <td style={cellStyle}>{p.cycle_type_name}</td>
+                <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace" }}>Step {p.step_number}</td>
+                <td style={cellStyle}>{p.operation_name}</td>
+                <td style={{ ...cellStyle, color: '#fcd34d', fontFamily: "'IBM Plex Mono', monospace" }}>{p.target_temp_c}°C</td>
+                <td style={{ ...cellStyle, color: '#fcd34d', fontFamily: "'IBM Plex Mono', monospace" }}>{p.target_soak_minutes} min</td>
+                <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>±{p.tolerance_temp_c}°C</td>
+                <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>±{p.tolerance_soak_minutes} min</td>
+                <td style={{ ...cellStyle, color: 'var(--ink-3)', fontSize: 12 }}>{p.updated_at ? format(new Date(p.updated_at), 'dd MMM yyyy') : '—'}</td>
               </tr>
             ))}
             {(params as any[]).length === 0 && (
-              <tr><td colSpan={8} style={{ ...TD, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No parameters configured yet</td></tr>
+              <tr><td colSpan={8} style={{ ...cellStyle, textAlign: 'center', color: 'var(--ink-3)', fontFamily: "'IBM Plex Mono', monospace" }}>No parameters configured yet</td></tr>
             )}
           </tbody>
         </table>

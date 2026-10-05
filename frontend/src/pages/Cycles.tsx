@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { cellStyle } from '../components/table'
 import { useQuery } from '@tanstack/react-query'
 import { cycleApi } from '../api/client'
 import type { CycleType, CycleStep } from '../types'
@@ -6,7 +7,7 @@ import { ChevronRight, Download, Upload } from 'lucide-react'
 import { format } from 'date-fns'
 
 const TH: React.CSSProperties = { padding: '8px 16px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--ink-2)', fontWeight: 500, background: 'var(--surface-2)', borderBottom: '1px solid var(--line)' }
-const TD: React.CSSProperties = { padding: '9px 16px', fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }
+const denseCell: React.CSSProperties = { ...cellStyle, padding: '9px 16px' }
 
 export default function Cycles() {
   const [selected, setSelected] = useState<CycleType | null>(null)
@@ -118,12 +119,12 @@ export default function Cycles() {
                       onMouseEnter={e => { if (!s.is_converting_step && !s.is_qc_step) (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)' }}
                       onMouseLeave={e => { if (!s.is_converting_step && !s.is_qc_step) (e.currentTarget as HTMLElement).style.background = '' }}
                     >
-                      <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.step_number}</td>
-                      <td style={TD}>{s.operation_name}</td>
-                      <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>{s.workstation_code}</td>
-                      <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.from_storage_code ?? '—'}</td>
-                      <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.to_storage_code ?? '—'}</td>
-                      <td style={{ ...TD, display: 'flex', gap: 4 }}>
+                      <td style={{ ...denseCell, fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600 }}>{s.step_number}</td>
+                      <td style={denseCell}>{s.operation_name}</td>
+                      <td style={{ ...denseCell, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-2)' }}>{s.workstation_code}</td>
+                      <td style={{ ...denseCell, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.from_storage_code ?? '—'}</td>
+                      <td style={{ ...denseCell, fontFamily: "'IBM Plex Mono', monospace", color: 'var(--ink-3)' }}>{s.to_storage_code ?? '—'}</td>
+                      <td style={{ ...denseCell, display: 'flex', gap: 4 }}>
                         {s.is_converting_step && <span className="badge-orange">Convert</span>}
                         {s.is_child_marking_step && <span className="badge-blue">Child Mark</span>}
                         {s.is_qc_step && <span className="badge-green">QC</span>}

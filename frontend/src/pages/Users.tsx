@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { cellStyle } from '../components/table'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { userApi, factoryApi } from '../api/client'
 import type { FactoryLocation } from '../types'
@@ -14,7 +15,6 @@ const ROLE_BADGE: Record<string, React.CSSProperties> = {
 }
 
 const TH: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10.5, letterSpacing: '0.08em', color: 'var(--ink-2)', fontWeight: 500, background: 'var(--surface-2)', borderBottom: '1px solid var(--line)' }
-const TD: React.CSSProperties = { padding: '11px 16px', fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }
 
 export default function Users() {
   const qc = useQueryClient()
@@ -60,16 +60,16 @@ export default function Users() {
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = ''}
               >
-                <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace" }}>{u.username}</td>
-                <td style={TD}>{u.full_name}</td>
-                <td style={TD}>
+                <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace" }}>{u.username}</td>
+                <td style={cellStyle}>{u.full_name}</td>
+                <td style={cellStyle}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 8px', borderRadius: 5, fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", ...ROLE_BADGE[u.role] }}>
                     {u.role}
                   </span>
                 </td>
-                <td style={{ ...TD, color: 'var(--ink-2)' }}>{u.primary_location_id ? locs.find((l) => l.id === u.primary_location_id)?.name ?? `Loc ${u.primary_location_id}` : '—'}</td>
-                <td style={TD}>{u.is_active ? <span className="badge-green">Active</span> : <span className="badge-gray">Inactive</span>}</td>
-                <td style={{ ...TD, textAlign: 'right' }}>
+                <td style={{ ...cellStyle, color: 'var(--ink-2)' }}>{u.primary_location_id ? locs.find((l) => l.id === u.primary_location_id)?.name ?? `Loc ${u.primary_location_id}` : '—'}</td>
+                <td style={cellStyle}>{u.is_active ? <span className="badge-green">Active</span> : <span className="badge-gray">Inactive</span>}</td>
+                <td style={{ ...cellStyle, textAlign: 'right' }}>
                   <button style={{ fontSize: 12, color: 'var(--ink-2)', background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => toggle.mutate({ id: u.id, is_active: !u.is_active })}>
                     {u.is_active ? 'Deactivate' : 'Activate'}
                   </button>

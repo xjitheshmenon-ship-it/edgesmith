@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Th, Td } from '../components/table'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { faridabadApi } from '../api/client'
 import { Plus, X } from 'lucide-react'
@@ -346,12 +347,6 @@ function ReceivingForm({ dispatches, onDone }: { dispatches: any[]; onDone: () =
 
 // ── Tables ────────────────────────────────────────────────────────────────────
 
-const TH = ({ children }: { children: React.ReactNode }) => (
-  <th style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.1em', color: 'var(--ink-3)', textAlign: 'left', padding: '8px 12px', borderBottom: '1px solid var(--line)', fontWeight: 500 }}>{children}</th>
-)
-const TD = ({ children }: { children: React.ReactNode }) => (
-  <td style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: 'var(--ink)', padding: '9px 12px', borderBottom: '1px solid var(--line)' }}>{children}</td>
-)
 
 function IntakesTable({ data, loading }: { data: any[]; loading: boolean }) {
   if (loading) return <div style={{ color: 'var(--ink-3)', padding: 16 }}>Loading…</div>
@@ -359,20 +354,20 @@ function IntakesTable({ data, loading }: { data: any[]; loading: boolean }) {
     <div className="card" style={{ overflow: 'hidden' }}>
       <table className="es-table" style={{ width: '100%' }}>
         <thead><tr>
-          <TH>TYPE</TH><TH>SUPPLIER</TH><TH>HEAT NUMBER</TH><TH>GRADE</TH>
-          <TH>DATE</TH><TH>BARS</TH><TH>WEIGHT KG</TH><TH>DIMENSIONS</TH>
+          <Th>TYPE</Th><Th>SUPPLIER</Th><Th>HEAT NUMBER</Th><Th>GRADE</Th>
+          <Th>DATE</Th><Th>BARS</Th><Th>WEIGHT KG</Th><Th>DIMENSIONS</Th>
         </tr></thead>
         <tbody>
           {data.map((r: any) => (
             <tr key={r.id}>
-              <TD><span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, fontWeight: 700, color: LABEL_COLOR[r.material_type] || 'var(--ink-2)', letterSpacing: '0.08em' }}>{LABEL[r.material_type] || r.material_type}</span></TD>
-              <TD>{r.supplier_name}</TD>
-              <TD>{r.heat_number}</TD>
-              <TD>{r.steel_grade}</TD>
-              <TD>{r.date_received}</TD>
-              <TD>{r.num_bars ?? '—'}</TD>
-              <TD>{r.weight_kg ?? '—'}</TD>
-              <TD>{r.bar_dimensions_mm || '—'}</TD>
+              <Td><span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 9.5, fontWeight: 700, color: LABEL_COLOR[r.material_type] || 'var(--ink-2)', letterSpacing: '0.08em' }}>{LABEL[r.material_type] || r.material_type}</span></Td>
+              <Td>{r.supplier_name}</Td>
+              <Td>{r.heat_number}</Td>
+              <Td>{r.steel_grade}</Td>
+              <Td>{r.date_received}</Td>
+              <Td>{r.num_bars ?? '—'}</Td>
+              <Td>{r.weight_kg ?? '—'}</Td>
+              <Td>{r.bar_dimensions_mm || '—'}</Td>
             </tr>
           ))}
           {data.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>No intakes recorded</td></tr>}
@@ -388,19 +383,19 @@ function JoiningsTable({ data, loading }: { data: any[]; loading: boolean }) {
     <div className="card" style={{ overflow: 'hidden' }}>
       <table className="es-table" style={{ width: '100%' }}>
         <thead><tr>
-          <TH>#</TH><TH>ALLOY HEAT NO</TH><TH>MS HEAT NO</TH><TH>BILLETS</TH>
-          <TH>DIMENSIONS</TH><TH>OPERATOR</TH><TH>DATE</TH>
+          <Th>#</Th><Th>ALLOY HEAT NO</Th><Th>MS HEAT NO</Th><Th>BILLETS</Th>
+          <Th>DIMENSIONS</Th><Th>OPERATOR</Th><Th>DATE</Th>
         </tr></thead>
         <tbody>
           {data.map((j: any) => (
             <tr key={j.id}>
-              <TD>#{j.id}</TD>
-              <TD><span style={{ color: '#c4b5fd' }}>{j.alloy_heat_number}</span><br /><span style={{ color: 'var(--ink-3)', fontSize: 10 }}>{j.alloy_supplier}</span></TD>
-              <TD><span style={{ color: '#6ee7b7' }}>{j.ms_heat_number}</span><br /><span style={{ color: 'var(--ink-3)', fontSize: 10 }}>{j.ms_supplier}</span></TD>
-              <TD>{j.num_billets_produced}</TD>
-              <TD>{j.output_billet_dimensions_mm || '—'}</TD>
-              <TD>{j.operator_name || '—'}</TD>
-              <TD>{j.date_joined}</TD>
+              <Td>#{j.id}</Td>
+              <Td><span style={{ color: '#c4b5fd' }}>{j.alloy_heat_number}</span><br /><span style={{ color: 'var(--ink-3)', fontSize: 10 }}>{j.alloy_supplier}</span></Td>
+              <Td><span style={{ color: '#6ee7b7' }}>{j.ms_heat_number}</span><br /><span style={{ color: 'var(--ink-3)', fontSize: 10 }}>{j.ms_supplier}</span></Td>
+              <Td>{j.num_billets_produced}</Td>
+              <Td>{j.output_billet_dimensions_mm || '—'}</Td>
+              <Td>{j.operator_name || '—'}</Td>
+              <Td>{j.date_joined}</Td>
             </tr>
           ))}
           {data.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>No joining operations recorded</td></tr>}
@@ -416,18 +411,18 @@ function DispatchesTable({ data, loading }: { data: any[]; loading: boolean }) {
     <div className="card" style={{ overflow: 'hidden' }}>
       <table className="es-table" style={{ width: '100%' }}>
         <thead><tr>
-          <TH>BATCH REF</TH><TH>CONTRACTOR</TH><TH>BILLETS</TH><TH>DATE</TH>
-          <TH>RECEIVED</TH><TH>RECEIVING RUNS</TH>
+          <Th>BATCH REF</Th><Th>CONTRACTOR</Th><Th>BILLETS</Th><Th>DATE</Th>
+          <Th>RECEIVED</Th><Th>RECEIVING RUNS</Th>
         </tr></thead>
         <tbody>
           {data.map((d: any) => (
             <tr key={d.id}>
-              <TD><span style={{ color: 'var(--accent)', fontWeight: 700 }}>{d.batch_reference}</span></TD>
-              <TD>{d.rolling_contractor_name}</TD>
-              <TD>{d.num_billets_dispatched}</TD>
-              <TD>{d.date_dispatched}</TD>
-              <TD>{d.total_received} / {d.num_billets_dispatched}</TD>
-              <TD>{d.receiving_count}</TD>
+              <Td><span style={{ color: 'var(--accent)', fontWeight: 700 }}>{d.batch_reference}</span></Td>
+              <Td>{d.rolling_contractor_name}</Td>
+              <Td>{d.num_billets_dispatched}</Td>
+              <Td>{d.date_dispatched}</Td>
+              <Td>{d.total_received} / {d.num_billets_dispatched}</Td>
+              <Td>{d.receiving_count}</Td>
             </tr>
           ))}
           {data.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>No dispatches recorded</td></tr>}
@@ -443,18 +438,18 @@ function ReceivingsTable({ data, loading }: { data: any[]; loading: boolean }) {
     <div className="card" style={{ overflow: 'hidden' }}>
       <table className="es-table" style={{ width: '100%' }}>
         <thead><tr>
-          <TH>BATCH REF</TH><TH>CONTRACTOR</TH><TH>DATE RECEIVED</TH>
-          <TH>BILLETS</TH><TH>CONDITION</TH><TH>RECEIVED BY</TH>
+          <Th>BATCH REF</Th><Th>CONTRACTOR</Th><Th>DATE RECEIVED</Th>
+          <Th>BILLETS</Th><Th>CONDITION</Th><Th>RECEIVED BY</Th>
         </tr></thead>
         <tbody>
           {data.map((r: any) => (
             <tr key={r.id}>
-              <TD><span style={{ color: 'var(--accent)', fontWeight: 700 }}>{r.batch_reference}</span></TD>
-              <TD>{r.rolling_contractor_name}</TD>
-              <TD>{r.date_received}</TD>
-              <TD>{r.num_billets_received}</TD>
-              <TD>{r.condition || '—'}</TD>
-              <TD>{r.received_by || '—'}</TD>
+              <Td><span style={{ color: 'var(--accent)', fontWeight: 700 }}>{r.batch_reference}</span></Td>
+              <Td>{r.rolling_contractor_name}</Td>
+              <Td>{r.date_received}</Td>
+              <Td>{r.num_billets_received}</Td>
+              <Td>{r.condition || '—'}</Td>
+              <Td>{r.received_by || '—'}</Td>
             </tr>
           ))}
           {data.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--ink-3)', padding: 24, fontFamily: "'IBM Plex Mono', monospace", fontSize: 11 }}>No receiving events recorded</td></tr>}

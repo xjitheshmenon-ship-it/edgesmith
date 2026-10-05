@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { cellStyle } from '../components/table'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { uidApi, factoryApi, cycleApi } from '../api/client'
 import type { UID, FactoryLocation, CycleType } from '../types'
@@ -9,7 +10,6 @@ import { Plus, Search, X, ChevronRight, Clock, CheckCircle2, XCircle } from 'luc
 import { format } from 'date-fns'
 
 const TH: React.CSSProperties = { padding: '10px 16px', textAlign: 'left', fontFamily: "'IBM Plex Mono', monospace", fontSize: 10, letterSpacing: '0.12em', color: 'var(--ink-2)', fontWeight: 600, background: 'var(--surface-2)', borderBottom: '1px solid var(--line)' }
-const TD: React.CSSProperties = { padding: '11px 16px', fontSize: 13, color: 'var(--ink)', borderBottom: '1px solid var(--line)' }
 
 // ── UID Detail Drawer ─────────────────────────────────────────────────────────
 
@@ -215,16 +215,16 @@ export default function UIDs() {
                   onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = 'var(--surface-3)'}
                   onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = selectedUID?.id === u.id ? 'var(--surface-3)' : ''}
                 >
-                  <td style={TD}>
+                  <td style={cellStyle}>
                     <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 600, color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                       {u.code} <ChevronRight size={12} style={{ color: 'var(--ink-3)' }} />
                     </span>
                     {u.parent_uid_code && <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>↳ {u.parent_uid_code}</div>}
                   </td>
-                  <td style={TD}><UIDStatusBadge status={u.status} /></td>
-                  <td style={TD}><PriorityBadge priority={u.priority} /></td>
-                  <td style={{ ...TD, color: 'var(--ink-2)' }}>{u.cycle_type_name}</td>
-                  <td style={TD}>
+                  <td style={cellStyle}><UIDStatusBadge status={u.status} /></td>
+                  <td style={cellStyle}><PriorityBadge priority={u.priority} /></td>
+                  <td style={{ ...cellStyle, color: 'var(--ink-2)' }}>{u.cycle_type_name}</td>
+                  <td style={cellStyle}>
                     {u.current_step_number && (
                       <div>
                         <span style={{ fontWeight: 600 }}>{u.current_step_number}</span>
@@ -232,13 +232,13 @@ export default function UIDs() {
                       </div>
                     )}
                   </td>
-                  <td style={{ ...TD, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{u.current_storage_code ?? '—'}</td>
-                  <td style={{ ...TD, fontSize: 12 }}>
+                  <td style={{ ...cellStyle, fontFamily: "'IBM Plex Mono', monospace", fontSize: 12 }}>{u.current_storage_code ?? '—'}</td>
+                  <td style={{ ...cellStyle, fontSize: 12 }}>
                     {u.size_mm ? `${u.size_mm}mm` : '—'} / {u.design_code ?? 'No design'}
                     {!u.design_confirmed && <span className="badge-yellow" style={{ marginLeft: 4 }}>⚠</span>}
                   </td>
-                  <td style={{ ...TD, fontSize: 12, color: 'var(--ink-2)' }}>{u.factory_location_code}</td>
-                  <td style={{ ...TD, fontSize: 12, color: 'var(--ink-2)' }}>{u.mo_number ?? '—'}</td>
+                  <td style={{ ...cellStyle, fontSize: 12, color: 'var(--ink-2)' }}>{u.factory_location_code}</td>
+                  <td style={{ ...cellStyle, fontSize: 12, color: 'var(--ink-2)' }}>{u.mo_number ?? '—'}</td>
                 </tr>
               ))}
               {uids.length === 0 && (
